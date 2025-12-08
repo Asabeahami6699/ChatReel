@@ -1,0 +1,262 @@
+// D:\chatApp\chatApp\src\screens\RegisterScreen.tsx
+import React, { useState, useEffect, useRef } from 'react'
+import {
+  Alert,
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Animated,
+  Easing,
+} from 'react-native'
+import { useNavigation } from '@react-navigation/native'
+import { useWindowDimensions } from 'react-native'
+import { Ionicons } from '@expo/vector-icons'
+import QRCode from 'react-native-qrcode-svg'
+import AuthForm from '../../components/AuthForm'
+import { useAuth } from '../../hooks/useAuth'
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack'
+import type { AuthStackParamList } from '../../navigation/AuthNavigator'
+
+type RegisterNavProp = NativeStackNavigationProp<AuthStackParamList, 'Register'>
+
+export default function RegisterScreen() {
+  const navigation = useNavigation<RegisterNavProp>()
+  const { signUp, loading } = useAuth()
+
+  const [displayName, setDisplayName] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+
+  const { width } = useWindowDimensions()
+  const isDesktop = width > 700
+
+  // QR states (same pattern as Login)
+  const [qrRef, setQrRef] = useState('')
+  const [timeLeft, setTimeLeft] = useState(30)
+  const spinRef = useRef(new Animated.Value(0)).current
+  const spin = spinRef.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  })
+
+  const generateRef = async () => {
+    const ref = `register_${Date.now()}`
+    // TODO: Save to DB in production
+    setQrRef(ref)
+    setTimeLeft(30)
+  }
+
+  // Auto-refresh QR
+  useEffect(() => {
+    generateRef()
+    const id = setInterval(generateRef, 30000)
+    return () => clearInterval(id)
+  }, [])
+
+  // Countdown timer
+  useEffect(() => {
+    const id = setInterval(() => {
+      setTimeLeft((t) => (t > 0 ? t - 1 : 0))
+    }, 1000)
+    return () => clearInterval(id)
+  }, [])
+
+  // Animation
+  useEffect(() => {
+    Animated.loop(
+      Animated.timing(spinRef, {
+        toValue: 1,
+        duration: 3000,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      })
+    ).start()
+  }, [spinRef])
+
+  const handleRegister = async () => {
+    if (!displayName || !email || !password || !confirmPassword) {
+      Alert.alert('Please fill in all fields')
+      return
+    }
+
+    if (password !== confirmPassword) {
+      Alert.alert('Passwords do not match')
+      return
+    }
+
+    const { error } = await signUp(email, password, {
+      data: { display_name: displayName },
+    })
+
+    if (error) Alert.alert('Sign up failed', error.message)
+    else Alert.alert('Check your email to confirm signup!')
+  }
+
+  const handleLogin = () => {
+    navigation.navigate('Login')
+  }
+
+  if (isDesktop) {
+    return (
+      <View style={styles.desktopWrapper}>
+        {/* QR Section on Left */}
+        <View style={styles.qrContainer}>
+          <View style={styles.qrHeader}>
+            <Text style={styles.qrTitle}>Link with Mobile</Text>
+            <Text style={styles.qrSubtitle}>Scan QR with your app to sign up</Text>
+          </View>
+          <View style={styles.qrContent}>
+            {!qrRef ? (
+              <Text style={styles.loading}>Generating QR...</Text>
+            ) : (
+              <>
+                <View style={styles.qrBox}>
+                  <QRCode
+                    value={`myapp://register?ref=${qrRef}`}
+                    size={240}
+                    color="#000"
+                    backgroundColor="#fff"
+                  />
+                  <Animated.View style={[styles.ring, { transform: [{ rotate: spin }] }]}>
+                    <Ionicons name="sync" size={32} color="#007AFF" />
+                  </Animated.View>
+                </View>
+                <View style={styles.info}>
+                  <Text style={styles.timer}>
+                    Expires in <Text style={styles.bold}>{timeLeft}s</Text>
+                  </Text>
+                </View>
+                <TouchableOpacity style={styles.refreshBtn} onPress={generateRef}>
+                  <Ionicons name="refresh" size={20} color="#fff" />
+                  <Text style={styles.refreshText}>New Code</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        </View>
+
+        {/* AuthForm on Right */}
+        <View style={styles.formContainerDesktop}>
+          <AuthForm
+            title="Create Account"
+            displayName={displayName}
+            setDisplayName={setDisplayName}
+            email={email}
+            setEmail={setEmail}
+            password={password}
+            setPassword={setPassword}
+            confirmPassword={confirmPassword}
+            setConfirmPassword={setConfirmPassword}
+            onSubmit={handleRegister}
+            loading={loading}
+            footerText="Already have an account?"
+            footerActionText="Login"
+            onFooterAction={handleLogin}
+            noGradient={true}
+          />
+        </View>
+      </View>
+    )
+  }
+
+  // Mobile: Just the AuthForm
+  return (
+    <AuthForm
+      title="Create Account"
+      displayName={displayName}
+      setDisplayName={setDisplayName}
+      email={email}
+      setEmail={setEmail}
+      password={password}
+      setPassword={setPassword}
+      confirmPassword={confirmPassword}
+      setConfirmPassword={setConfirmPassword}
+      onSubmit={handleRegister}
+      loading={loading}
+      footerText="Already have an account?"
+      footerActionText="Login"
+      onFooterAction={handleLogin}
+    />
+  )
+}
+
+const styles = StyleSheet.create({
+  desktopWrapper: {
+    flex: 1,
+    flexDirection: 'row',
+    backgroundColor: '#f9f9f9',
+  },
+  qrContainer: {
+    flex: 1,
+    backgroundColor: '#f9f9f9',
+  },
+  qrHeader: {
+    padding: 24,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  qrTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  qrSubtitle: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 4,
+  },
+  qrContent: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  formContainerDesktop: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+    backgroundColor: '#f9f9f9',
+  },
+  qrBox: {
+    padding: 20,
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 10,
+    position: 'relative',
+  },
+  ring: {
+    position: 'absolute',
+    top: -10,
+    right: -10,
+    backgroundColor: '#fff',
+    padding: 8,
+    borderRadius: 30,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  info: { marginTop: 24 },
+  timer: { fontSize: 16, color: '#007AFF', textAlign: 'center' },
+  bold: { fontWeight: 'bold' },
+  refreshBtn: {
+    flexDirection: 'row',
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 30,
+    marginTop: 24,
+    alignItems: 'center',
+  },
+  refreshText: { color: '#fff', marginLeft: 8, fontWeight: '600' },
+  loading: { fontSize: 18, color: '#666', textAlign: 'center' },
+})
