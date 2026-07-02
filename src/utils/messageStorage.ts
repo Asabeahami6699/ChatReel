@@ -3,14 +3,26 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const MESSAGES_KEY = (chatId: string) => `messages_${chatId}`;
 const LAST_SYNC_KEY = (chatId: string) => `last_sync_${chatId}`;
+const DRAFT_KEY = (chatId: string) => `draft_${chatId}`;
 
 export const messageStorage = {
   // Save messages to local storage
   saveMessages: async (chatId: string, messages: any[]) => {
     try {
+      const sanitized = messages.map((m) => {
+        const copy = { ...m };
+        if (copy.local_file_uri?.startsWith?.('blob:')) {
+          if (copy.file_url) delete copy.local_file_uri;
+          else delete copy.local_file_uri;
+        }
+        if (copy.local_audio_uri?.startsWith?.('blob:') && copy.audio_url) {
+          delete copy.local_audio_uri;
+        }
+        return copy;
+      });
       await AsyncStorage.setItem(
         MESSAGES_KEY(chatId), 
-        JSON.stringify(messages)
+        JSON.stringify(sanitized)
       );
       await AsyncStorage.setItem(
         LAST_SYNC_KEY(chatId),
@@ -56,5 +68,35 @@ export const messageStorage = {
     } catch (error) {
       console.error('❌ Error clearing local messages:', error);
     }
-  }
+  },
+
+  saveDraft: async (chatId: string, draft: string) => {
+    try {
+      const key = DRAFT_KEY(chatId);
+      if (draft.trim()) {
+        await AsyncStorage.setItem(key, draft);
+      } else {
+        await AsyncStorage.removeItem(key);
+      }
+    } catch (error) {
+      console.error('❌ Error saving draft:', error);
+    }
+  },
+
+  getDraft: async (chatId: string): Promise<string> => {
+    try {
+      return (await AsyncStorage.getItem(DRAFT_KEY(chatId))) ?? '';
+    } catch (error) {
+      console.error('❌ Error loading draft:', error);
+      return '';
+    }
+  },
+
+  clearDraft: async (chatId: string) => {
+    try {
+      await AsyncStorage.removeItem(DRAFT_KEY(chatId));
+    } catch (error) {
+      console.error('❌ Error clearing draft:', error);
+    }
+  },
 };

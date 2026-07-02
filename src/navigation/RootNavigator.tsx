@@ -1,33 +1,37 @@
 // src/navigation/RootNavigator.tsx
-import React from 'react';
+import React, { useEffect } from 'react';
+import { View, ActivityIndicator } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
+import * as SplashScreen from 'expo-splash-screen';
 import { useAuth } from '../hooks/useAuth';
 import { AuthNavigator } from './AuthNavigator';
 import { AppNavigator } from './AppNavigator';
-import { ActivityIndicator, View } from 'react-native';
+import { rootNavigationRef } from './rootNavigation';
 
-// Deep linking config
 const prefix = Linking.createURL('/');
 
 const linking = {
   prefixes: [prefix, 'yourapp://'],
   config: {
     screens: {
-      // Auth screens
       Login: 'login',
       Signup: 'signup',
-      // App screens
       Home: 'home',
       NewGroup: 'new-group',
       Invite: 'invite/:token',
-      // Add others as needed
     },
   },
 };
 
 export const RootNavigator = () => {
   const { user, loading } = useAuth();
+
+  useEffect(() => {
+    if (!loading) {
+      SplashScreen.hideAsync().catch(() => {});
+    }
+  }, [loading]);
 
   if (loading) {
     return (
@@ -38,7 +42,7 @@ export const RootNavigator = () => {
   }
 
   return (
-    <NavigationContainer linking={linking}>
+    <NavigationContainer ref={rootNavigationRef} linking={linking}>
       {user ? <AppNavigator /> : <AuthNavigator />}
     </NavigationContainer>
   );

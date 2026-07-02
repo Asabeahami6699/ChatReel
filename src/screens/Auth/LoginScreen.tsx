@@ -8,6 +8,7 @@ import AuthForm from '../../components/AuthForm'
 import { useAuth } from '../../hooks/useAuth'
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack'
 import type { AuthStackParamList } from '../../navigation/AuthNavigator'
+import { USE_NATIVE_DRIVER } from '../../lib/animation'
 
 type LoginNavProp = NativeStackNavigationProp<AuthStackParamList, 'Login'>
 
@@ -60,7 +61,7 @@ export default function LoginScreen() {
         toValue: 1,
         duration: 3000,
         easing: Easing.linear,
-        useNativeDriver: true,
+        useNativeDriver: USE_NATIVE_DRIVER,
       })
     ).start()
   }, [spinRef])
@@ -71,7 +72,7 @@ export default function LoginScreen() {
       return
     }
 
-    const { error } = await signIn(email, password)
+    const { error } = await signIn(email.trim(), password)
     if (error) Alert.alert('Login failed', error.message)
   }
 

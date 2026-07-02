@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { 
-  SafeAreaView, 
   Text, 
   StyleSheet, 
   ScrollView, 
@@ -259,7 +258,7 @@ export default function MarketScreen({ navigation }) {
   );
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       {/* Header with search and cart */}
       <View style={styles.header}>
         <View style={styles.headerTop}>
@@ -369,7 +368,7 @@ export default function MarketScreen({ navigation }) {
           </View>
         </View>
       </Modal>
-    </SafeAreaView>
+    </View>
   );
 }
 

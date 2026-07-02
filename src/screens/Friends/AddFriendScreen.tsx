@@ -1,23 +1,32 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   FlatList,
   Alert,
-  SafeAreaView,
   Image,
   Platform,
   ActivityIndicator,
+  TouchableOpacity,
+  Animated,
+  Easing,
+  Pressable,
 } from 'react-native';
-import { TextInput, Button, IconButton } from 'react-native-paper';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { TextInput } from 'react-native-paper';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import { supabase } from '../../lib/supabase';
+import { api } from '../../lib/api';
 import { useAuth } from '../../hooks/useAuth';
+import { useCurrentProfileId } from '../../hooks/useCurrentProfileId';
+import { useFriendshipsRealtime } from '../../hooks/useFriendshipsRealtime';
+import { notifyFriendshipsListenersImmediate } from '../../lib/friendshipsRealtime';
 
 interface Profile {
-  id: string; // This is the profile ID used in friendships
-  user_id: string; // This is the auth user ID
+  id: string;
+  user_id: string;
   display_name: string;
   email: string;
   avatar_url?: string;
@@ -29,126 +38,113 @@ interface Profile {
 
 interface Friendship {
   id: string;
-  user_id: string; // This is a PROFILE ID (from profiles.id)
-  friend_id: string; // This is a PROFILE ID (from profiles.id)
+  user_id: string;
+  friend_id: string;
   status: 'pending' | 'accepted' | 'blocked';
 }
 
 type SuggestionType = 'mutual_friends' | 'location' | 'new_users';
 
+const C = {
+  primary: '#007AFF',
+  primaryDark: '#1e73ce',
+  primarySoft: '#e8f2ff',
+  bg: '#f4f8fc',
+  surface: '#ffffff',
+  border: '#e2eaf3',
+  text: '#1c1c1e',
+  muted: '#6b7280',
+};
+
+const SECTION_META: Record<SuggestionType, { icon: keyof typeof Ionicons.glyphMap; color: string }> = {
+  mutual_friends: { icon: 'people', color: '#007AFF' },
+  location: { icon: 'location', color: '#34c759' },
+  new_users: { icon: 'sparkles', color: '#af52de' },
+};
+
+function ProfileAvatar({ uri, name }: { uri?: string; name: string }) {
+  const [error, setError] = useState(false);
+  const letter = (name || '?').charAt(0).toUpperCase();
+
+  if (!uri || error) {
+    return (
+      <View style={styles.avatarFallback}>
+        <Text style={styles.avatarLetter}>{letter}</Text>
+      </View>
+    );
+  }
+
+  return <Image source={{ uri }} style={styles.avatar} onError={() => setError(true)} />;
+}
+
 export default function AddFriendsListScreen() {
   const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
   const { user } = useAuth();
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchExpanded, setSearchExpanded] = useState(false);
+  const searchAnim = useRef(new Animated.Value(0)).current;
+  const searchInputRef = useRef<React.ComponentRef<typeof TextInput>>(null);
+
   const [profiles, setProfiles] = useState<Profile[]>([]);
-  const [suggestions, setSuggestions] = useState<{type: SuggestionType, data: Profile[], title: string}[]>([]);
+  const [suggestions, setSuggestions] = useState<
+    { type: SuggestionType; data: Profile[]; title: string }[]
+  >([]);
   const [friendships, setFriendships] = useState<Friendship[]>([]);
-  const [currentProfileId, setCurrentProfileId] = useState<string | null>(null); // Renamed for clarity
+  const currentProfileId = useCurrentProfileId();
   const [loading, setLoading] = useState(false);
   const [loadingSuggestions, setLoadingSuggestions] = useState(true);
 
-  // Fetch current user's profile ID (profiles.id)
-  useEffect(() => {
-    const fetchProfileId = async () => {
-      if (!user?.id) return;
-      
-      console.log('Fetching profile for auth user:', user.id);
-      
-      try {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('id, region, country')
-          .eq('user_id', user.id) // Match auth user_id
-          .single();
-
-        if (error) {
-          console.error('Profile load error:', error);
-          Alert.alert('Error', `Unable to load your profile: ${error.message}`);
-          return;
-        }
-
-        if (!data) {
-          console.error('No profile found for user:', user.id);
-          Alert.alert('Error', 'No profile found for your account');
-          return;
-        }
-
-        console.log('Current profile found:', data);
-        setCurrentProfileId(data.id);
-        
-      } catch (err) {
-        console.error('Unexpected error fetching profile:', err);
-        Alert.alert('Error', 'Unexpected error loading profile');
-      }
-    };
-    
-    fetchProfileId();
-  }, [user?.id]);
-
-  // Fetch existing friendships using PROFILE ID
-  useEffect(() => {
+  const loadFriendships = useCallback(async () => {
     if (!currentProfileId) return;
-    
-    console.log('Fetching friendships for profile:', currentProfileId);
-    
-    const fetchFriendships = async () => {
-      const { data, error } = await supabase
-        .from('friendships')
-        .select('id, user_id, friend_id, status')
-        .or(`user_id.eq.${currentProfileId},friend_id.eq.${currentProfileId}`);
-      
-      if (error) {
-        console.error('Friendships fetch error:', error);
-      } else {
-        console.log('Friendships loaded:', data?.length || 0);
-        setFriendships(data || []);
-      }
-    };
-    
-    fetchFriendships();
+    try {
+      const { friendships: data } = await api.friendships.list();
+      setFriendships((data as Friendship[]) || []);
+    } catch {
+      /* ignore */
+    }
   }, [currentProfileId]);
 
-  // Fetch all suggestions
-  useEffect(() => {
+  const refreshSuggestions = useCallback(async () => {
     if (!currentProfileId || !user?.id) return;
-
-    console.log('Starting to fetch suggestions...');
-    
-    const fetchAllSuggestions = async () => {
-      setLoadingSuggestions(true);
-      try {
-        const [mutualFriends, locationBased, newUsers] = await Promise.all([
-          fetchMutualFriendSuggestions(),
-          fetchLocationSuggestions(),
-          fetchNewUserSuggestions(),
-        ]);
-
-        console.log('Suggestions results:', {
-          mutual: mutualFriends.length,
-          location: locationBased.length,
-          newUsers: newUsers.length
-        });
-
-        const allSuggestions = [
-          { type: 'mutual_friends' as SuggestionType, data: mutualFriends, title: 'People You May Know' },
-          { type: 'location' as SuggestionType, data: locationBased, title: 'Near You' },
-          { type: 'new_users' as SuggestionType, data: newUsers, title: 'New on Platform' },
-        ].filter(section => section.data.length > 0);
-
-        console.log('Final suggestions to display:', allSuggestions.length, 'sections');
-        setSuggestions(allSuggestions);
-      } catch (error) {
-        console.error('Suggestions error:', error);
-      } finally {
-        setLoadingSuggestions(false);
-      }
-    };
-
-    fetchAllSuggestions();
+    setLoadingSuggestions(true);
+    try {
+      const { mutual, location, new_users } = await api.profiles.suggestions();
+      const allSuggestions = [
+        {
+          type: 'mutual_friends' as SuggestionType,
+          data: mutual as Profile[],
+          title: 'People you may know',
+        },
+        { type: 'location' as SuggestionType, data: location as Profile[], title: 'Near you' },
+        {
+          type: 'new_users' as SuggestionType,
+          data: new_users as Profile[],
+          title: 'New on ChatReel',
+        },
+      ].filter((section) => section.data.length > 0);
+      setSuggestions(allSuggestions);
+    } catch (error) {
+      console.error('Suggestions error:', error);
+    } finally {
+      setLoadingSuggestions(false);
+    }
   }, [currentProfileId, user?.id]);
 
-  // Search users (with debounce)
+  useEffect(() => {
+    void loadFriendships();
+  }, [loadFriendships]);
+
+  useEffect(() => {
+    void refreshSuggestions();
+  }, [refreshSuggestions]);
+
+  useFriendshipsRealtime(currentProfileId, () => {
+    void loadFriendships();
+    void refreshSuggestions();
+  });
+
   useEffect(() => {
     if (!searchQuery.trim() || !user?.id) {
       setProfiles([]);
@@ -158,18 +154,11 @@ export default function AddFriendsListScreen() {
     const timeoutId = setTimeout(async () => {
       setLoading(true);
       try {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('id, user_id, display_name, email, avatar_url, region, country')
-          .or(`display_name.ilike.%${searchQuery}%,email.ilike.%${searchQuery}%`)
-          .neq('user_id', user.id) // Exclude current user by auth user_id
-          .limit(20);
-
-        if (error) throw error;
-        setProfiles(data || []);
+        const { profiles: data } = await api.profiles.search(searchQuery);
+        setProfiles((data as Profile[]) || []);
       } catch (err) {
         console.error('Search error:', err);
-        Alert.alert('Error', 'Failed to fetch users');
+        Alert.alert('Error', 'Failed to search users');
       } finally {
         setLoading(false);
       }
@@ -178,158 +167,34 @@ export default function AddFriendsListScreen() {
     return () => clearTimeout(timeoutId);
   }, [searchQuery, user?.id]);
 
-  // Suggestion Algorithms - CORRECTED VERSION
-  const fetchMutualFriendSuggestions = async (): Promise<Profile[]> => {
-    if (!currentProfileId) return [];
+  const openSearch = useCallback(() => {
+    setSearchExpanded(true);
+    Animated.timing(searchAnim, {
+      toValue: 1,
+      duration: 280,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start(() => {
+      searchInputRef.current?.focus();
+    });
+  }, [searchAnim]);
 
-    try {
-      console.log('Fetching mutual friends for profile:', currentProfileId);
-
-      // Get user's friends (using profile IDs)
-      const { data: userFriends, error } = await supabase
-        .from('friendships')
-        .select('friend_id, user_id')
-        .or(`user_id.eq.${currentProfileId},friend_id.eq.${currentProfileId}`)
-        .eq('status', 'accepted');
-
-      if (error) {
-        console.error('Error fetching user friends:', error);
-        return [];
+  const closeSearch = useCallback(() => {
+    searchInputRef.current?.blur();
+    Animated.timing(searchAnim, {
+      toValue: 0,
+      duration: 220,
+      easing: Easing.in(Easing.cubic),
+      useNativeDriver: false,
+    }).start(({ finished }) => {
+      if (finished) {
+        setSearchExpanded(false);
+        setSearchQuery('');
+        setProfiles([]);
       }
+    });
+  }, [searchAnim]);
 
-      if (!userFriends?.length) {
-        console.log('No friends found for mutual suggestions');
-        return [];
-      }
-
-      // Extract friend profile IDs
-      const friendProfileIds = userFriends.map(f => 
-        f.user_id === currentProfileId ? f.friend_id : f.user_id
-      );
-
-      console.log('Friend profile IDs:', friendProfileIds);
-
-      // Find friends of friends
-      const { data: potentialFriends, error: pfError } = await supabase
-        .from('friendships')
-        .select(`
-          user_id,
-          friend_id,
-          profiles:profiles!friendships_friend_id_fkey (
-            id, user_id, display_name, email, avatar_url, region, country
-          )
-        `)
-        .in('user_id', friendProfileIds)
-        .neq('friend_id', currentProfileId) // Don't suggest current user
-        .eq('status', 'accepted');
-
-      if (pfError) {
-        console.error('Error fetching potential friends:', pfError);
-        return [];
-      }
-
-      // Count mutual friends and remove duplicates
-      const friendCountMap = new Map();
-      potentialFriends?.forEach(pf => {
-        if (pf.profiles && pf.profiles.id !== currentProfileId) {
-          const count = friendCountMap.get(pf.profiles.id) || 0;
-          friendCountMap.set(pf.profiles.id, count + 1);
-        }
-      });
-
-      const mutualSuggestions = Array.from(friendCountMap.entries())
-        .map(([profileId, count]) => {
-          const profile = potentialFriends?.find(pf => pf.profiles?.id === profileId)?.profiles;
-          return profile ? { 
-            ...profile, 
-            mutual_friends_count: count, 
-            reason: `${count} mutual friend${count !== 1 ? 's' : ''}` 
-          } : null;
-        })
-        .filter(Boolean) as Profile[];
-
-      console.log('Mutual suggestions found:', mutualSuggestions.length);
-      return mutualSuggestions;
-
-    } catch (error) {
-      console.error('Mutual friends suggestions error:', error);
-      return [];
-    }
-  };
-
-  const fetchLocationSuggestions = async (): Promise<Profile[]> => {
-    if (!currentProfileId || !user?.id) return [];
-
-    try {
-      console.log('Fetching location suggestions...');
-
-      // Get current user's location
-      const { data: currentUser, error } = await supabase
-        .from('profiles')
-        .select('region, country')
-        .eq('id', currentProfileId) // Use profile ID here
-        .single();
-
-      if (error) {
-        console.error('Error fetching current user location:', error);
-        return [];
-      }
-
-      if (!currentUser?.region) {
-        console.log('No region data for location suggestions');
-        return [];
-      }
-
-      console.log('Looking for users in region:', currentUser.region);
-
-      // Find users in same region (exclude current user by auth user_id)
-      const { data, error: locationError } = await supabase
-        .from('profiles')
-        .select('id, user_id, display_name, email, avatar_url, region, country')
-        .eq('region', currentUser.region)
-        .neq('user_id', user.id) // Exclude current user by auth user_id
-        .limit(8);
-
-      if (locationError) {
-        console.error('Error fetching location suggestions:', locationError);
-        return [];
-      }
-
-      console.log('Location suggestions found:', data?.length);
-      return data?.map(p => ({ ...p, reason: `Lives in ${p.region}` })) || [];
-    } catch (error) {
-      console.error('Location suggestions error:', error);
-      return [];
-    }
-  };
-
-  const fetchNewUserSuggestions = async (): Promise<Profile[]> => {
-    if (!user?.id) return [];
-
-    try {
-      console.log('Fetching new user suggestions...');
-      
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('id, user_id, display_name, email, avatar_url, region, country, created_at')
-        .neq('user_id', user.id) // Exclude current user by auth user_id
-        .order('created_at', { ascending: false })
-        .limit(6);
-
-      if (error) {
-        console.error('Error fetching new users:', error);
-        return [];
-      }
-
-      console.log('New user suggestions found:', data?.length);
-      return data?.map(p => ({ ...p, reason: 'New to platform' })) || [];
-    } catch (error) {
-      console.error('New user suggestions error:', error);
-      return [];
-    }
-  };
-
-  // Determine friendship status with a profile (using PROFILE IDs)
   const getFriendshipStatus = (targetProfileId: string): Friendship['status'] | null => {
     const found = friendships.find(
       (f) =>
@@ -339,7 +204,6 @@ export default function AddFriendsListScreen() {
     return found ? found.status : null;
   };
 
-  // Send friend request (using PROFILE IDs)
   const handleAddFriend = async (targetProfileId: string) => {
     if (!currentProfileId) {
       Alert.alert('Error', 'Profile not loaded yet.');
@@ -355,156 +219,262 @@ export default function AddFriendsListScreen() {
     if (status === 'pending') {
       Alert.alert('Info', 'Request already pending.');
       return;
-    } else if (status === 'accepted') {
+    }
+    if (status === 'accepted') {
       Alert.alert('Info', 'You are already friends.');
       return;
     }
 
     try {
-      const { data, error } = await supabase
-        .from('friendships')
-        .insert({
-          user_id: currentProfileId, // PROFILE ID
-          friend_id: targetProfileId, // PROFILE ID
-          status: 'pending',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-
+      const { friendship: data } = await api.friendships.request(targetProfileId);
+      setFriendships((prev) => [...prev, data as Friendship]);
+      notifyFriendshipsListenersImmediate();
       Alert.alert('Success', 'Friend request sent!');
-      setFriendships((prev) => [...prev, data]);
-      
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Add friend error:', err);
-      Alert.alert('Error', err.message || 'Failed to send request');
+      const message = err instanceof Error ? err.message : 'Failed to send request';
+      Alert.alert('Error', message);
     }
   };
 
-  // Render a user in the search results
-  const renderUser = ({ item }: { item: Profile }) => {
-    const status = getFriendshipStatus(item.id); // item.id is the PROFILE ID
+  const renderAction = (profileId: string) => {
+    const status = getFriendshipStatus(profileId);
+
+    if (status === 'accepted') {
+      return (
+        <View style={[styles.statusPill, styles.friendsPill]}>
+          <Ionicons name="checkmark-circle" size={14} color="#2e7d32" />
+          <Text style={styles.friendsPillText}>Friends</Text>
+        </View>
+      );
+    }
+
+    if (status === 'pending') {
+      return (
+        <View style={[styles.statusPill, styles.pendingPill]}>
+          <Ionicons name="time-outline" size={14} color="#e65100" />
+          <Text style={styles.pendingPillText}>Pending</Text>
+        </View>
+      );
+    }
 
     return (
-      <View style={styles.userItem}>
-        <Image 
-          source={{ uri: item.avatar_url || 'https://via.placeholder.com/46' }} 
-          style={styles.avatar} 
-        />
-        <View style={styles.userInfo}>
-          <Text style={styles.userName}>{item.display_name || 'Unnamed User'}</Text>
-          <Text style={styles.userEmail}>{item.email}</Text>
-          {item.reason && <Text style={styles.reasonText}>{item.reason}</Text>}
-          {item.mutual_friends_count && item.mutual_friends_count > 0 && (
-            <Text style={styles.mutualText}>
-              {item.mutual_friends_count} mutual friend{item.mutual_friends_count !== 1 ? 's' : ''}
-            </Text>
-          )}
-        </View>
+      <TouchableOpacity
+        style={styles.addBtn}
+        onPress={() => void handleAddFriend(profileId)}
+        activeOpacity={0.85}
+      >
+        <Ionicons name="person-add" size={16} color="#fff" />
+        <Text style={styles.addBtnText}>Add</Text>
+      </TouchableOpacity>
+    );
+  };
 
-        {status === 'accepted' ? (
-          <Text style={styles.friendText}>Friends</Text>
-        ) : status === 'pending' ? (
-          <Text style={styles.pendingText}>Pending</Text>
-        ) : (
-          <Button
-            mode="contained"
-            onPress={() => handleAddFriend(item.id)} // item.id is PROFILE ID
-            buttonColor="#007AFF"
-            textColor="#fff"
-            compact
-          >
-            Add
-          </Button>
-        )}
+  const renderUser = ({ item }: { item: Profile }) => {
+    const displayName = item.display_name?.trim() || item.email?.split('@')[0] || 'User';
+
+    return (
+      <View style={styles.userCard}>
+        <ProfileAvatar uri={item.avatar_url} name={displayName} />
+        <View style={styles.userInfo}>
+          <Text style={styles.userName} numberOfLines={1}>
+            {displayName}
+          </Text>
+          <Text style={styles.userEmail} numberOfLines={1}>
+            {item.email}
+          </Text>
+          {item.reason ? (
+            <Text style={styles.reasonText} numberOfLines={1}>
+              {item.reason}
+            </Text>
+          ) : null}
+          {item.mutual_friends_count && item.mutual_friends_count > 0 ? (
+            <Text style={styles.mutualText}>
+              {item.mutual_friends_count} mutual friend
+              {item.mutual_friends_count !== 1 ? 's' : ''}
+            </Text>
+          ) : null}
+        </View>
+        {renderAction(item.id)}
       </View>
     );
   };
 
-  // Render suggestion section
-  const renderSuggestionSection = ({ item }: { item: {type: SuggestionType, data: Profile[], title: string} }) => (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>{item.title}</Text>
-      <FlatList
-        data={item.data}
-        renderItem={renderUser}
-        keyExtractor={(user) => `${item.type}-${user.id}`}
-        scrollEnabled={false}
-      />
+  const renderSuggestionSection = ({
+    item,
+  }: {
+    item: { type: SuggestionType; data: Profile[]; title: string };
+  }) => {
+    const meta = SECTION_META[item.type];
+    return (
+      <View style={styles.section}>
+        <View style={styles.sectionHead}>
+          <View style={[styles.sectionIcon, { backgroundColor: `${meta.color}18` }]}>
+            <Ionicons name={meta.icon} size={16} color={meta.color} />
+          </View>
+          <Text style={styles.sectionTitle}>{item.title}</Text>
+          <Text style={styles.sectionCount}>{item.data.length}</Text>
+        </View>
+        {item.data.map((profile) => (
+          <React.Fragment key={`${item.type}-${profile.id}`}>
+            {renderUser({ item: profile })}
+          </React.Fragment>
+        ))}
+      </View>
+    );
+  };
+
+  const isSearching = searchQuery.trim().length > 0;
+  const showResults = searchExpanded || isSearching;
+
+  const listHeader = (
+    <View style={styles.listHeader}>
+      {showResults ? (
+        <Text style={styles.resultsLabel}>
+          {loading ? 'Searching…' : `${profiles.length} result${profiles.length === 1 ? '' : 's'}`}
+        </Text>
+      ) : (
+        <Text style={styles.resultsLabel}>Suggested for you</Text>
+      )}
     </View>
   );
 
   return (
-    <SafeAreaView style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <IconButton icon="arrow-left" size={24} onPress={() => navigation.goBack()} />
-        <Text style={styles.headerTitle}>Find Friends</Text>
-      </View>
-
-      {/* Search */}
-      <View style={styles.searchWrapper}>
-        <TextInput
-          mode="outlined"
-          placeholder="Search by name or email"
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          style={styles.searchInput}
-          left={<TextInput.Icon icon="magnify" />}
-        />
-      </View>
-
-      {/* Debug Info */}
-      {__DEV__ && currentProfileId && (
-        <View style={styles.debugInfo}>
-          <Text style={styles.debugText}>Profile ID: {currentProfileId}</Text>
-          <Text style={styles.debugText}>Friendships: {friendships.length}</Text>
+    <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
+      <LinearGradient
+        colors={['#0d47a1', '#1976d2', '#42a5f5']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={[styles.hero, { paddingTop: insets.top + 8 }]}
+      >
+        <View style={styles.heroTop}>
+          <TouchableOpacity
+            style={styles.backBtn}
+            onPress={() => navigation.goBack()}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="arrow-back" size={22} color="#fff" />
+          </TouchableOpacity>
+          <View style={styles.heroText}>
+            <Text style={styles.heroTitle}>Find Friends</Text>
+            <Text style={styles.heroSub}>Search or discover people to connect with</Text>
+          </View>
         </View>
-      )}
 
-      {/* Loading */}
-      {loading && <ActivityIndicator style={{ marginTop: 10 }} />}
+        <View style={styles.searchRow}>
+          {!searchExpanded ? (
+            <TouchableOpacity
+              style={styles.searchCollapsed}
+              onPress={openSearch}
+              activeOpacity={0.9}
+            >
+              <Ionicons name="search" size={20} color={C.muted} />
+              <Text style={styles.searchPlaceholder}>Search by name or email</Text>
+            </TouchableOpacity>
+          ) : null}
 
-      {/* Content */}
-      {searchQuery ? (
-        // Search Results
+          <Animated.View
+            pointerEvents={searchExpanded ? 'auto' : 'none'}
+            style={[
+              styles.searchExpandedWrap,
+              {
+                flex: searchAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 1] }),
+                opacity: searchAnim.interpolate({
+                  inputRange: [0, 0.35, 1],
+                  outputRange: [0, 0.5, 1],
+                }),
+                transform: [
+                  {
+                    scaleX: searchAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0.92, 1],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          >
+            {searchExpanded ? (
+              <View style={styles.searchInputShell}>
+                <TextInput
+                  ref={searchInputRef}
+                  mode="flat"
+                  placeholder="Search by name or email"
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  style={styles.searchInput}
+                  underlineColor="transparent"
+                  theme={{ colors: { text: C.text, background: 'transparent' } }}
+                  left={<TextInput.Icon icon="magnify" color={C.muted} />}
+                  right={
+                    searchQuery.length > 0 ? (
+                      <TextInput.Icon icon="close" color={C.muted} onPress={() => setSearchQuery('')} />
+                    ) : undefined
+                  }
+                  returnKeyType="search"
+                />
+              </View>
+            ) : null}
+          </Animated.View>
+
+          {searchExpanded ? (
+            <Pressable style={styles.searchCloseBtn} onPress={closeSearch}>
+              <Ionicons name="close" size={22} color="#fff" />
+            </Pressable>
+          ) : null}
+        </View>
+      </LinearGradient>
+
+      {loading && showResults ? (
+        <ActivityIndicator color={C.primary} style={styles.inlineLoader} />
+      ) : null}
+
+      {showResults ? (
         <FlatList
           data={profiles}
           renderItem={renderUser}
           keyExtractor={(item) => `search-${item.id}`}
+          ListHeaderComponent={listHeader}
           ListEmptyComponent={
-            !loading && (
-              <Text style={styles.emptyText}>
-                {searchQuery ? 'No users found.' : 'Start typing to search for friends.'}
-              </Text>
-            )
+            !loading ? (
+              <View style={styles.emptyBox}>
+                <Ionicons name="search-outline" size={40} color={C.muted} />
+                <Text style={styles.emptyTitle}>No users found</Text>
+                <Text style={styles.emptySub}>Try a different name or email</Text>
+              </View>
+            ) : null
           }
-          contentContainerStyle={{ paddingBottom: 30 }}
+          contentContainerStyle={styles.listContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
         />
       ) : (
-        // Suggestions
         <FlatList
           data={suggestions}
           renderItem={renderSuggestionSection}
           keyExtractor={(item) => item.type}
+          ListHeaderComponent={listHeader}
           ListEmptyComponent={
             loadingSuggestions ? (
-              <ActivityIndicator size="large" style={{ marginTop: 50 }} />
+              <View style={styles.emptyBox}>
+                <ActivityIndicator size="large" color={C.primary} />
+                <Text style={styles.emptySub}>Loading suggestions…</Text>
+              </View>
             ) : (
-              <View style={styles.emptyContainer}>
-                <Text style={styles.emptyText}>
-                  No suggestions available right now.
+              <View style={styles.emptyBox}>
+                <Ionicons name="people-outline" size={40} color={C.muted} />
+                <Text style={styles.emptyTitle}>No suggestions yet</Text>
+                <Text style={styles.emptySub}>
+                  Tap search above to find friends by name or email
                 </Text>
-                <Text style={styles.emptySubtext}>
-                  Make sure you have other users in your database with region data.
-                </Text>
+                <TouchableOpacity style={styles.emptySearchBtn} onPress={openSearch}>
+                  <Ionicons name="search" size={18} color="#fff" />
+                  <Text style={styles.emptySearchBtnText}>Search people</Text>
+                </TouchableOpacity>
               </View>
             )
           }
-          contentContainerStyle={{ paddingBottom: 30 }}
+          contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
         />
       )}
@@ -515,115 +485,273 @@ export default function AddFriendsListScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: C.bg,
     alignSelf: Platform.OS === 'web' ? 'center' : 'stretch',
-    width: Platform.OS === 'web' ? 400 : '100%',
-    borderRadius: Platform.OS === 'web' ? 12 : 0,
-    marginTop: Platform.OS === 'web' ? 20 : 0,
-    elevation: Platform.OS === 'web' ? 4 : 0,
+    width: Platform.OS === 'web' ? 420 : '100%',
+    maxWidth: '100%',
   },
-  header: {
+  hero: {
+    paddingHorizontal: 16,
+    paddingBottom: 18,
+    borderBottomLeftRadius: 22,
+    borderBottomRightRadius: 22,
+  },
+  heroTop: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    marginBottom: 16,
+    gap: 10,
   },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    marginLeft: 8,
+  backBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  searchWrapper: {
-    paddingHorizontal: 16,
-    paddingTop: 10,
-    paddingBottom: 6,
+  heroText: { flex: 1 },
+  heroTitle: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#fff',
+  },
+  heroSub: {
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.85)',
+    marginTop: 2,
+  },
+  searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  searchCollapsed: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
+  searchPlaceholder: {
+    fontSize: 15,
+    color: C.muted,
+    flex: 1,
+  },
+  searchExpandedWrap: {
+    overflow: 'hidden',
+    minWidth: 0,
+  },
+  searchInputShell: {
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
   },
   searchInput: {
-    backgroundColor: '#fff',
+    height: 46,
+    backgroundColor: 'transparent',
+    fontSize: 15,
   },
-  debugInfo: {
-    padding: 8,
-    backgroundColor: '#f0f0f0',
-    marginHorizontal: 16,
-    borderRadius: 4,
-    marginTop: 8,
+  searchCloseBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.2)',
   },
-  debugText: {
-    fontSize: 10,
-    color: '#666',
+  inlineLoader: {
+    marginTop: 12,
+  },
+  listContent: {
+    paddingHorizontal: 14,
+    paddingBottom: 32,
+  },
+  listHeader: {
+    paddingTop: 16,
+    paddingBottom: 8,
+  },
+  resultsLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: C.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   section: {
-    marginBottom: 24,
+    marginBottom: 8,
   },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    marginHorizontal: 16,
-    marginBottom: 12,
-    color: '#333',
-  },
-  userItem: {
+  sectionHead: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f8f8f8',
+    gap: 8,
+    marginBottom: 8,
+    marginTop: 4,
+  },
+  sectionIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sectionTitle: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '700',
+    color: C.text,
+  },
+  sectionCount: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: C.muted,
+    backgroundColor: C.primarySoft,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+  userCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: C.surface,
+    borderRadius: 16,
+    padding: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: C.border,
+    gap: 12,
+    shadowColor: C.primaryDark,
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 1,
   },
   avatar: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    marginRight: 12,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+  },
+  avatarFallback: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: C.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarLetter: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: '800',
   },
   userInfo: {
     flex: 1,
+    minWidth: 0,
   },
   userName: {
     fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 2,
+    fontWeight: '700',
+    color: C.text,
   },
   userEmail: {
     fontSize: 13,
-    color: '#666',
-    marginBottom: 2,
+    color: C.muted,
+    marginTop: 2,
   },
   reasonText: {
     fontSize: 12,
-    color: '#007AFF',
-    fontStyle: 'italic',
+    color: C.primary,
+    marginTop: 3,
+    fontWeight: '500',
   },
   mutualText: {
     fontSize: 12,
-    color: '#28a745',
-  },
-  friendText: {
-    color: '#0A8A0A',
+    color: '#2e7d32',
+    marginTop: 3,
     fontWeight: '600',
-    fontSize: 12,
   },
-  pendingText: {
-    color: '#FFA500',
-    fontWeight: '600',
-    fontSize: 12,
-  },
-  emptyText: {
-    textAlign: 'center',
-    color: '#888',
-    marginTop: 40,
-    fontSize: 16,
-  },
-  emptyContainer: {
-    padding: 20,
+  addBtn: {
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: 4,
+    backgroundColor: C.primary,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
   },
-  emptySubtext: {
+  addBtnText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  statusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 20,
+  },
+  friendsPill: {
+    backgroundColor: '#e8f5e9',
+  },
+  friendsPillText: {
+    color: '#2e7d32',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  pendingPill: {
+    backgroundColor: '#fff3e0',
+  },
+  pendingPillText: {
+    color: '#e65100',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  emptyBox: {
+    alignItems: 'center',
+    paddingVertical: 48,
+    paddingHorizontal: 24,
+    gap: 8,
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: C.text,
+    marginTop: 4,
+  },
+  emptySub: {
+    fontSize: 14,
+    color: C.muted,
     textAlign: 'center',
-    color: '#999',
-    marginTop: 8,
+    lineHeight: 20,
+  },
+  emptySearchBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 12,
+    backgroundColor: C.primary,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 22,
+  },
+  emptySearchBtnText: {
+    color: '#fff',
+    fontWeight: '700',
     fontSize: 14,
   },
 });

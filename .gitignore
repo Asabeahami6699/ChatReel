@@ -18,8 +18,14 @@ expo-env.d.ts
 *.key
 *.mobileprovision
 
-# Metro
+# Metro / Expo temp
 .metro-health-check*
+.expo-tmp-bundle*
+.expo-tmp-bundle-check/
+test.hbc
+android-build-arm64.log
+android-build-arm64.status
+emulator-*.png
 
 # debug
 npm-debug.*
@@ -31,7 +37,10 @@ yarn-error.*
 *.pem
 
 # local env files
+.env
 .env*.local
+backend/.env
+backend/dist
 
 # typescript
 *.tsbuildinfo
@@ -39,3 +48,6 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+.idea/
+

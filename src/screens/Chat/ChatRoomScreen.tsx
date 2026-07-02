@@ -1,4 +1,4 @@
-// src/screens/Chat/ChatRoomScreen.tsx
+﻿// src/screens/Chat/ChatRoomScreen.tsx
 import React, {
   useState,
   useEffect,
@@ -7,7 +7,6 @@ import React, {
   useMemo,
 } from 'react';
 import {
-  SafeAreaView,
   View,
   Text,
   StyleSheet,
@@ -17,282 +16,425 @@ import {
   Image,
   Alert,
   ActivityIndicator,
-  Modal,
-  TouchableWithoutFeedback,
-  StatusBar,
-  SectionList,
+  FlatList,
 } from 'react-native';
 import { IconButton } from 'react-native-paper';
 import { useAuth } from '../../hooks/useAuth';
-import { supabase } from '../../lib/supabase';
+import { api } from '../../lib/api';
+import { uploadFromUri } from '../../lib/uploads';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { Ionicons, MaterialIcons, Feather } from '@expo/vector-icons';
 import ChatMenuDropdown, { MenuItem } from '../../components/ChatMenuDropdown';
-import * as DocumentPicker from 'expo-document-picker';
-import * as ImagePicker from 'expo-image-picker';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import ChatInput from './ChatInput';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
 import { messageStorage } from '../../utils/messageStorage';
 import * as FileSystem from 'expo-file-system/legacy';
-import { Audio } from 'expo-av';
-import { RefreshControl } from 'react-native';
-import { Keyboard } from 'react-native';
-
-type Message = {
-  id: string;
-  content: string;
-  created_at: string;
-  sender_id: string;
-  receiver_id?: string;
-  group_id?: string;
-  message_type?: 'text' | 'audio' | 'image' | 'video' | 'file';
-  audio_url?: string;
-  audio_duration?: number;
-  file_url?: string;
-  local_file_uri?: string;
-  video_url?: string;
-  file_name?: string;
-  file_type?: string;
-  is_read?: boolean;
-  delivered?: boolean;
-  profiles?: { 
-    display_name: string; 
-    avatar_url: string; 
-    user_id?: string;
-  };
-  _status?: 'sending' | 'sent' | 'pending' | 'failed';
-  local_audio_uri?: string;
-};
-
-type RouteParams = {
-  chatId: string;
-  chatType: 'individual' | 'group';
-  chatName: string;
-  avatarUrl?: string;
-};
-
-type SectionData = {
-  title: string;
-  date: Date;
-  data: Message[];
-};
-
-const MessageStatus = ({ status, isRead, delivered }: { 
-  status?: string; 
-  isRead?: boolean; 
-  delivered?: boolean 
-}) => {
-  if (status === 'sending') {
-    return <ActivityIndicator size={12} color="#999" />;
-  } else if (status === 'pending' || status === 'failed') {
-    return <Ionicons name="time-outline" size={16} color="#FFA500" />;
-  } else if (isRead) {
-    return <Ionicons name="checkmark-done" size={16} color="#34B7F1" />;
-  } else if (delivered) {
-    return <Ionicons name="checkmark-done" size={16} color="#999" />;
-  } else {
-    return <Ionicons name="checkmark" size={16} color="#999" />;
-  }
-};
-
-// Generate unique ID for temporary messages
-const generateTempId = () => `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-
-// Format date for section headers
-const formatSectionDate = (date: Date): string => {
-  const today = new Date();
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
-  
-  const messageDate = new Date(date);
-  
-  if (messageDate.toDateString() === today.toDateString()) {
-    return 'Today';
-  } else if (messageDate.toDateString() === yesterday.toDateString()) {
-    return 'Yesterday';
-  } else if (messageDate.getFullYear() === today.getFullYear()) {
-    return messageDate.toLocaleDateString('en-US', { 
-      weekday: 'long', 
-      month: 'long', 
-      day: 'numeric' 
-    });
-  } else {
-    return messageDate.toLocaleDateString('en-US', { 
-      weekday: 'long', 
-      year: 'numeric',
-      month: 'long', 
-      day: 'numeric' 
-    });
-  }
-};
-
-// Group messages by date for SectionList
-const groupMessagesByDate = (messages: Message[]): SectionData[] => {
-  const sections: SectionData[] = [];
-  let currentSection: SectionData | null = null;
-  
-  // Sort messages by date
-  const sortedMessages = [...messages].sort((a, b) => 
-    new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-  );
-  
-  sortedMessages.forEach(message => {
-    const messageDate = new Date(message.created_at);
-    const sectionDate = new Date(
-      messageDate.getFullYear(),
-      messageDate.getMonth(),
-      messageDate.getDate()
-    );
-    
-    // Check if we need a new section
-    if (!currentSection || currentSection.date.getTime() !== sectionDate.getTime()) {
-      currentSection = {
-        title: formatSectionDate(sectionDate),
-        date: sectionDate,
-        data: []
-      };
-      sections.push(currentSection);
-    }
-    
-    // Add message to current section
-    currentSection.data.push(message);
-  });
-  
-  return sections;
-};
-
-// Helper to check if URI is a local file
-const isLocalFile = (uri: string): boolean => {
-  return uri && (
-    uri.startsWith('file://') || 
-    uri.startsWith('content://') || 
-    uri.startsWith('/') ||
-    uri.includes('ExponentAudio')
-  );
-};
+import {
+  configurePlaybackAudio,
+  createPlaybackPlayer,
+  ensureMicPermission,
+  releasePlayer,
+  type AudioPlayer,
+} from '../../lib/appAudio';
+import AttachmentPreview from '../../components/AttachmentPreview';
+import { ChatMediaViewer, type ChatMediaItem } from '../../components/ChatMediaViewer';
+import { chatTheme } from './chatTheme';
+import { buildChatRows, type ChatRow } from './chatListModel';
+import { ChatMessageRow } from './ChatMessageRow';
+import { ChatMediaAlbum } from './ChatMediaAlbum';
+import { navigateToReelPreview } from '../../navigation/navigateToChat';
+import { ensureSupabaseSession } from '../../lib/ensureSupabaseSession';
+import { useChatTyping } from '../../hooks/useChatTyping';
+import { usePartnerPresence } from '../../hooks/usePartnerPresence';
+import { setStringAsync } from '../../lib/clipboard';
+import { ChatSearchOverlay } from './ChatSearchOverlay';
+import { MessageActionSheet, type MessageAction } from './MessageActionSheet';
+import { ReplyPreviewBar } from './ReplyPreviewBar';
+import { MomentChatPreview } from './MomentChatPreview';
+import { isWithinMinutes, WALLPAPER_OPTIONS, buildForwardPayload, isValidUuid } from './chatMessageUtils';
+import { ForwardToChatPicker, type ForwardTarget } from './ForwardToChatPicker';
+import { ReadReceiptSheet } from './ReadReceiptSheet';
+import {
+  type ChatMessage as Message,
+  type AttachmentFile,
+  type ChatRouteParams as RouteParams,
+  generateTempId,
+  isLocalFile,
+  getMediaUri,
+  getAudioPlaybackUri,
+  deduplicateMessages,
+  messageBelongsToChat as rowBelongsToChat,
+  buildChatSendPayload,
+  sanitizeChatMessages,
+  isOutgoingChatMessage,
+  isIncomingChatMessage,
+  matchesOptimisticTemp,
+  normalizeRealtimeMessage,
+  filterMessagesByClearedAt,
+  visibilityToExpiry,
+  isMessageExpired,
+} from './chatRoomTypes';
+import { useChatRoomScroll } from './useChatRoomScroll';
+import { useChatRoomRealtime } from './useChatRoomRealtime';
+import { useRealtimeTopic } from '../../hooks/useRealtimeTopic';
 
 export default function ChatRoomScreen() {
   const { user } = useAuth();
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
-  const { chatId, chatType, chatName, avatarUrl } = route.params as RouteParams;
-  const isOnline = useNetworkStatus();
+  const params = route.params as RouteParams & { groupId?: string };
+  const chatId = params.chatId ?? params.groupId ?? '';
+  const chatType = params.chatType ?? (params.groupId ? 'group' : 'individual');
+  const chatName = params.chatName ?? 'Chat';
+  const avatarUrl = params.avatarUrl;
+  const hasNetwork = useNetworkStatus();
+  const isOnline = hasNetwork;
 
   const insets = useSafeAreaInsets();
-  
-  // FIXED: Use safe area insets for proper keyboard handling
-  const keyboardVerticalOffset = Platform.OS === 'ios' ? insets.top : 0;
+
+  // Header (70) + status bar height — keeps the FlatList aligned when keyboard slides in.
+  const keyboardVerticalOffset =
+    Platform.OS === 'ios' ? 70 + insets.top : 0;
 
   const [messages, setMessages] = useState<Message[]>([]);
-  const [sections, setSections] = useState<SectionData[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [isPlayingAudio, setIsPlayingAudio] = useState<string | null>(null);
-  const [sound, setSound] = useState<any>(null);
-  const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
-  const [lastFetchedId, setLastFetchedId] = useState<string | null>(null);
+  const [sound, setSound] = useState<AudioPlayer | null>(null);
+  const [composerDraft, setComposerDraft] = useState('');
+  const draftSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const [hasAudioPermission, setHasAudioPermission] = useState<boolean>(false);
-  const [failedImages, setFailedImages] = useState<Set<string>>(new Set());
+  const [pendingAttachments, setPendingAttachments] = useState<AttachmentFile[]>([]);
+  const [showAttachmentPreview, setShowAttachmentPreview] = useState(false);
+  const [mediaViewer, setMediaViewer] = useState<{ visible: boolean; index: number }>({
+    visible: false,
+    index: 0,
+  });
+  const [replyTo, setReplyTo] = useState<Message | null>(null);
+  const [searchVisible, setSearchVisible] = useState(false);
+  const [searchHitId, setSearchHitId] = useState<string | null>(null);
+  const [actionMessage, setActionMessage] = useState<Message | null>(null);
+  const [momentPreviewId, setMomentPreviewId] = useState<string | null>(null);
+  const [wallpaper, setWallpaper] = useState<string | null>(null);
+  const [starredIds, setStarredIds] = useState<string[]>([]);
+  const [clearedAt, setClearedAt] = useState<string | null>(null);
+  const [settingsReady, setSettingsReady] = useState(false);
+  const [firstUnreadId, setFirstUnreadId] = useState<string | null>(null);
+  const [pinnedBanner, setPinnedBanner] = useState<Message | null>(null);
+  const [editingMessage, setEditingMessage] = useState<Message | null>(null);
+  const [forwardMessage, setForwardMessage] = useState<Message | null>(null);
+  const [readReceiptMessageId, setReadReceiptMessageId] = useState<string | null>(null);
+  const [groupMembers, setGroupMembers] = useState<
+    Array<{ display_name: string; user_id?: string }>
+  >([]);
+  const unreadCapturedRef = useRef(false);
 
-  const flatListRef = useRef<any>(null);
+  const { statusText: partnerStatus } = usePartnerPresence(
+    chatType === 'individual' ? chatId : undefined,
+    chatType === 'individual'
+  );
+  const { typingLabel } = useChatTyping({
+    chatId,
+    chatType,
+    userId: user?.id,
+    displayName: user?.email?.split('@')[0],
+    draft: composerDraft,
+  });
+
+  const replyLookup = useMemo(() => {
+    const map = new Map<string, Message>();
+    for (const m of messages) map.set(m.id, m);
+    return map;
+  }, [messages]);
+
+  const filterByClearedAt = useCallback(
+    (list: Message[]) => filterMessagesByClearedAt(list, clearedAt),
+    [clearedAt]
+  );
+
+  // Re-evaluate disappearing messages on a timer so they vanish on schedule.
+  const [expiryTick, setExpiryTick] = useState(0);
+  useEffect(() => {
+    if (!messages.some((m) => m.expires_at)) return;
+    const id = setInterval(() => setExpiryTick((t) => t + 1), 5000);
+    return () => clearInterval(id);
+  }, [messages]);
+
+  const visibleMessages = useMemo(() => {
+    const now = Date.now();
+    return filterByClearedAt(messages).filter((m) => !isMessageExpired(m, now));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages, filterByClearedAt, expiryTick]);
+  const listTailId = visibleMessages[visibleMessages.length - 1]?.id ?? '';
+
+  const chatBgColor =
+    WALLPAPER_OPTIONS.find((w) => w.id === wallpaper)?.color ?? chatTheme.chatBg;
+
   const pendingRetryRef = useRef<boolean>(false);
   const syncInProgressRef = useRef<boolean>(false);
-  const shouldScrollToBottomRef = useRef<boolean>(true);
-  const contentHeightRef = useRef<number>(0);
-  const scrollViewHeightRef = useRef<number>(0);
-  const lastContentOffsetRef = useRef<number>(0);
-  const [refreshing, setRefreshing] = useState(false);
-  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+  const pullLatestAtRef = useRef(0);
+  const messagesCountRef = useRef(0);
+  const lastMessageAtRef = useRef<string | null>(null);
+  const pullLatestMessagesRef = useRef<() => Promise<void>>(async () => undefined);
+  const loadMoreMessagesRef = useRef<() => void>(() => undefined);
 
-  /* ------------------------------------------------------------------ */
-  /*  SCROLL MANAGEMENT                                                 */
-  /* ------------------------------------------------------------------ */
-  const scrollToBottom = useCallback(() => {
-    if (flatListRef.current && sections.length > 0) {
+  messagesCountRef.current = messages.length;
+  lastMessageAtRef.current = messages[messages.length - 1]?.created_at ?? null;
+
+  const chatRows = useMemo(
+    () =>
+      buildChatRows(visibleMessages, {
+        isGroup: chatType === 'group',
+        myUserId: user?.id ?? '',
+        firstUnreadId,
+      }),
+    [visibleMessages, chatType, user?.id, firstUnreadId]
+  );
+
+  const {
+    flatListRef,
+    showScrollDown,
+    isKeyboardVisible,
+    shouldStickToBottomRef: shouldScrollToBottomRef,
+    scrollToBottom,
+    scrollToBottomAndStick,
+    stickBeforeSend,
+    handleScroll,
+    onContentSizeChange,
+    onListLayout,
+    resetForChat,
+    beginLoadMore,
+    endLoadMore,
+    loadingMoreRef,
+  } = useChatRoomScroll({
+    messageCount: chatRows.length,
+    hasMore,
+    loadingMore,
+    initialLoadComplete,
+    onLoadMore: () => loadMoreMessagesRef.current(),
+  });
+
+  const persistMessages = useCallback(
+    (updater: (prev: Message[]) => Message[]) => {
+      setMessages((prev) => {
+        const next = deduplicateMessages(updater(prev));
+        void messageStorage.saveMessages(chatId, next);
+        return next;
+      });
+    },
+    [chatId]
+  );
+
+  const loadChatSettings = useCallback(async () => {
+    if (!chatId) {
+      setSettingsReady(true);
+      return;
+    }
+    try {
+      const { preferences } = await api.chatSettings.get(chatType, chatId);
+      setWallpaper((preferences.wallpaper as string) ?? null);
+      setClearedAt((preferences.cleared_at as string) ?? null);
+      setStarredIds((preferences.starred_message_ids as string[]) ?? []);
+    } catch {
+      // Preferences are optional until migration is applied.
+    }
+    if (chatType === 'group') {
       try {
-        const lastSectionIndex = sections.length - 1;
-        const lastItemIndex = sections[lastSectionIndex]?.data?.length - 1 || 0;
-        
-        flatListRef.current.scrollToLocation({
-          sectionIndex: lastSectionIndex,
-          itemIndex: lastItemIndex,
-          animated: true,
-          viewPosition: 0,
-        });
-      } catch (error) {
-        console.log('Scroll error, trying alternative:', error);
-        setTimeout(() => {
-          if (flatListRef.current) {
-            const lastSectionIndex = sections.length - 1;
-            const lastItemIndex = sections[lastSectionIndex]?.data?.length - 1 || 0;
-            
-            flatListRef.current.scrollToLocation({
-              sectionIndex: lastSectionIndex,
-              itemIndex: lastItemIndex,
-              animated: false,
-              viewPosition: 0,
+        const { pinned } = await api.chatSettings.pinned(chatId);
+        const first = pinned?.[0] as { messages?: Message } | undefined;
+        if (first?.messages) setPinnedBanner(first.messages);
+      } catch {
+        setPinnedBanner(null);
+      }
+    }
+    setSettingsReady(true);
+  }, [chatId, chatType]);
+
+  useEffect(() => {
+    setSettingsReady(false);
+    unreadCapturedRef.current = false;
+    setFirstUnreadId(null);
+    setReplyTo(null);
+    setEditingMessage(null);
+    void loadChatSettings();
+    if (chatType === 'group' && chatId) {
+      void api.groups
+        .members(chatId)
+        .then(async ({ members }) => {
+          const ids = (members as Array<{ user_id?: string }>)
+            .map((m) => m.user_id)
+            .filter(Boolean) as string[];
+          if (!ids.length) {
+            setGroupMembers([]);
+            return;
+          }
+          const { profiles } = await api.profiles.batch(ids);
+          setGroupMembers(
+            profiles.map((p) => ({
+              display_name: (p.display_name as string) || (p.email as string) || 'Member',
+              user_id: p.user_id as string,
+            }))
+          );
+        })
+        .catch(() => setGroupMembers([]));
+    } else {
+      setGroupMembers([]);
+    }
+  }, [chatId, chatType, loadChatSettings]);
+
+  useEffect(() => {
+    if (!user?.id || unreadCapturedRef.current || !initialLoadComplete) return;
+    const first = messages.find((m) => m.sender_id !== user.id && !m.is_read);
+    if (first) {
+      setFirstUnreadId(first.id);
+      unreadCapturedRef.current = true;
+    }
+  }, [messages, user?.id, initialLoadComplete]);
+
+  const scrollToMessage = useCallback(
+    (messageId: string) => {
+      const idx = chatRows.findIndex((r) => r.kind === 'message' && r.message.id === messageId);
+      if (idx >= 0) {
+        flatListRef.current?.scrollToIndex?.({ index: idx, animated: true });
+        setSearchHitId(messageId);
+        setTimeout(() => setSearchHitId(null), 2500);
+      }
+    },
+    [chatRows, flatListRef]
+  );
+
+  const handleMessageAction = useCallback(
+    async (action: MessageAction, emoji?: string) => {
+      const msg = actionMessage;
+      if (!msg) return;
+
+      if (action === 'reply') {
+        setReplyTo(msg);
+        return;
+      }
+      if (action === 'copy') {
+        const text =
+          msg.message_type === 'text' ? msg.content : msg.file_name || msg.content || '';
+        await setStringAsync(text);
+        return;
+      }
+      if (action === 'edit') {
+        setEditingMessage(msg);
+        setComposerDraft(msg.content);
+        return;
+      }
+      if (action === 'react' && emoji && !msg.id.startsWith('temp-')) {
+        try {
+          await api.messages.react(msg.id, emoji);
+          setMessages((prev) => {
+            const next = prev.map((m) => {
+              if (m.id !== msg.id) return m;
+              const reactions = [...(m.reactions ?? [])];
+              const idx = reactions.findIndex(
+                (r) => r.emoji === emoji && r.user_id === user?.id
+              );
+              if (idx >= 0) reactions.splice(idx, 1);
+              else if (user?.id) reactions.push({ emoji, user_id: user.id });
+              return { ...m, reactions };
             });
-          }
-        }, 100);
+            void messageStorage.saveMessages(chatId, next);
+            return next;
+          });
+        } catch {
+          Alert.alert('Error', 'Could not add reaction');
+        }
+        return;
       }
-    }
-  }, [sections]);
-
-  const handleScroll = useCallback((event: any) => {
-    const offsetY = event.nativeEvent.contentOffset.y;
-    const contentHeight = event.nativeEvent.contentSize.height;
-    const scrollViewHeight = event.nativeEvent.layoutMeasurement.height;
-    
-    lastContentOffsetRef.current = offsetY;
-    contentHeightRef.current = contentHeight;
-    scrollViewHeightRef.current = scrollViewHeight;
-    
-    const distanceFromBottom = contentHeight - offsetY - scrollViewHeight;
-    shouldScrollToBottomRef.current = distanceFromBottom < 100;
-    
-    const velocity = event.nativeEvent.velocity?.y;
-    if (velocity && velocity < 0) {
-      shouldScrollToBottomRef.current = false;
-    }
-  }, []);
-
-  useEffect(() => {
-  const keyboardDidShowListener = Keyboard.addListener(
-    'keyboardDidShow',
-    () => {
-      setIsKeyboardVisible(true);
-    }
-  );
-  const keyboardDidHideListener = Keyboard.addListener(
-    'keyboardDidHide',
-    () => {
-      setIsKeyboardVisible(false);
-    }
-  );
-
-  return () => {
-    keyboardDidShowListener.remove();
-    keyboardDidHideListener.remove();
-  };
-}, []);
-
-  useEffect(() => {
-    if (messages.length > 0 && !loading && !loadingMore && initialLoadComplete) {
-      if (!loadingMore) {
-        const timer = setTimeout(() => {
-          if (shouldScrollToBottomRef.current || !loadingMore) {
-            scrollToBottom();
-          }
-        }, 300);
-        
-        return () => clearTimeout(timer);
+      if (action === 'star') {
+        const next = starredIds.includes(msg.id)
+          ? starredIds.filter((id) => id !== msg.id)
+          : [...starredIds, msg.id];
+        setStarredIds(next);
+        try {
+          await api.chatSettings.update(chatType, chatId, { starred_message_ids: next });
+        } catch {
+          Alert.alert('Error', 'Could not update starred messages');
+        }
+        return;
       }
-    }
-  }, [messages, loading, loadingMore, initialLoadComplete, scrollToBottom]);
+      if (action === 'pin' && chatType === 'group' && !msg.id.startsWith('temp-')) {
+        try {
+          await api.chatSettings.pin(chatId, msg.id);
+          setPinnedBanner(msg);
+          Alert.alert('Pinned', 'Message pinned for the group');
+        } catch {
+          Alert.alert('Error', 'Could not pin message');
+        }
+        return;
+      }
+      if (action === 'forward') {
+        setForwardMessage(msg);
+        return;
+      }
+      if (action === 'delete_me' && !msg.id.startsWith('temp-')) {
+        try {
+          await api.messages.delete(msg.id, false);
+          persistMessages((prev) => prev.filter((m) => m.id !== msg.id));
+        } catch {
+          Alert.alert('Error', 'Could not delete message');
+        }
+        return;
+      }
+      if (action === 'delete_all' && !msg.id.startsWith('temp-')) {
+        try {
+          await api.messages.delete(msg.id, true);
+          persistMessages((prev) =>
+            prev.map((m) =>
+              m.id === msg.id
+                ? { ...m, content: 'This message was deleted', message_type: 'text' as const }
+                : m
+            )
+          );
+        } catch {
+          Alert.alert('Error', 'Could not delete for everyone');
+        }
+      }
+    },
+    [
+      actionMessage,
+      starredIds,
+      chatType,
+      chatId,
+      user?.id,
+      persistMessages,
+    ]
+  );
+
+  const handleForwardTo = useCallback(
+    async (target: ForwardTarget) => {
+      const msg = forwardMessage;
+      if (!msg || msg.id.startsWith('temp-')) {
+        Alert.alert('Forward', 'Wait until the message is sent before forwarding.');
+        return;
+      }
+
+      try {
+        const payload = {
+          ...buildForwardPayload(msg),
+          ...(target.chatType === 'individual'
+            ? { receiver_id: target.chatId }
+            : { group_id: target.chatId }),
+        };
+        await api.messages.send(payload);
+        Alert.alert('Forwarded', `Message sent to ${target.chatName}`);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Could not forward message';
+        Alert.alert('Forward failed', message);
+      } finally {
+        setForwardMessage(null);
+      }
+    },
+    [forwardMessage]
+  );
 
   /* ------------------------------------------------------------------ */
   /*  AUDIO PERMISSION & SETUP                                          */
@@ -305,18 +447,11 @@ export default function ChatRoomScreen() {
           return;
         }
 
-        const { status } = await Audio.requestPermissionsAsync();
+        const granted = await ensureMicPermission();
         
-        if (status === 'granted') {
+        if (granted) {
           setHasAudioPermission(true);
-          
-          await Audio.setAudioModeAsync({
-            allowsRecordingIOS: false,
-            playsInSilentModeIOS: true,
-            staysActiveInBackground: false,
-            shouldDuckAndroid: true,
-            playThroughEarpieceAndroid: false,
-          });
+          await configurePlaybackAudio();
         } else {
           console.log('Audio permission not granted');
           setHasAudioPermission(false);
@@ -333,16 +468,10 @@ export default function ChatRoomScreen() {
   /* ------------------------------------------------------------------ */
   /*  MESSAGE MANAGEMENT FUNCTIONS                                      */
   /* ------------------------------------------------------------------ */
-  const deduplicateMessages = useCallback((messages: Message[]): Message[] => {
-    const seen = new Set();
-    return messages.filter(message => {
-      if (seen.has(message.id)) {
-        return false;
-      }
-      seen.add(message.id);
-      return true;
-    }).sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-  }, []);
+  const messageBelongsToChat = useCallback(
+    (msg: Message) => rowBelongsToChat(msg, chatId, chatType, user?.id),
+    [chatId, chatType, user?.id]
+  );
 
   const syncWithServer = async (localMessages: Message[], loadMore: boolean = false) => {
     if (!isOnline || syncInProgressRef.current || !user?.id) return;
@@ -350,59 +479,41 @@ export default function ChatRoomScreen() {
     try {
       syncInProgressRef.current = true;
       if (loadMore) {
+        beginLoadMore();
         setLoadingMore(true);
       } else {
         setSyncing(true);
       }
 
-      let query = supabase
-        .from('messages')
-        .select('*', { count: 'exact' })
-        .order('created_at', { ascending: false })
-        .limit(50);
-
-      if (loadMore && messages.length > 0) {
-        const sorted = [...messages].sort((a, b) =>
-          new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-        );
-        const oldest = sorted[0];
-        if (oldest) {
-          query = query.lt('created_at', oldest.created_at);
-        }
-      }
-
-      if (chatType === 'individual') {
-        query = query.or(
-          `and(receiver_id.eq.${chatId},sender_id.eq.${user.id}),` +
-          `and(receiver_id.eq.${user.id},sender_id.eq.${chatId})`
-        );
-      } else {
-        query = query.eq('group_id', chatId);
-      }
-
-      const { data: messagesData, error } = await query;
-
-      if (error) throw error;
+      const before =
+        loadMore && localMessages.length > 0 ? localMessages[0].created_at : undefined;
+      const { messages: rawMessages } = await api.messages.list(
+        chatId,
+        chatType === 'group',
+        50,
+        before,
+        clearedAt ?? undefined
+      );
+      const messagesData = sanitizeChatMessages([...(rawMessages as Message[])]).filter((m) =>
+        messageBelongsToChat(m)
+      );
 
       if (messagesData && messagesData.length > 0) {
-        const senderIds = [...new Set(messagesData.map(m => m.sender_id))];
+        const senderIds = [...new Set(messagesData.map((m) => m.sender_id))];
 
-        let profilesData: any = {};
+        let profilesData: Record<string, Message['profiles']> = {};
         if (senderIds.length > 0) {
-          const { data: profiles } = await supabase
-            .from('profiles')
-            .select('user_id, display_name, avatar_url')
-            .in('user_id', senderIds);
-
-          if (profiles) {
-            profilesData = profiles.reduce((acc, p) => {
-              if (p.user_id) acc[p.user_id] = p;
+          const { profiles } = await api.profiles.batch(senderIds);
+          profilesData = profiles.reduce(
+            (acc: Record<string, Message['profiles']>, p: any) => {
+              if (p?.user_id) acc[p.user_id] = p;
               return acc;
-            }, {} as any);
-          }
+            },
+            {}
+          );
         }
 
-        const messagesWithProfiles = messagesData.map(serverMsg => {
+        const messagesWithProfiles: Message[] = messagesData.map((serverMsg) => {
           const localMatch = localMessages.find(localMsg => {
             if (localMsg.id === serverMsg.id) return true;
             if (
@@ -428,12 +539,15 @@ export default function ChatRoomScreen() {
           };
         });
 
-        const serverMessages = messagesWithProfiles.reverse();
+        const serverMessages = messagesWithProfiles;
 
         let finalMessages: Message[];
 
         if (loadMore) {
-          finalMessages = deduplicateMessages([...serverMessages, ...localMessages]);
+          finalMessages = deduplicateMessages([
+            ...serverMessages,
+            ...sanitizeChatMessages(localMessages),
+          ]);
         } else {
           const localPending = localMessages.filter(m =>
             m.id.startsWith('temp-') &&
@@ -447,39 +561,44 @@ export default function ChatRoomScreen() {
         }
 
         setMessages(finalMessages);
-        setSections(groupMessagesByDate(finalMessages));
         setHasMore(messagesData.length === 50);
 
         await messageStorage.saveMessages(chatId, finalMessages);
-
-        if (!loadMore && chatType === 'individual') {
-          markMessagesAsRead();
-        }
       }
       else if (messagesData && messagesData.length === 0 && !loadMore) {
-        await messageStorage.clearMessages(chatId);
-        setMessages([]);
-        setSections([]);
-        setHasMore(false);
+        const kept = deduplicateMessages(
+          filterByClearedAt(sanitizeChatMessages(localMessages)).filter((m) =>
+            messageBelongsToChat(m)
+          )
+        );
+        if (kept.length > 0) {
+          setMessages(kept);
+          setHasMore(false);
+          await messageStorage.saveMessages(chatId, kept);
+        } else {
+          await messageStorage.clearMessages(chatId);
+          setMessages([]);
+          setHasMore(false);
+        }
       }
       else {
         setHasMore(false);
         if (!loadMore) {
           const deduped = deduplicateMessages(localMessages);
           setMessages(deduped);
-          setSections(groupMessagesByDate(deduped));
         }
       }
     } catch (err: any) {
       console.error('Sync error:', err);
-      if (!loadMore && !initialLoadComplete) {
+      if (!loadMore) {
         const deduped = deduplicateMessages(localMessages);
-        setMessages(deduped);
-        setSections(groupMessagesByDate(deduped));
+        if (deduped.length > 0) setMessages(deduped);
       }
     } finally {
-      if (loadMore) setLoadingMore(false);
-      else {
+      if (loadMore) {
+        endLoadMore();
+        setLoadingMore(false);
+      } else {
         setLoading(false);
         setSyncing(false);
       }
@@ -503,11 +622,12 @@ export default function ChatRoomScreen() {
 
     try {
       const localMessages = await messageStorage.getMessages(chatId);
-      const dedupedLocalMessages = deduplicateMessages(localMessages);
+      const dedupedLocalMessages = deduplicateMessages(
+        filterByClearedAt(sanitizeChatMessages(localMessages))
+      );
       
       if (!loadMore && dedupedLocalMessages.length > 0) {
         setMessages(dedupedLocalMessages);
-        setSections(groupMessagesByDate(dedupedLocalMessages));
         setLoading(false);
       }
 
@@ -517,7 +637,6 @@ export default function ChatRoomScreen() {
         if (!loadMore) {
           if (dedupedLocalMessages.length === 0) {
             setMessages([]);
-            setSections([]);
           }
           setLoading(false);
           setInitialLoadComplete(true);
@@ -532,36 +651,30 @@ export default function ChatRoomScreen() {
       }
       setLoadingMore(false);
     }
-  }, [user?.id, chatId, isOnline, initialLoadComplete]);
+  }, [user?.id, chatId, isOnline, initialLoadComplete, filterByClearedAt, clearedAt]);
 
   const markMessagesAsRead = useCallback(async () => {
-    if (!user?.id || chatType !== 'individual') return;
+    if (!user?.id || !isValidUuid(chatId)) return;
 
     try {
-      const { error } = await supabase
-        .from('messages')
-        .update({ 
-          is_read: true,
-          read_at: new Date().toISOString()
-        })
-        .eq('receiver_id', user.id)
-        .eq('sender_id', chatId)
-        .is('is_read', false);
-
-      if (!error) {
-        setMessages(prev => prev.map(msg => 
-          msg.sender_id === chatId && msg.receiver_id === user.id 
-            ? { ...msg, is_read: true }
-            : msg
-        ));
-        setSections(prev => prev.map(section => ({
-          ...section,
-          data: section.data.map(msg => 
-            msg.sender_id === chatId && msg.receiver_id === user.id 
+      if (chatType === 'individual') {
+        await api.messages.markRead({ partner_user_id: chatId });
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.sender_id === chatId && msg.receiver_id === user.id
               ? { ...msg, is_read: true }
               : msg
           )
-        })));
+        );
+      } else {
+        await api.messages.markRead({ group_id: chatId });
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.sender_id !== user.id && msg.group_id === chatId
+              ? { ...msg, is_read: true }
+              : msg
+          )
+        );
       }
     } catch (error) {
       console.error('Mark as read error:', error);
@@ -569,18 +682,14 @@ export default function ChatRoomScreen() {
   }, [user?.id, chatId, chatType]);
 
   const markSingleMessageAsRead = useCallback(async (messageId: string) => {
-    if (!user?.id) return;
-    
+    if (!user?.id || !isValidUuid(messageId)) return;
+
+    setMessages((prev) =>
+      prev.map((msg) => (msg.id === messageId ? { ...msg, is_read: true } : msg))
+    );
+
     try {
-      await supabase
-        .from('messages')
-        .update({ 
-          is_read: true,
-          read_at: new Date().toISOString()
-        })
-        .eq('id', messageId)
-        .eq('receiver_id', user.id)
-        .eq('is_read', false);
+      await api.messages.markRead({ message_id: messageId });
     } catch (error) {
       console.error('Mark single as read error:', error);
     }
@@ -616,112 +725,121 @@ export default function ChatRoomScreen() {
 
   const sendMessageToServer = async (message: Message) => {
     try {
-      const messageData: any = {
-        sender_id: user?.id,
+      const payload = buildChatSendPayload(chatType, chatId, {
         content: message.content,
         message_type: message.message_type || 'text',
-      };
-
-      if (chatType === 'individual') {
-        messageData.receiver_id = chatId;
-      } else {
-        messageData.group_id = chatId;
-      }
+        ...(message.reply_to_id ? { reply_to_id: message.reply_to_id } : {}),
+      });
 
       if (message.message_type === 'audio') {
-        messageData.audio_url = message.audio_url;
-        messageData.audio_duration = message.audio_duration;
-        messageData.file_name = message.file_name;
-        messageData.file_type = message.file_type;
+        payload.audio_url = message.audio_url;
+        payload.audio_duration = message.audio_duration;
+        payload.file_name = message.file_name;
+        payload.file_type = message.file_type;
       }
 
-      if (message.message_type === 'image' || message.message_type === 'file') {
-        // Use clean URL without cache buster
+      if (message.message_type === 'image' || message.message_type === 'file' || message.message_type === 'video') {
         const cleanFileUrl = message.file_url ? message.file_url.split('?')[0] : message.file_url;
-        messageData.file_url = cleanFileUrl;
-        messageData.file_name = message.file_name;
-        messageData.file_type = message.file_type;
+        payload.file_url = cleanFileUrl;
+        payload.file_name = message.file_name;
+        payload.file_type = message.file_type;
+        if (message.expires_at) payload.expires_at = message.expires_at;
+        if (message.view_once) payload.view_once = true;
       }
 
-      const { data, error } = await supabase
-        .from('messages')
-        .insert(messageData)
-        .select()
-        .single();
-
-      if (error) throw error;
+      const { message: rawData } = await api.messages.send(payload);
+      const data = rawData as unknown as Message;
 
       setMessages(prevMessages => {
-        const updated = prevMessages.map(msg => 
-          msg.id === message.id 
-            ? { 
-                ...data, 
-                profiles: message.profiles, 
+        const updated: Message[] = prevMessages.map(msg =>
+          msg.id === message.id
+            ? ({
+                ...data,
+                profiles: message.profiles,
                 _status: 'sent' as const,
                 local_file_uri: msg.local_file_uri,
-                ...(message.message_type === 'audio' && { local_audio_uri: message.local_audio_uri })
-              }
+                ...(message.message_type === 'audio' && { local_audio_uri: message.local_audio_uri }),
+              } as Message)
             : msg
         );
         const deduped = deduplicateMessages(updated);
-        setSections(groupMessagesByDate(deduped));
+        void messageStorage.saveMessages(chatId, deduped);
         return deduped;
       });
 
-      const updatedMessages = messages.map(msg => 
-        msg.id === message.id 
-          ? { 
-              ...data, 
-              profiles: message.profiles, 
-              _status: 'sent' as const,
-              ...(message.message_type === 'audio' && { local_audio_uri: message.local_audio_uri })
-            }
-          : msg
-      );
-      await messageStorage.saveMessages(chatId, deduplicateMessages(updatedMessages));
-
       shouldScrollToBottomRef.current = true;
-      setTimeout(() => {
-        scrollToBottom();
-      }, 50);
+      setTimeout(() => scrollToBottom(), 50);
 
       return true;
     } catch (error) {
       console.error('Send message to server error:', error);
-      
-      setMessages(prevMessages => {
-        const updated = prevMessages.map(msg => 
-          msg.id === message.id 
-            ? { ...msg, _status: 'failed' as const }
-            : msg
-        );
-        setSections(groupMessagesByDate(updated));
-        return updated;
-      });
 
-      const failedMessages = messages.map(msg => 
-        msg.id === message.id 
-          ? { ...msg, _status: 'failed' as const }
-          : msg
+      persistMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === message.id ? { ...msg, _status: 'failed' as const } : msg
+        )
       );
-      await messageStorage.saveMessages(chatId, deduplicateMessages(failedMessages));
-      
+
       return false;
     }
+  };
+
+  const retrySingleMessage = async (message: Message) => {
+    if (!isOnline) {
+      Alert.alert('Offline', 'Reconnect to retry sending.');
+      return;
+    }
+    persistMessages((prev) =>
+      prev.map((m) => (m.id === message.id ? { ...m, _status: 'sending' as const } : m))
+    );
+    await sendMessageToServer(message);
   };
 
   const sendMessage = async (messageText: string) => {
     if (!messageText.trim() || !user?.id) return;
 
+    if (editingMessage && !editingMessage.id.startsWith('temp-')) {
+      try {
+        const { message: updated } = await api.messages.edit(
+          editingMessage.id,
+          messageText.trim()
+        );
+        persistMessages((prev) =>
+          prev.map((m) =>
+            m.id === editingMessage.id
+              ? { ...m, ...(updated as Message), _status: 'sent' as const }
+              : m
+          )
+        );
+        setEditingMessage(null);
+        setComposerDraft('');
+        void messageStorage.clearDraft(chatId);
+        return;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : 'Could not edit message';
+        Alert.alert('Edit failed', msg);
+        return;
+      }
+    }
+
     const messageContent = messageText.trim();
     const tempId = generateTempId();
+    const replyId = replyTo?.id.startsWith('temp-') ? undefined : replyTo?.id;
+
+    setComposerDraft('');
+    setReplyTo(null);
+    void messageStorage.clearDraft(chatId);
 
     const optimisticMessage: Message = {
       id: tempId,
       content: messageContent,
       created_at: new Date().toISOString(),
       sender_id: user.id,
+      ...(chatType === 'individual'
+        ? { receiver_id: chatId }
+        : { group_id: chatId }),
       message_type: 'text',
+      reply_to_id: replyId,
       delivered: false,
       is_read: false,
       profiles: {
@@ -732,21 +850,10 @@ export default function ChatRoomScreen() {
       _status: 'sending' as const
     };
 
-    setMessages(prevMessages => {
-      const newMessages = [...prevMessages, optimisticMessage];
-      const deduped = deduplicateMessages(newMessages);
-      setSections(groupMessagesByDate(deduped));
-      return deduped;
-    });
+    persistMessages((prev) => [...prev, optimisticMessage]);
 
-    const updatedMessages = [...messages, optimisticMessage];
-    const dedupedUpdated = deduplicateMessages(updatedMessages);
-    await messageStorage.saveMessages(chatId, dedupedUpdated);
-
-    shouldScrollToBottomRef.current = true;
-    setTimeout(() => {
-      scrollToBottom();
-    }, 50);
+    stickBeforeSend();
+    setTimeout(() => scrollToBottom(), 50);
 
     if (isOnline) {
       const success = await sendMessageToServer(optimisticMessage);
@@ -754,22 +861,11 @@ export default function ChatRoomScreen() {
         Alert.alert('Error', 'Failed to send message');
       }
     } else {
-      setMessages(prevMessages => {
-        const updated = prevMessages.map(msg => 
-          msg.id === tempId 
-            ? { ...msg, _status: 'pending' as const }
-            : msg
-        );
-        setSections(groupMessagesByDate(updated));
-        return updated;
-      });
-
-      const pendingUpdated = dedupedUpdated.map(msg => 
-        msg.id === tempId 
-          ? { ...msg, _status: 'pending' as const }
-          : msg
+      persistMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === tempId ? { ...msg, _status: 'pending' as const } : msg
+        )
       );
-      await messageStorage.saveMessages(chatId, pendingUpdated);
     }
   };
 
@@ -777,18 +873,22 @@ export default function ChatRoomScreen() {
     if (!user?.id) return;
 
     const tempId = generateTempId();
-    const fileName = `voice_message_${Date.now()}.m4a`;
+    const fileName = `voice_message_${Date.now()}.${Platform.OS === 'web' ? 'webm' : 'm4a'}`;
+    const mimeType = Platform.OS === 'web' ? 'audio/webm' : 'audio/m4a';
 
     const optimisticMessage: Message = {
       id: tempId,
       content: 'Voice message',
       created_at: new Date().toISOString(),
       sender_id: user.id,
+      ...(chatType === 'individual'
+        ? { receiver_id: chatId }
+        : { group_id: chatId }),
       message_type: 'audio',
       audio_url: audioUri,
       audio_duration: Math.round(duration),
       file_name: fileName,
-      file_type: 'audio/m4a',
+      file_type: mimeType,
       local_audio_uri: audioUri,
       delivered: false,
       is_read: false,
@@ -800,39 +900,17 @@ export default function ChatRoomScreen() {
       _status: 'sending' as const
     };
 
-    setMessages(prevMessages => {
-      const newMessages = [...prevMessages, optimisticMessage];
-      const deduped = deduplicateMessages(newMessages);
-      setSections(groupMessagesByDate(deduped));
-      return deduped;
-    });
-    
-    const updatedMessages = [...messages, optimisticMessage];
-    const dedupedUpdated = deduplicateMessages(updatedMessages);
-    await messageStorage.saveMessages(chatId, dedupedUpdated);
+    persistMessages((prev) => [...prev, optimisticMessage]);
 
-    shouldScrollToBottomRef.current = true;
-    setTimeout(() => {
-      scrollToBottom();
-    }, 50);
+    stickBeforeSend();
+    setTimeout(() => scrollToBottom(), 50);
 
     if (!isOnline) {
-      setMessages(prevMessages => {
-        const updated = prevMessages.map(msg => 
-          msg.id === tempId 
-            ? { ...msg, _status: 'pending' as const }
-            : msg
-        );
-        setSections(groupMessagesByDate(updated));
-        return updated;
-      });
-
-      const pendingUpdated = dedupedUpdated.map(msg => 
-        msg.id === tempId 
-          ? { ...msg, _status: 'pending' as const }
-          : msg
+      persistMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === tempId ? { ...msg, _status: 'pending' as const } : msg
+        )
       );
-      await messageStorage.saveMessages(chatId, pendingUpdated);
       return;
     }
 
@@ -841,178 +919,68 @@ export default function ChatRoomScreen() {
 
   const uploadAndSendVoiceMessage = async (message: Message, audioUri: string, duration: number) => {
     try {
-      const fileInfo = await FileSystem.getInfoAsync(audioUri);
-      if (!fileInfo.exists) {
-        throw new Error('Audio file not found');
-      }
-
-      const fileName = `${user?.id}/audio/${Date.now()}_voice_message.m4a`;
-
-      let uploadSuccess = false;
-      let uploadError = null;
-
-      try {
-        const fileContent = await FileSystem.readAsStringAsync(audioUri, {
-          encoding: FileSystem.EncodingType.Base64,
-        });
-
-        const byteCharacters = atob(fileContent);
-        const byteNumbers = new Array(byteCharacters.length);
-        for (let i = 0; i < byteCharacters.length; i++) {
-          byteNumbers[i] = byteCharacters.charCodeAt(i);
+      if (Platform.OS === 'web') {
+        const response = await fetch(audioUri);
+        if (!response.ok) {
+          throw new Error('Audio file not found');
         }
-        const byteArray = new Uint8Array(byteNumbers);
-
-        const { error } = await supabase.storage
-          .from('chat-files')
-          .upload(fileName, byteArray, {
-            contentType: 'audio/m4a',
-            upsert: false,
-          });
-
-        if (!error) {
-          uploadSuccess = true;
-        } else {
-          uploadError = error;
-        }
-      } catch (base64Error) {
-        console.error('Base64 upload failed:', base64Error);
-        uploadError = base64Error;
-      }
-
-      if (!uploadSuccess) {
-        try {
-          const binaryContent = await FileSystem.readAsStringAsync(audioUri, {
-            encoding: FileSystem.EncodingType.UTF8,
-          });
-
-          const { error } = await supabase.storage
-            .from('chat-files')
-            .upload(fileName, binaryContent, {
-              contentType: 'audio/m4a',
-              upsert: false,
-            });
-
-          if (!error) {
-            uploadSuccess = true;
-          } else {
-            uploadError = error;
-          }
-        } catch (binaryError) {
-          console.error('Binary upload failed:', binaryError);
-          uploadError = binaryError;
+      } else {
+        const fileInfo = await FileSystem.getInfoAsync(audioUri);
+        if (!fileInfo.exists) {
+          throw new Error('Audio file not found');
         }
       }
 
-      if (!uploadSuccess) {
-        try {
-          const fileSize = fileInfo.size || 0;
-          
-          if (fileSize > 0) {
-            const { error } = await supabase.storage
-              .from('chat-files')
-              .upload(fileName, audioUri, {
-                contentType: 'audio/m4a',
-                upsert: false,
-              });
+      const fileName = `${user?.id}/audio/${Date.now()}_voice.${Platform.OS === 'web' ? 'webm' : 'm4a'}`;
+      const mimeType = Platform.OS === 'web' ? 'audio/webm' : 'audio/m4a';
+      const publicUrl = await uploadFromUri('chat-files', fileName, audioUri, mimeType);
 
-            if (!error) {
-              uploadSuccess = true;
-            } else {
-              uploadError = error;
-            }
-          }
-        } catch (chunkError) {
-          console.error('Chunk upload failed:', chunkError);
-          uploadError = chunkError;
-        }
-      }
-
-      if (!uploadSuccess) {
-        throw uploadError || new Error('Failed to upload audio file');
-      }
-
-      const { data: urlData } = supabase.storage
-        .from('chat-files')
-        .getPublicUrl(fileName);
-
-      const messageData: any = {
-        sender_id: user?.id,
+      const payload: Record<string, unknown> = {
         content: 'Voice message',
         message_type: 'audio',
-        audio_url: urlData.publicUrl,
+        audio_url: publicUrl,
         audio_duration: duration,
-        file_name: `voice_message_${Date.now()}.m4a`,
-        file_type: 'audio/m4a',
+        file_name: `voice_message_${Date.now()}.${Platform.OS === 'web' ? 'webm' : 'm4a'}`,
+        file_type: mimeType,
       };
 
       if (chatType === 'individual') {
-        messageData.receiver_id = chatId;
+        payload.receiver_id = chatId;
       } else {
-        messageData.group_id = chatId;
+        payload.group_id = chatId;
       }
 
-      const { data: insertedData, error: insertError } = await supabase
-        .from('messages')
-        .insert(messageData)
-        .select()
-        .single();
-
-      if (insertError) throw insertError;
+      const { message: rawInsertedData } = await api.messages.send(payload);
+      const insertedData = rawInsertedData as unknown as Message;
 
       setMessages(prevMessages => {
-        const updated = prevMessages.map(msg => 
-          msg.id === message.id 
-            ? { 
-                ...insertedData, 
-                profiles: message.profiles, 
+        const updated: Message[] = prevMessages.map(msg =>
+          msg.id === message.id
+            ? ({
+                ...insertedData,
+                profiles: message.profiles,
                 _status: 'sent' as const,
-                local_audio_uri: message.local_audio_uri
-              }
+                local_audio_uri: message.local_audio_uri,
+              } as Message)
             : msg
         );
         const deduped = deduplicateMessages(updated);
-        setSections(groupMessagesByDate(deduped));
+        void messageStorage.saveMessages(chatId, deduped);
         return deduped;
       });
 
-      const updatedMessages = messages.map(msg => 
-        msg.id === message.id 
-          ? { 
-              ...insertedData, 
-              profiles: message.profiles, 
-              _status: 'sent' as const,
-              local_audio_uri: message.local_audio_uri
-            }
-          : msg
-      );
-      await messageStorage.saveMessages(chatId, deduplicateMessages(updatedMessages));
-
       shouldScrollToBottomRef.current = true;
-      setTimeout(() => {
-        scrollToBottom();
-      }, 50);
+      setTimeout(() => scrollToBottom(), 50);
 
     } catch (error) {
       console.error('Failed to send voice message:', error);
-      
-      setMessages(prevMessages => {
-        const updated = prevMessages.map(msg => 
-          msg.id === message.id 
-            ? { ...msg, _status: 'failed' as const }
-            : msg
-        );
-        setSections(groupMessagesByDate(updated));
-        return updated;
-      });
 
-      const failedMessages = messages.map(msg => 
-        msg.id === message.id 
-          ? { ...msg, _status: 'failed' as const }
-          : msg
+      persistMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === message.id ? { ...msg, _status: 'failed' as const } : msg
+        )
       );
-      await messageStorage.saveMessages(chatId, deduplicateMessages(failedMessages));
-      
+
       Alert.alert('Error', 'Failed to send voice message');
     }
   };
@@ -1020,274 +988,216 @@ export default function ChatRoomScreen() {
   /* ------------------------------------------------------------------ */
   /*  FILE UPLOAD FUNCTIONS - FIXED                                     */
   /* ------------------------------------------------------------------ */
- const uploadFile = async (uri: string, name: string, type: string, messageType: 'image' | 'video' | 'file') => {
-  if (!user?.id) return;
+  const uploadFile = async (
+    uri: string,
+    name: string,
+    type: string,
+    messageType: 'image' | 'video' | 'file',
+    options?: { localThumbUri?: string; expiresAt?: string | null; viewOnce?: boolean }
+  ) => {
+    if (!user?.id) return;
 
-  const tempId = generateTempId();
-
-  const optimisticMessage: Message = {
-    id: tempId,
-    content: name,
-    created_at: new Date().toISOString(),
-    sender_id: user.id,
-    message_type: messageType,
-    file_url: uri,
-    local_file_uri: uri,
-    file_name: name,
-    file_type: type,
-    delivered: false,
-    is_read: false,
-    profiles: {
-      display_name: 'You',
-      avatar_url: null,
-      user_id: user.id
-    },
-    _status: 'sending' as const
-  };
-
-  setMessages(prev => {
-    const newMessages = [...prev, optimisticMessage];
-    const deduped = deduplicateMessages(newMessages);
-    setSections(groupMessagesByDate(deduped));
-    return deduped;
-  });
-
-  const updatedForStorage = [...messages, optimisticMessage];
-  const dedupedUpdated = deduplicateMessages(updatedForStorage);
-  await messageStorage.saveMessages(chatId, dedupedUpdated);
-
-  shouldScrollToBottomRef.current = true;
-  setTimeout(scrollToBottom, 50);
-
-  if (!isOnline) {
-    setMessages(prev => prev.map(m =>
-      m.id === tempId ? { ...m, _status: 'pending' as const } : m
-    ));
-    await messageStorage.saveMessages(chatId, messages);
-    return;
-  }
-
-  try {
-    const fileInfo = await FileSystem.getInfoAsync(uri);
-    if (!fileInfo.exists) throw new Error('File not found');
-
-    // FIX: Ensure proper file extension
-    const fileExt = name.split('.').pop()?.toLowerCase() || 
-                   (type.includes('jpeg') ? 'jpg' : 
-                    type.includes('png') ? 'png' : 
-                    type.includes('gif') ? 'gif' : 'jpg');
-    
-    // FIX: Use clean filename without special characters
+    const tempId = generateTempId();
     const cleanFileName = name.replace(/[^a-zA-Z0-9.-]/g, '_');
-    const fileName = `${user.id}/files/${Date.now()}_${cleanFileName}`;
 
-    console.log('Uploading file:', { uri, name, type, fileExt, fileName });
-
-    // FIX: Use different upload method based on platform
-    let uploadResult: any = null;
-    
-    // Method 1: Try using blob approach
-    try {
-      // Create blob from URI
-      const blob = await new Promise<Blob>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.onload = function() {
-          resolve(xhr.response);
-        };
-        xhr.onerror = function() {
-          reject(new Error('Failed to load file'));
-        };
-        xhr.responseType = 'blob';
-        xhr.open('GET', uri, true);
-        xhr.send(null);
-      });
-
-      // Upload to Supabase storage using blob
-      const { error: uploadError, data } = await supabase.storage
-        .from('chat-files')
-        .upload(fileName, blob, {
-          contentType: type,
-          upsert: false,
-          cacheControl: '3600',
-        });
-
-      if (uploadError) {
-        console.log('Blob upload failed, trying direct file upload...', uploadError);
-        
-        // Method 2: Direct file upload as fallback
-        const { error: directError } = await supabase.storage
-          .from('chat-files')
-          .upload(fileName, uri, {
-            contentType: type,
-            upsert: false,
-            cacheControl: '3600',
-          });
-          
-        if (directError) throw directError;
-      }
-    } catch (blobError) {
-      console.log('Blob method failed, trying base64...', blobError);
-      
-      // Method 3: Base64 upload as final fallback
-      try {
-        const fileContent = await FileSystem.readAsStringAsync(uri, {
-          encoding: FileSystem.EncodingType.Base64,
-        });
-        
-        const byteCharacters = atob(fileContent);
-        const byteNumbers = new Array(byteCharacters.length);
-        for (let i = 0; i < byteCharacters.length; i++) {
-          byteNumbers[i] = byteCharacters.charCodeAt(i);
-        }
-        const byteArray = new Uint8Array(byteNumbers);
-
-        const { error: base64Error } = await supabase.storage
-          .from('chat-files')
-          .upload(fileName, byteArray, {
-            contentType: type,
-            upsert: false,
-            cacheControl: '3600',
-          });
-
-        if (base64Error) throw base64Error;
-      } catch (base64Error) {
-        console.log('Base64 upload failed, trying simple upload...', base64Error);
-        
-        // Method 4: Simple upload as last resort
-        const { error: simpleError } = await supabase.storage
-          .from('chat-files')
-          .upload(fileName, uri, {
-            contentType: type,
-            upsert: false,
-            cacheControl: '3600',
-          });
-          
-        if (simpleError) throw simpleError;
-      }
-    }
-
-    // FIX: Get public URL with cache buster to prevent caching issues
-    const { data: { publicUrl } } = supabase.storage
-      .from('chat-files')
-      .getPublicUrl(fileName);
-
-    // Add cache buster to URL
-    const cacheBuster = `t=${Date.now()}`;
-    const finalUrl = `${publicUrl}?${cacheBuster}`;
-
-    // Insert into messages table
-    const messageData: any = {
-      sender_id: user.id,
+    const optimisticMessage: Message = {
+      id: tempId,
       content: name,
+      created_at: new Date().toISOString(),
+      sender_id: user.id,
+      ...(chatType === 'individual'
+        ? { receiver_id: chatId }
+        : { group_id: chatId }),
       message_type: messageType,
-      file_url: finalUrl,  // URL with cache buster
-      file_name: name,
+      file_url: uri,
+      local_file_uri: uri,
+      local_thumb_uri: options?.localThumbUri,
+      file_name: cleanFileName,
       file_type: type,
+      delivered: false,
+      is_read: false,
+      ...(options?.expiresAt ? { expires_at: options.expiresAt } : {}),
+      ...(options?.viewOnce ? { view_once: true } : {}),
+      profiles: {
+        display_name: 'You',
+        avatar_url: null,
+        user_id: user.id
+      },
+      _status: 'sending' as const
     };
 
-    if (chatType === 'individual') messageData.receiver_id = chatId;
-    else messageData.group_id = chatId;
+    persistMessages((prev) => [...prev, optimisticMessage]);
 
-    const { data: insertedData, error: insertErr } = await supabase
-      .from('messages')
-      .insert(messageData)
-      .select()
-      .single();
+    stickBeforeSend();
+    setTimeout(() => scrollToBottom(), 50);
 
-    if (insertErr) throw insertErr;
-
-    // Update UI
-    setMessages(prev => {
-      const updated = prev.map(msg =>
-        msg.id === tempId
-          ? {
-              ...insertedData,
-              profiles: optimisticMessage.profiles,
-              _status: 'sent' as const,
-              local_file_uri: optimisticMessage.local_file_uri,
-              file_url: finalUrl, // Use URL with cache buster
-            }
-          : msg
+    if (!isOnline) {
+      persistMessages((prev) =>
+        prev.map((m) =>
+          m.id === tempId ? { ...m, _status: 'pending' as const } : m
+        )
       );
-      const deduped = deduplicateMessages(updated);
-      setSections(groupMessagesByDate(deduped));
-      return deduped;
-    });
+      return;
+    }
 
-    // Update local storage
-    const finalMessages = messages.map(msg =>
-      msg.id === tempId
-        ? {
-            ...insertedData,
-            profiles: optimisticMessage.profiles,
-            _status: 'sent' as const,
-            local_file_uri: optimisticMessage.local_file_uri,
-            file_url: finalUrl,
+    try {
+      const storagePath = `${user.id}/files/${Date.now()}_${cleanFileName}`;
+      const publicUrl = await uploadFromUri('chat-files', storagePath, uri, type);
+
+      const payload: Record<string, unknown> = {
+        content: cleanFileName,
+        message_type: messageType,
+        file_url: publicUrl,
+        file_name: cleanFileName,
+        file_type: type,
+      };
+
+      if (options?.expiresAt) payload.expires_at = options.expiresAt;
+      if (options?.viewOnce) payload.view_once = true;
+
+      if (chatType === 'individual') {
+        payload.receiver_id = chatId;
+      } else {
+        payload.group_id = chatId;
+      }
+
+      const { message: rawInsertedData } = await api.messages.send(payload);
+      const insertedData = rawInsertedData as unknown as Message;
+
+      setMessages((prev) => {
+        const updated = prev.map((msg) =>
+          msg.id === tempId
+            ? ({
+                ...insertedData,
+                profiles: optimisticMessage.profiles,
+                _status: 'sent' as const,
+                local_file_uri: optimisticMessage.local_file_uri,
+                local_thumb_uri: optimisticMessage.local_thumb_uri,
+                file_url: publicUrl,
+              } as Message)
+            : msg
+        );
+        const deduped = deduplicateMessages(updated);
+        void messageStorage.saveMessages(chatId, deduped);
+        return deduped;
+      });
+
+      shouldScrollToBottomRef.current = true;
+      setTimeout(() => scrollToBottom(), 100);
+    } catch (error: unknown) {
+      console.error('File upload failed:', error);
+
+      persistMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === tempId ? { ...msg, _status: 'failed' as const } : msg
+        )
+      );
+
+      const message =
+        error instanceof Error ? error.message : 'Unknown error';
+      Alert.alert('Upload Failed', `Could not send ${messageType}. ${message}`);
+    }
+  };
+
+  /* ------------------------------------------------------------------ */
+  /*  ATTACHMENT HANDLING FUNCTIONS                                     */
+  /* ------------------------------------------------------------------ */
+  const handleSendFiles = useCallback(async (files: AttachmentFile[]) => {
+    if (!user?.id || files.length === 0) return;
+
+    for (const file of files) {
+      try {
+        let messageType: 'image' | 'video' | 'file' = 'file';
+        
+        if (file.type === 'photo') {
+          messageType = 'image';
+        } else if (file.type === 'video') {
+          messageType = 'video';
+        } else if (file.type === 'audio') {
+          // Handle audio files separately
+          await sendVoiceMessage(file.uri, file.duration || 0);
+          continue;
+        }
+        
+        await uploadFile(
+          file.uri,
+          file.name || `file_${Date.now()}`,
+          file.mimeType || 'application/octet-stream',
+          messageType,
+          {
+            localThumbUri: file.thumbnail,
+            expiresAt: visibilityToExpiry(file.expiresInSeconds),
+            viewOnce: file.viewOnce,
           }
-        : msg
-    );
-    await messageStorage.saveMessages(chatId, deduplicateMessages(finalMessages));
+        );
+      } catch (error) {
+        console.error('Failed to send file:', error);
+        Alert.alert('Error', `Failed to send ${file.type}`);
+      }
+    }
 
-    shouldScrollToBottomRef.current = true;
-    setTimeout(scrollToBottom, 100);
+    // Clear attachments after sending
+    setPendingAttachments([]);
+    setShowAttachmentPreview(false);
+  }, [user?.id, sendVoiceMessage]);
 
-  } catch (error: any) {
-    console.error('File upload failed:', error);
+  // Add function to handle single file send
+  const handleSendSingleFile = useCallback(async (file: AttachmentFile) => {
+    if (!user?.id) return;
 
-    // Mark as failed
-    setMessages(prev => {
-      const updated = prev.map(msg =>
-        msg.id === tempId ? { ...msg, _status: 'failed' as const } : msg
+    try {
+      let messageType: 'image' | 'video' | 'file' = 'file';
+      
+      if (file.type === 'photo') {
+        messageType = 'image';
+      } else if (file.type === 'video') {
+        messageType = 'video';
+      } else if (file.type === 'audio') {
+        await sendVoiceMessage(file.uri, file.duration || 0);
+        setShowAttachmentPreview(false);
+        return;
+      }
+      
+      await uploadFile(
+        file.uri,
+        file.name || `file_${Date.now()}`,
+        file.mimeType || 'application/octet-stream',
+        messageType,
+        {
+          localThumbUri: file.thumbnail,
+          expiresAt: visibilityToExpiry(file.expiresInSeconds),
+          viewOnce: file.viewOnce,
+        }
       );
-      const deduped = deduplicateMessages(updated);
-      setSections(groupMessagesByDate(deduped));
-      return deduped;
+      setShowAttachmentPreview(false);
+    } catch (error) {
+      console.error('Failed to send single file:', error);
+      Alert.alert('Error', `Failed to send ${file.type}`);
+    }
+  }, [user?.id, sendVoiceMessage]);
+
+  // Add function to handle attachments from ChatInput
+  const handleAttachmentsSelected = useCallback((attachments: AttachmentFile[]) => {
+    setPendingAttachments((prev) => [...prev, ...attachments]);
+    setShowAttachmentPreview(true);
+  }, []);
+
+  // Add function to remove attachment
+  const handleRemoveAttachment = useCallback((id: string) => {
+    setPendingAttachments(prev => {
+      const updated = prev.filter(att => att.id !== id);
+      if (updated.length === 0) {
+        setShowAttachmentPreview(false);
+      }
+      return updated;
     });
+  }, []);
 
-    const failedMessages = messages.map(msg =>
-      msg.id === tempId ? { ...msg, _status: 'failed' as const } : msg
-    );
-    await messageStorage.saveMessages(chatId, deduplicateMessages(failedMessages));
-
-    Alert.alert('Upload Failed', `Could not send ${messageType}. ${error.message}`);
-  }
-};
-
-  const pickImage = async () => {
-    try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [4, 3],
-        quality: 0.8,
-      });
-
-      if (!result.canceled && result.assets[0]) {
-        const asset = result.assets[0];
-        await uploadFile(asset.uri, `image_${Date.now()}.jpg`, 'image/jpeg', 'image');
-      }
-      setShowAttachmentMenu(false);
-    } catch (error) {
-      console.error('Image pick error:', error);
-      Alert.alert('Error', 'Failed to pick image');
-    }
-  };
-
-  const pickDocument = async () => {
-    try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: '*/*',
-      });
-
-      if (result.type === 'success' && result.uri) {
-        await uploadFile(result.uri, result.name || 'document', result.mimeType || 'application/octet-stream', 'file');
-      }
-      setShowAttachmentMenu(false);
-    } catch (error) {
-      console.error('Document pick error:', error);
-      Alert.alert('Error', 'Failed to pick document');
-    }
-  };
+  // Add function to clear all attachments
+  const handleClearAllAttachments = useCallback(() => {
+    setPendingAttachments([]);
+    setShowAttachmentPreview(false);
+  }, []);
 
   /* ------------------------------------------------------------------ */
   /*  AUDIO PLAYBACK FUNCTIONS                                          */
@@ -1295,8 +1205,8 @@ export default function ChatRoomScreen() {
   const playAudio = async (url: string, id: string) => {
     try {
       if (!hasAudioPermission && Platform.OS !== 'web') {
-        const { status } = await Audio.requestPermissionsAsync();
-        if (status !== 'granted') {
+        const granted = await ensureMicPermission();
+        if (!granted) {
           Alert.alert('Permission Required', 'Please grant audio permission to play voice messages.');
           return;
         }
@@ -1304,21 +1214,20 @@ export default function ChatRoomScreen() {
       }
 
       if (sound && isPlayingAudio === id) {
-        await sound.stopAsync();
-        await sound.unloadAsync();
+        await releasePlayer(sound);
         setIsPlayingAudio(null);
         setSound(null);
         return;
       }
 
       if (sound) {
-        await sound.unloadAsync();
+        await releasePlayer(sound);
         setSound(null);
         setIsPlayingAudio(null);
       }
 
-      const message = messages.find(msg => msg.id === id);
-      let audioUri = message?.local_audio_uri || url;
+      const message = messages.find((msg) => msg.id === id);
+      let audioUri = message ? getAudioPlaybackUri(message) : url;
 
       if (!audioUri) {
         throw new Error('Audio URI is null or undefined');
@@ -1328,30 +1237,20 @@ export default function ChatRoomScreen() {
         audioUri = `file://${audioUri}`;
       }
 
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: false,
-        shouldDuckAndroid: true,
-        playThroughEarpieceAndroid: false,
-      });
+      await configurePlaybackAudio();
 
-      const { sound: newSound } = await Audio.Sound.createAsync(
-        { uri: audioUri },
-        { 
-          shouldPlay: true,
-          volume: 1.0,
-        }
-      );
+      const newSound = createPlaybackPlayer(audioUri);
+      newSound.play();
 
       setSound(newSound);
       setIsPlayingAudio(id);
 
-      newSound.setOnPlaybackStatusUpdate((status: any) => {
-        if (status.didJustFinish) {
+      const sub = newSound.addListener('playbackStatusUpdate', (status) => {
+        if (status.duration > 0 && status.currentTime >= status.duration - 0.05) {
           setIsPlayingAudio(null);
           setSound(null);
-          newSound.unloadAsync();
+          void releasePlayer(newSound);
+          sub.remove();
         }
       });
 
@@ -1367,545 +1266,588 @@ export default function ChatRoomScreen() {
   /*  EFFECTS AND LIFECYCLE                                             */
   /* ------------------------------------------------------------------ */
   useEffect(() => {
-    fetchMessages();
-  }, [user?.id, chatId, chatType]);
+    if (!settingsReady || !user?.id || !chatId) return;
+    resetForChat();
+    void fetchMessages();
+  }, [user?.id, chatId, chatType, settingsReady]);
 
   useEffect(() => {
     if (isOnline && initialLoadComplete) {
-      const handleOnline = async () => {
-        await fetchMessages();
-        await retryPendingMessages();
-      };
-      handleOnline();
+      void retryPendingMessages();
     }
   }, [isOnline, initialLoadComplete]);
 
   useEffect(() => {
-    if (messages.length > 0 && chatType === 'individual' && initialLoadComplete) {
-      const hasUnreadMessages = messages.some(msg => 
-        msg.sender_id === chatId && 
-        msg.receiver_id === user?.id && 
-        !msg.is_read
-      );
-      
-      if (hasUnreadMessages) {
-        markMessagesAsRead();
-      }
-    }
-  }, [messages, chatType, user?.id, chatId, markMessagesAsRead, initialLoadComplete]);
-
-  useEffect(() => {
     return () => {
       if (sound) {
-        sound.unloadAsync();
+        void releasePlayer(sound);
       }
     };
   }, [sound]);
 
   useFocusEffect(
     useCallback(() => {
-      if (chatType === 'individual' && initialLoadComplete) {
-        markMessagesAsRead();
-      }
-      
       return () => {
         if (sound) {
-          sound.unloadAsync();
+          void releasePlayer(sound);
         }
       };
-    }, [chatType, markMessagesAsRead, initialLoadComplete, sound])
+    }, [sound])
   );
 
-  /* ------------------------------------------------------------------ */
-  /*  REALTIME SUBSCRIPTION                                             */
-  /* ------------------------------------------------------------------ */
   useEffect(() => {
-    if (!chatId || !user?.id || !isOnline || !initialLoadComplete) return;
-
-    let retryCount = 0;
-    const maxRetries = 3;
-
-    const setupRealtime = async () => {
-      try {
-        const channel = supabase
-          .channel(`chat-${chatId}-${user.id}`)
-          .on(
-            'postgres_changes',
-            {
-              event: 'INSERT',
-              schema: 'public',
-              table: 'messages',
-            },
-            async (payload) => {
-              const newMessage = payload.new;
-              
-              const isRelevantMessage = 
-                (chatType === 'individual' && 
-                 ((newMessage.receiver_id === chatId && newMessage.sender_id === user.id) ||
-                  (newMessage.receiver_id === user.id && newMessage.sender_id === chatId))) ||
-                (chatType === 'group' && newMessage.group_id === chatId);
-
-              if (isRelevantMessage) {
-                try {
-                  const { data: profile } = await supabase
-                    .from('profiles')
-                    .select('user_id, display_name, avatar_url')
-                    .eq('user_id', newMessage.sender_id)
-                    .single();
-
-                  const messageWithProfile: Message = {
-                    ...newMessage,
-                    profiles: profile || {
-                      display_name: newMessage.sender_id === user.id ? 'You' : 'Unknown User',
-                      avatar_url: null,
-                      user_id: newMessage.sender_id
-                    },
-                    _status: 'sent' as const
-                  };
-
-                  setMessages(prev => {
-                    if (prev.some(msg => msg.id === messageWithProfile.id)) {
-                      return prev;
-                    }
-                    const updated = deduplicateMessages([...prev, messageWithProfile]);
-                    setSections(groupMessagesByDate(updated));
-                    messageStorage.saveMessages(chatId, updated);
-                    return updated;
-                  });
-
-                  setTimeout(() => {
-                    if (shouldScrollToBottomRef.current) {
-                      scrollToBottom();
-                    }
-                  }, 100);
-
-                  if (newMessage.receiver_id === user.id && chatType === 'individual') {
-                    markSingleMessageAsRead(newMessage.id);
-                    
-                    setMessages(prev => {
-                      const updated = prev.map(msg => 
-                        msg.id === newMessage.id 
-                          ? { ...msg, is_read: true }
-                          : msg
-                      );
-                      setSections(groupMessagesByDate(updated));
-                      return deduplicateMessages(updated);
-                    });
-                  }
-                } catch (error) {
-                  console.error('Realtime insert error:', error);
-                }
-              }
-            }
-          )
-          .on(
-            'postgres_changes',
-            {
-              event: 'UPDATE',
-              schema: 'public',
-              table: 'messages',
-              filter: `receiver_id=eq.${user.id}`
-            },
-            (payload) => {
-              const updatedMessage = payload.new;
-              setMessages(prev => {
-                const updated = prev.map(msg => 
-                  msg.id === updatedMessage.id 
-                    ? { ...msg, is_read: updatedMessage.is_read }
-                    : msg
-                );
-                setSections(groupMessagesByDate(updated));
-                return deduplicateMessages(updated);
-              });
-            }
-          )
-          .subscribe((status) => {
-            if (status === 'SUBSCRIBED') {
-              retryCount = 0;
-            }
-          });
-
-        return channel;
-      } catch (error) {
-        console.error('Realtime setup error:', error);
-        if (retryCount < maxRetries) {
-          retryCount++;
-          setTimeout(setupRealtime, 1000 * retryCount);
-        }
-        return null;
-      }
-    };
-
-    const channelPromise = setupRealtime();
-
+    let alive = true;
+    if (!chatId) return;
+    void messageStorage.getDraft(chatId).then((saved) => {
+      if (alive) setComposerDraft(saved);
+    });
     return () => {
-      channelPromise.then(channel => {
-        if (channel) {
-          supabase.removeChannel(channel);
-        }
-      });
+      alive = false;
     };
-  }, [chatId, chatType, user?.id, isOnline, initialLoadComplete, markSingleMessageAsRead, scrollToBottom]);
+  }, [chatId]);
+
+  const handleDraftChange = useCallback(
+    (next: string) => {
+      setComposerDraft(next);
+      if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
+      draftSaveTimerRef.current = setTimeout(() => {
+        void messageStorage.saveDraft(chatId, next);
+      }, 250);
+    },
+    [chatId]
+  );
+
+  const upsertRealtimeMessage = useCallback(
+    (raw: Message, event: 'INSERT' | 'UPDATE') => {
+      if (!user?.id) return;
+
+      const normalized = normalizeRealtimeMessage(raw, chatId, chatType, user.id);
+      if (!messageBelongsToChat(normalized)) return;
+
+      // View-once was opened by the recipient: remove it for everyone (sender + recipient).
+      if (normalized.view_once && normalized.viewed_at) {
+        consumedViewOnceIdsRef.current.add(normalized.id);
+        persistMessages((prev) => prev.filter((m) => m.id !== normalized.id));
+        return;
+      }
+
+      // Don't resurrect a view-once message the recipient already opened.
+      if (consumedViewOnceIdsRef.current.has(normalized.id)) return;
+      if (isMessageExpired(normalized)) return;
+
+      const isOutgoing = isOutgoingChatMessage(normalized, user.id);
+      const isIncoming = isIncomingChatMessage(normalized, chatId, chatType, user.id);
+
+      const fallbackProfile: Message['profiles'] = {
+        display_name: isOutgoing ? 'You' : 'Unknown User',
+        avatar_url: '',
+        user_id: normalized.sender_id,
+      };
+
+      const incoming: Message = {
+        ...normalized,
+        profiles: normalized.profiles ?? fallbackProfile,
+        _status: 'sent',
+      };
+
+      setMessages((prev) => {
+        const idx = prev.findIndex((m) => m.id === incoming.id);
+
+        if (idx >= 0) {
+          const next = [...prev];
+          const existing = next[idx];
+          next[idx] = {
+            ...existing,
+            ...incoming,
+            local_file_uri: existing.local_file_uri ?? incoming.local_file_uri,
+            local_audio_uri: existing.local_audio_uri ?? incoming.local_audio_uri,
+            file_url: incoming.file_url || existing.file_url,
+            audio_url: incoming.audio_url || existing.audio_url,
+            profiles: incoming.profiles ?? existing.profiles,
+          };
+          void messageStorage.saveMessages(chatId, next);
+          return next;
+        }
+
+        if (event === 'INSERT' && isOutgoing) {
+          const tempIdx = prev.findIndex((m) =>
+            matchesOptimisticTemp(m, incoming, user.id)
+          );
+          if (tempIdx >= 0) {
+            const next = [...prev];
+            const temp = prev[tempIdx];
+            next[tempIdx] = {
+              ...incoming,
+              local_file_uri: temp.local_file_uri,
+              local_audio_uri: temp.local_audio_uri,
+              file_url: incoming.file_url || temp.file_url,
+              audio_url: incoming.audio_url || temp.audio_url,
+              profiles: temp.profiles ?? incoming.profiles,
+              _status: 'sent',
+            };
+            const deduped = deduplicateMessages(next);
+            void messageStorage.saveMessages(chatId, deduped);
+            return deduped;
+          }
+        }
+
+        if (event !== 'INSERT') return prev;
+
+        if (isIncoming || isOutgoing) {
+          const next = deduplicateMessages([...prev, incoming]);
+          void messageStorage.saveMessages(chatId, next);
+          return next;
+        }
+
+        return prev;
+      });
+
+      if (event === 'INSERT' && isIncoming) {
+        // Only follow the new message if the user is already at the bottom.
+        // If they scrolled up to read history, don't yank them down.
+        if (shouldScrollToBottomRef.current) {
+          requestAnimationFrame(() => scrollToBottom(false));
+          setTimeout(() => scrollToBottom(false), 80);
+        }
+
+        if (chatType === 'individual' && incoming.receiver_id === user.id) {
+          markSingleMessageAsRead(incoming.id);
+        }
+        if (chatType === 'group' && incoming.sender_id !== user.id) {
+          markSingleMessageAsRead(incoming.id);
+        }
+
+        setTimeout(() => void pullLatestMessagesRef.current(), 400);
+      }
+
+      if (!normalized.profiles && normalized.sender_id && isIncoming) {
+        void api.profiles.getByUserId(normalized.sender_id).then(({ profile: p }) => {
+          if (!p) return;
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === normalized.id ? { ...m, profiles: p as Message['profiles'] } : m
+            )
+          );
+        }).catch(() => undefined);
+      }
+    },
+    [
+      messageBelongsToChat,
+      user?.id,
+      chatId,
+      chatType,
+      scrollToBottom,
+      markSingleMessageAsRead,
+    ]
+  );
+
+  useChatRoomRealtime({
+    chatId,
+    chatType,
+    userId: user?.id,
+    onMessage: upsertRealtimeMessage,
+  });
+
+  const pullLatestMessages = useCallback(async () => {
+    if (!chatId || !user?.id || syncInProgressRef.current) return;
+
+    const now = Date.now();
+    if (now - pullLatestAtRef.current < 500) return;
+    pullLatestAtRef.current = now;
+
+    await ensureSupabaseSession();
+    try {
+      let since = clearedAt ?? undefined;
+      const lastAt = lastMessageAtRef.current;
+      if (lastAt) {
+        const bufferedSince = new Date(new Date(lastAt).getTime() - 3000).toISOString();
+        if (!since || new Date(bufferedSince) > new Date(since)) {
+          since = bufferedSince;
+        }
+      }
+
+      const { messages: raw } = await api.messages.list(
+        chatId,
+        chatType === 'group',
+        50,
+        undefined,
+        since
+      );
+      const incoming = sanitizeChatMessages([...(raw as Message[])]).filter(
+        messageBelongsToChat
+      );
+      if (incoming.length === 0) return;
+
+      setMessages((prev) => {
+        const prevIds = new Set(prev.map((m) => m.id));
+        const hasNew = incoming.some((m) => !prevIds.has(m.id));
+        if (!hasNew) return prev;
+
+        const pending = prev.filter(
+          (m) =>
+            m.id.startsWith('temp-') ||
+            m._status === 'sending' ||
+            m._status === 'pending' ||
+            m._status === 'failed'
+        );
+        const incomingIds = new Set(incoming.map((m) => m.id));
+        const kept = prev.filter((m) => !incomingIds.has(m.id));
+        const uniquePending = pending.filter((m) => !incomingIds.has(m.id));
+        const merged = deduplicateMessages([...kept, ...incoming, ...uniquePending]);
+
+        const readIds = new Set(prev.filter((m) => m.is_read).map((m) => m.id));
+        const withReadState = merged.map((m) =>
+          readIds.has(m.id) ? { ...m, is_read: true } : m
+        );
+
+        void messageStorage.saveMessages(chatId, withReadState);
+        return withReadState;
+      });
+
+      const newFromPartner = incoming.some((m) => m.sender_id !== user.id);
+      if (newFromPartner && shouldScrollToBottomRef.current) {
+        requestAnimationFrame(() => scrollToBottom(false));
+      }
+    } catch (err) {
+      console.warn('[ChatRoom] pullLatestMessages failed:', err);
+    }
+  }, [
+    chatId,
+    chatType,
+    user?.id,
+    messageBelongsToChat,
+    scrollToBottom,
+    clearedAt,
+  ]);
+
+  pullLatestMessagesRef.current = pullLatestMessages;
+
+  // Fallback: when the global hub sees any message change, sync this chat (debounced in pullLatestMessages).
+  useRealtimeTopic(
+    'messages',
+    () => {
+      void pullLatestMessages();
+    },
+    Boolean(chatId && user?.id)
+  );
+
+  // Mark read + incremental sync while the chat is open (realtime backup).
+  useFocusEffect(
+    useCallback(() => {
+      void ensureSupabaseSession().then(() => {
+        void pullLatestMessages();
+        markMessagesAsRead();
+      });
+
+      const poll = setInterval(() => {
+        void pullLatestMessages();
+      }, 2000);
+      return () => clearInterval(poll);
+    }, [markMessagesAsRead, pullLatestMessages])
+  );
+
+  // Keep the viewport pinned to the newest row when live messages arrive (web FlatList).
+  useEffect(() => {
+    if (!initialLoadComplete || !listTailId) return;
+    if (!shouldScrollToBottomRef.current) return;
+    const timer = setTimeout(() => scrollToBottom(false), 0);
+    return () => clearTimeout(timer);
+  }, [listTailId, chatRows.length, initialLoadComplete, scrollToBottom]);
+
+  // While the chat is open, mark any unread incoming messages as read.
+  useEffect(() => {
+    if (!initialLoadComplete || !user?.id) return;
+    const hasUnreadIncoming = messages.some(
+      (m) =>
+        m.sender_id !== user.id &&
+        !m.is_read &&
+        (chatType === 'group' ? m.group_id === chatId : m.receiver_id === user.id)
+    );
+    if (hasUnreadIncoming) {
+      void markMessagesAsRead();
+    }
+  }, [messages, initialLoadComplete, user?.id, chatType, chatId, markMessagesAsRead]);
 
   /* ------------------------------------------------------------------ */
   /*  UI HANDLERS                                                       */
   /* ------------------------------------------------------------------ */
   const loadMoreMessages = useCallback(async () => {
     if (loadingMore || !hasMore || !initialLoadComplete) return;
-    
-    setLoadingMore(true);
+
+    beginLoadMore();
     await fetchMessages(true);
-    setLoadingMore(false);
-  }, [loadingMore, hasMore, fetchMessages, initialLoadComplete]);
+  }, [loadingMore, hasMore, fetchMessages, initialLoadComplete, beginLoadMore]);
 
-  const handleRefresh = useCallback(async () => {
-    if (refreshing || loadingMore || !hasMore || !initialLoadComplete) return;
-    
-    setRefreshing(true);
-    await loadMoreMessages();
-    setRefreshing(false);
-  }, [refreshing, loadingMore, hasMore, initialLoadComplete, loadMoreMessages]);
+  useEffect(() => {
+    loadMoreMessagesRef.current = () => {
+      void loadMoreMessages();
+    };
+  }, [loadMoreMessages]);
 
-// Add this to your ChatRoomScreen.tsx temporarily
-const handleInfoPress = useCallback(() => {
-  console.log('handleInfoPress called');
-  console.log('chatType:', chatType);
-  console.log('chatId:', chatId);
-  console.log('chatName:', chatName);
-  console.log('avatarUrl:', avatarUrl);
-  
-  if (chatType === 'individual') {
-    console.log('Navigating to Profile with profileId:', chatId);
-    navigation.navigate('Profile', { profileId: chatId });
-  } else {
-    console.log('Navigating to GroupInfo with params:', { 
-      groupId: chatId,
-      groupName: chatName,
-      avatarUrl: avatarUrl 
-    });
-    
-    // Try alternative navigation method
-    navigation.push('GroupInfo', { 
-      groupId: chatId,
-      groupName: chatName,
-      avatarUrl: avatarUrl 
-    });
-  }
-}, [chatType, chatId, chatName, avatarUrl, navigation]);
-  const menuItems: MenuItem[] = useMemo(() => {
-  const handleSearch = () => Alert.alert('Search', 'Search functionality would go here');
-  const handleMute = () => Alert.alert('Mute', 'Mute functionality would go here');
-  const handleClearChat = () => Alert.alert('Clear Chat', 'Clear chat functionality would go here');
+  const handleInfoPress = useCallback(() => {
+    if (chatType === 'individual') {
+      navigation.navigate('Contact', {
+        userId: chatId,
+        chatName,
+        avatarUrl,
+      });
+    } else {
+      navigation.push('GroupInfo', {
+        groupId: chatId,
+        groupName: chatName,
+        avatarUrl,
+      });
+    }
+  }, [chatType, chatId, chatName, avatarUrl, navigation]);
 
-  const items = [
-    { 
-      title: chatType === 'individual' ? 'View Contact' : 'Group Info', 
-      icon: chatType === 'individual' ? 'person-outline' : 'people-outline', 
-      onPress: handleInfoPress 
+  const handleMuteChat = useCallback(async () => {
+    try {
+      const { preferences } = await api.chatSettings.get(chatType, chatId);
+      const muted = preferences.muted_until as string | null;
+      const isMuted = muted && new Date(muted) > new Date();
+      await api.chatSettings.update(chatType, chatId, {
+        muted_until: isMuted ? null : new Date(Date.now() + 365 * 86400_000).toISOString(),
+      });
+      Alert.alert('Notifications', isMuted ? 'Chat unmuted' : 'Chat muted');
+    } catch {
+      Alert.alert('Error', 'Could not update mute setting');
+    }
+  }, [chatType, chatId]);
+
+  const handleClearChat = useCallback(() => {
+    Alert.alert('Clear chat', 'Hide all messages in this chat on this device?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Clear',
+        style: 'destructive',
+        onPress: () => {
+          const now = new Date().toISOString();
+          setClearedAt(now);
+          void api.chatSettings.update(chatType, chatId, { cleared_at: now }).catch(() => undefined);
+          void messageStorage.clearMessages(chatId);
+          setMessages([]);
+        },
+      },
+    ]);
+  }, [chatType, chatId]);
+
+  const handleWallpaper = useCallback(() => {
+    const buttons = WALLPAPER_OPTIONS.map((w) => ({
+      text: w.label,
+      onPress: () => {
+        setWallpaper(w.id === 'default' ? null : w.id);
+        void api.chatSettings
+          .update(chatType, chatId, { wallpaper: w.id === 'default' ? null : w.id })
+          .catch(() => undefined);
+      },
+    }));
+    Alert.alert('Chat wallpaper', 'Choose a background', [...buttons, { text: 'Cancel', style: 'cancel' }]);
+  }, [chatType, chatId]);
+
+  const startChatCall = useCallback(
+    async (type: 'voice' | 'video') => {
+      if (!chatId) return;
+      if (chatType === 'individual') {
+        if (!user?.id) {
+          Alert.alert('Call', 'You must be signed in to place a call.');
+          return;
+        }
+        if (chatId === user.id) {
+          Alert.alert('Call', 'Cannot call yourself.');
+          return;
+        }
+      }
+      try {
+        // Individual chats use auth user id as chatId (see ChatListScreen).
+        const body =
+          chatType === 'group'
+            ? { type, group_id: chatId }
+            : { type, callee_id: chatId };
+        const { call, live_kit } = await api.calls.start(body);
+        const { navigateToOutgoingCall } = await import('../../navigation/rootNavigation');
+        navigateToOutgoingCall({
+          call,
+          token: live_kit.token,
+          url: live_kit.url,
+        });
+      } catch (err) {
+        const message =
+          err && typeof err === 'object' && 'message' in err
+            ? (err as { message: string }).message
+            : 'Could not start call';
+        Alert.alert('Call', String(message));
+      }
     },
-    { title: 'Search', icon: 'search', onPress: handleSearch },
-    { title: 'Mute', icon: 'volume-mute', onPress: handleMute },
-  ];
+    [chatId, chatType, navigation, user?.id]
+  );
 
-  if (chatType === 'individual') {
-    items.push({ title: 'Clear Chat', icon: 'trash-outline', onPress: handleClearChat });
-  }
+  const menuItems: MenuItem[] = useMemo(() => {
+    const items = [
+      {
+        title: chatType === 'individual' ? 'View Contact' : 'Group Info',
+        icon: chatType === 'individual' ? 'person-outline' : 'people-outline',
+        onPress: handleInfoPress,
+      },
+      { title: 'Search', icon: 'search', onPress: () => setSearchVisible(true) },
+      { title: 'Mute', icon: 'volume-mute', onPress: handleMuteChat },
+      { title: 'Wallpaper', icon: 'color-palette-outline', onPress: handleWallpaper },
+      { title: 'Clear Chat', icon: 'trash-outline', onPress: handleClearChat },
+    ];
 
-  return items;
-}, [handleInfoPress, chatType]);
+    return items;
+  }, [handleInfoPress, handleMuteChat, handleClearChat, handleWallpaper, chatType]);
+
   /* ------------------------------------------------------------------ */
   /*  UTILITY FUNCTIONS                                                 */
   /* ------------------------------------------------------------------ */
-  const formatDuration = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
+  const getImageUri = getMediaUri;
 
-  // FIXED: getImageUri function - always prioritize local_file_uri
-  const getImageUri = (message: Message): string => {
-    // Priority 1: Always use local_file_uri if it's a local file
-    if (message.local_file_uri && 
-        message.local_file_uri !== 'null' && 
-        message.local_file_uri !== 'undefined' &&
-        isLocalFile(message.local_file_uri)) {
-      return message.local_file_uri;
-    }
-    
-    // Priority 2: Use file_url from server (clean URL without cache buster)
-    if (message.file_url) {
-      // Remove any existing query parameters
-      const cleanUrl = message.file_url.split('?')[0];
-      return cleanUrl;
-    }
-    
-    // Priority 3: For audio messages
-    if (message.audio_url) {
-      const cleanUrl = message.audio_url.split('?')[0];
-      return cleanUrl;
-    }
-    
-    return '';
-  };
+  const chatMediaItems = useMemo((): ChatMediaItem[] => {
+    return visibleMessages
+      .filter((m) => m.message_type === 'image' || m.message_type === 'video')
+      .map((m) => ({
+        id: m.id,
+        type: m.message_type as 'image' | 'video',
+        uri: getImageUri(m),
+        senderName: m.profiles?.display_name,
+        createdAt: m.created_at,
+      }))
+      .filter((item) => Boolean(item.uri));
+  }, [visibleMessages, getImageUri]);
 
-  const retryImageLoad = useCallback((messageId: string, url: string) => {
-    const cleanUrl = url.split('?')[0];
-    setMessages(prevMessages => {
-      const updated = prevMessages.map(msg => 
-        msg.id === messageId 
-          ? { ...msg, file_url: cleanUrl }
-          : msg
-      );
-      const deduped = deduplicateMessages(updated);
-      setSections(groupMessagesByDate(deduped));
-      return deduped;
-    });
-  }, []);
+  const viewOnceToConsumeRef = useRef<string | null>(null);
+  const consumedViewOnceIdsRef = useRef<Set<string>>(new Set());
+
+  const openMediaViewer = useCallback(
+    (messageId: string) => {
+      const idx = chatMediaItems.findIndex((item) => item.id === messageId);
+      if (idx >= 0) {
+        const msg = replyLookup.get(messageId);
+        if (msg?.view_once && msg.sender_id !== user?.id && !msg.viewed_at) {
+          viewOnceToConsumeRef.current = messageId;
+          consumedViewOnceIdsRef.current.add(messageId);
+          void api.messages.markViewed(messageId).catch(() => undefined);
+        }
+        setMediaViewer({ visible: true, index: idx });
+      }
+    },
+    [chatMediaItems, replyLookup, user?.id]
+  );
+
+  const closeMediaViewer = useCallback(() => {
+    setMediaViewer((prev) => ({ ...prev, visible: false }));
+    const consumed = viewOnceToConsumeRef.current;
+    if (consumed) {
+      viewOnceToConsumeRef.current = null;
+      // View-once: remove the media for the recipient once the viewer closes.
+      persistMessages((prev) => prev.filter((m) => m.id !== consumed));
+    }
+  }, [persistMessages]);
 
   /* ------------------------------------------------------------------ */
   /*  RENDER FUNCTIONS                                                  */
   /* ------------------------------------------------------------------ */
-  const renderSectionHeader = ({ section }: { section: SectionData }) => (
-    <View style={styles.sectionHeader}>
-      <View style={styles.sectionHeaderContent}>
-        <Text style={styles.sectionHeaderText}>{section.title}</Text>
-      </View>
-    </View>
-  );
+  const renderChatRow = ({ item }: { item: ChatRow }) => {
+    if (item.kind === 'date') {
+      return (
+        <View style={styles.sectionHeader}>
+          <View style={styles.sectionHeaderContent}>
+            <Text style={styles.sectionHeaderText}>{item.label}</Text>
+          </View>
+        </View>
+      );
+    }
 
-  const renderMessage = ({ item: msg }: { item: Message }) => {
-    const isCurrentUser = msg.sender_id === user?.id;
-    const showAvatar = chatType === 'group' && !isCurrentUser;
-    const profile = msg.profiles;
+    if (item.kind === 'unread') {
+      return (
+        <View style={styles.unreadDivider}>
+          <Text style={styles.unreadDividerText}>
+            {item.count} unread message{item.count === 1 ? '' : 's'}
+          </Text>
+        </View>
+      );
+    }
 
-    const imageUri = getImageUri(msg);
+    if (item.kind === 'media_album') {
+      const anchor = item.messages[0];
+      const profile = anchor.profiles;
+      const isOutgoing = anchor.sender_id === user?.id;
+
+      return (
+        <View
+          style={[
+            styles.albumRow,
+            isOutgoing ? styles.albumRowOut : styles.albumRowIn,
+          ]}
+        >
+          {!isOutgoing && chatType === 'group' && (
+            <View style={styles.albumAvatarSlot}>
+              {item.showAvatar ? (
+                <Image
+                  source={{ uri: profile?.avatar_url || 'https://via.placeholder.com/32' }}
+                  style={styles.albumAvatar}
+                />
+              ) : (
+                <View style={styles.albumAvatarSpacer} />
+              )}
+            </View>
+          )}
+          <View style={[styles.albumContent, isOutgoing ? styles.albumContentOut : styles.albumContentIn]}>
+            {item.showName && (
+              <Text style={styles.senderName}>{profile?.display_name || 'Unknown'}</Text>
+            )}
+            <ChatMediaAlbum
+              messages={item.messages}
+              isOutgoing={isOutgoing}
+              clusterPosition={item.clusterPosition}
+              getImageUri={getImageUri}
+              onOpenMedia={openMediaViewer}
+              onLongPress={(m) => setActionMessage(m)}
+              formatTime={(iso) =>
+                new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+              }
+            />
+          </View>
+        </View>
+      );
+    }
+
+    const msg = item.message;
+    const replyParent = msg.reply_to_id ? replyLookup.get(msg.reply_to_id) ?? null : null;
 
     return (
-      <View style={[
-        styles.messageContainer,
-        isCurrentUser ? styles.currentUserContainer : styles.otherUserContainer
-      ]}>
-        {showAvatar && (
-          <Image
-            source={{ uri: profile?.avatar_url || 'https://via.placeholder.com/32' }}
-            style={styles.avatar}
-            defaultSource={{ uri: 'https://via.placeholder.com/32' }}
-          />
-        )}
-        
-        <View style={[
-          styles.messageContent,
-          isCurrentUser ? styles.currentUserContent : styles.otherUserContent,
-          showAvatar && styles.messageWithAvatar
-        ]}>
-          {chatType === 'group' && !isCurrentUser && (
-            <Text style={styles.senderName}>
-              {profile?.display_name || 'Unknown User'}
-            </Text>
-          )}
-          
-          {msg.message_type === 'audio' ? (
-            <View style={[
-              styles.audioBubble,
-              isCurrentUser ? styles.currentAudio : styles.otherAudio
-            ]}>
-              <TouchableOpacity
-                style={styles.audioButton}
-                onPress={() => playAudio(msg.audio_url!, msg.id)}
-                disabled={!hasAudioPermission && Platform.OS !== 'web'}
-              >
-                <MaterialIcons
-                  name={isPlayingAudio === msg.id ? 'pause' : 'play-arrow'}
-                  size={20}
-                  color={isCurrentUser ? '#fff' : '#007AFF'}
-                />
-              </TouchableOpacity>
-              <View style={styles.waveform}>
-                {[8, 16, 24, 20, 12, 16, 8].map((h, i) => (
-                  <View 
-                    key={i} 
-                    style={[
-                      styles.waveBar, 
-                      { height: h }, 
-                      isCurrentUser && styles.currentWaveBar
-                    ]} 
-                  />
-                ))}
-              </View>
-              <Text style={[
-                styles.audioTime,
-                isCurrentUser && styles.currentAudioTime
-              ]}>
-                {formatDuration(msg.audio_duration || 0)}
-              </Text>
-              
-              <View style={[
-                styles.messageMeta,
-                isCurrentUser ? styles.currentMessageMeta : styles.otherMessageMeta,
-                styles.audioMessageMeta
-              ]}>
-                <Text style={[
-                  styles.time,
-                  isCurrentUser && styles.currentTime
-                ]}>
-                  {new Date(msg.created_at).toLocaleTimeString([], { 
-                    hour: '2-digit', 
-                    minute: '2-digit' 
-                  })}
-                </Text>
-                {isCurrentUser && (
-                  <MessageStatus 
-                    status={msg._status}
-                    isRead={msg.is_read} 
-                    delivered={msg.delivered} 
-                  />
-                )}
-              </View>
-            </View>
-          ) : msg.message_type === 'image' ? (
-            <View style={styles.imageContainer}>
-              <TouchableOpacity>
-                <Image
-                  source={{ 
-                    uri: imageUri,
-                    cache: 'force-cache'
-                  }}
-                  style={styles.imageMessage}
-                  resizeMode="cover"
-                  onError={(e) => {
-                    console.log('Image failed to load:', imageUri);
-                    console.log('Error details:', e.nativeEvent.error);
-                    
-                    // Add to failed images set
-                    setFailedImages(prev => new Set(prev).add(msg.id));
-                    
-                    // If URL has cache buster, retry without it
-                    if (imageUri.includes('?t=')) {
-                      setTimeout(() => {
-                        retryImageLoad(msg.id, imageUri);
-                      }, 1000);
-                    }
-                  }}
-                  onLoad={() => {
-                    console.log('Image loaded successfully:', imageUri);
-                    // Remove from failed images if it was there
-                    setFailedImages(prev => {
-                      const newSet = new Set(prev);
-                      newSet.delete(msg.id);
-                      return newSet;
-                    });
-                  }}
-                />
-              </TouchableOpacity>
-              
-              <View style={[
-                styles.messageMeta,
-                isCurrentUser ? styles.currentMessageMeta : styles.otherMessageMeta,
-                styles.imageMessageMeta
-              ]}>
-                <Text style={[
-                  styles.time,
-                  isCurrentUser && styles.currentTime
-                ]}>
-                  {new Date(msg.created_at).toLocaleTimeString([], { 
-                    hour: '2-digit', 
-                    minute: '2-digit' 
-                  })}
-                </Text>
-                {isCurrentUser && (
-                  <MessageStatus 
-                    status={msg._status}
-                    isRead={msg.is_read} 
-                    delivered={msg.delivered} 
-                  />
-                )}
-              </View>
-            </View>
-          ) : msg.message_type === 'file' ? (
-            <View style={[
-              styles.fileBubble,
-              isCurrentUser ? styles.currentFile : styles.otherFile
-            ]}>
-              <Feather name="file" size={20} color={isCurrentUser ? '#fff' : '#007AFF'} />
-              <Text style={[
-                styles.fileName,
-                isCurrentUser && styles.currentFileName
-              ]} numberOfLines={1}>
-                {msg.file_name || 'File'}
-              </Text>
-              
-              <View style={[
-                styles.messageMeta,
-                isCurrentUser ? styles.currentMessageMeta : styles.otherMessageMeta,
-                styles.fileMessageMeta
-              ]}>
-                <Text style={[
-                  styles.time,
-                  isCurrentUser && styles.currentTime
-                ]}>
-                  {new Date(msg.created_at).toLocaleTimeString([], { 
-                    hour: '2-digit', 
-                    minute: '2-digit' 
-                  })}
-                </Text>
-                {isCurrentUser && (
-                  <MessageStatus 
-                    status={msg._status}
-                    isRead={msg.is_read} 
-                    delivered={msg.delivered} 
-                  />
-                )}
-              </View>
-            </View>
-          ) : (
-            <View style={[
-              styles.textBubble,
-              isCurrentUser ? styles.currentTextBubble : styles.otherTextBubble
-            ]}>
-              <Text style={[
-                styles.messageText,
-                isCurrentUser && styles.currentMessageText
-              ]}>
-                {msg.content}
-              </Text>
-              
-              <View style={[
-                styles.messageMeta,
-                isCurrentUser ? styles.currentMessageMeta : styles.otherMessageMeta,
-                styles.textMessageMeta
-              ]}>
-                <Text style={[
-                  styles.time,
-                  isCurrentUser && styles.currentTime
-                ]}>
-                  {new Date(msg.created_at).toLocaleTimeString([], { 
-                    hour: '2-digit', 
-                    minute: '2-digit' 
-                  })}
-                </Text>
-                {isCurrentUser && (
-                  <MessageStatus 
-                    status={msg._status}
-                    isRead={msg.is_read} 
-                    delivered={msg.delivered} 
-                  />
-                )}
-              </View>
-            </View>
-          )}
-        </View>
-      </View>
+      <ChatMessageRow
+        message={msg}
+        isOutgoing={msg.sender_id === user?.id}
+        isGroup={chatType === 'group'}
+        clusterPosition={item.clusterPosition}
+        showAvatar={item.showAvatar}
+        showName={item.showName}
+        isPlayingAudio={isPlayingAudio}
+        hasAudioPermission={hasAudioPermission}
+        onPlayAudio={playAudio}
+        getImageUri={getImageUri}
+        onOpenMedia={openMediaViewer}
+        onOpenReel={navigateToReelPreview}
+        onOpenMoment={(id) => setMomentPreviewId(id)}
+        onLongPress={(m) => setActionMessage(m)}
+        onRetry={retrySingleMessage}
+        replyTo={replyParent}
+        isSearchHit={searchHitId === msg.id}
+        onReadReceiptPress={(m) => setReadReceiptMessageId(m.id)}
+        onReply={(m) => setReplyTo(m as Message)}
+      />
     );
   };
+
 
   /* ------------------------------------------------------------------ */
   /*  MAIN RENDER                                                       */
   /* ------------------------------------------------------------------ */
   return (
-    <SafeAreaView 
-      style={styles.container} edges={Platform.select({ios: ['top', 'left', 'right', ...(isKeyboardVisible ? ['bottom'] : [])], 
-        android: ['top', 'left', 'right', 'bottom'],
-      })}
+    <SafeAreaView
+      style={styles.container}
+      edges={['left', 'right']}
     >
       <View style={styles.header}>
         <View style={styles.headerLeft}>
@@ -1924,153 +1866,219 @@ const handleInfoPress = useCallback(() => {
               <Text style={styles.headerName} numberOfLines={1}>
                 {chatName}
               </Text>
-              <Text style={styles.headerStatus}>
-                {isOnline ? 'Online' : 'Offline'}
-                {syncing && ' • Syncing...'}
+              <Text style={styles.headerStatus} numberOfLines={1}>
+                {!hasNetwork
+                  ? 'Waiting for network'
+                  : typingLabel
+                    ? typingLabel
+                    : chatType === 'individual'
+                      ? partnerStatus
+                      : `${messages.length ? 'Group chat' : 'New group'}`}
+                {syncing && ' · Syncing...'}
+                {__DEV__ && ` · ${visibleMessages.length}/${messages.length}`}
               </Text>
             </View>
           </TouchableOpacity>
         </View>
         <View style={styles.headerActions}>
-          <IconButton icon="video" size={24} iconColor="#fff" />
-          <IconButton icon="phone" size={24} iconColor="#fff" />
+          <IconButton
+            icon="video"
+            size={24}
+            iconColor="#fff"
+            onPress={() => startChatCall('video')}
+          />
+          <IconButton
+            icon="phone"
+            size={24}
+            iconColor="#fff"
+            onPress={() => startChatCall('voice')}
+          />
           <ChatMenuDropdown items={menuItems} />
         </View>
       </View>
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.select({
-          ios: 0, // FIXED: Use 0 for iOS with SafeAreaView
-          android: 0,
-        })}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={keyboardVerticalOffset}
       >
-        <SectionList
-          ref={flatListRef}
-          sections={sections}
-          renderItem={renderMessage}
-          renderSectionHeader={renderSectionHeader}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={[
-            styles.listContent,
-            loadingMore && { paddingTop: 40 }
-          ]}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={handleRefresh}
-              colors={['#007AFF']}
-              tintColor="#007AFF"
-              title="Pull to load older messages"
-              titleColor="#666"
-              progressViewOffset={loadingMore ? 40 : 0}
-            />
-          }
-          ListEmptyComponent={
-            !initialLoadComplete ? (
-              <ActivityIndicator style={styles.loadingIndicator} size="large" color="#007AFF" />
-            ) : (
-              <View style={styles.empty}>
-                <Ionicons name="chatbubble-ellipses-outline" size={80} color="#e0e0e0" />
-                <Text style={styles.emptyTitle}>No messages yet</Text>
-                <Text style={styles.emptySubtitle}>
-                  {isOnline 
-                    ? 'Start the conversation by sending a message!' 
-                    : 'You are offline. Messages will be sent when connection is restored.'
-                  }
-                </Text>
-              </View>
-            )
-          }
-          ListHeaderComponent={
-            loadingMore ? (
-              <View style={styles.loadingMoreContainer}>
-                <ActivityIndicator size="small" color="#007AFF" />
-                <Text style={styles.loadingMoreText}>Loading older messages...</Text>
-              </View>
-            ) : null
-          }
-          inverted={false}
-          stickySectionHeadersEnabled={false}
-          initialNumToRender={20}
-          maxToRenderPerBatch={10}
-          windowSize={21}
-          removeClippedSubviews={false}
-          onScroll={handleScroll}
-          scrollEventThrottle={16}
-          onScrollToIndexFailed={(info) => {
-            console.log('Scroll to index failed:', info);
-            setTimeout(() => {
-              if (flatListRef.current && sections.length > 0) {
-                const lastSectionIndex = sections.length - 1;
-                const lastItemIndex = sections[lastSectionIndex]?.data?.length - 1 || 0;
-                
-                flatListRef.current.scrollToLocation({
-                  sectionIndex: lastSectionIndex,
-                  itemIndex: lastItemIndex,
-                  animated: false,
-                  viewPosition: 0,
-                });
-              }
-            }, 100);
-          }}
-          onContentSizeChange={(width, height) => {
-            if (loadingMore && !shouldScrollToBottomRef.current) {
-              const currentOffset = lastContentOffsetRef.current;
-              const heightDifference = height - contentHeightRef.current;
-              
-              if (heightDifference > 0 && currentOffset > 0) {
-                setTimeout(() => {
-                  if (flatListRef.current) {
-                    flatListRef.current.scrollToOffset({
-                      offset: currentOffset + heightDifference,
-                      animated: false,
-                    });
-                  }
-                }, 50);
-              }
+        <View style={[styles.chatBody, { backgroundColor: chatBgColor }]}>
+          {pinnedBanner && chatType === 'group' && (
+            <TouchableOpacity
+              style={styles.pinnedBar}
+              onPress={() => scrollToMessage(pinnedBanner.id)}
+            >
+              <Ionicons name="pin" size={16} color={chatTheme.primary} />
+              <Text style={styles.pinnedText} numberOfLines={1}>
+                {pinnedBanner.content || pinnedBanner.file_name || 'Pinned message'}
+              </Text>
+            </TouchableOpacity>
+          )}
+          <FlatList
+            ref={flatListRef}
+            data={chatRows}
+            extraData={`${visibleMessages.length}:${listTailId}:${chatRows.length}:${isPlayingAudio ?? ''}`}
+            renderItem={renderChatRow}
+            keyExtractor={(item) => item.key}
+            contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            ListEmptyComponent={
+              !initialLoadComplete ? (
+                <ActivityIndicator style={styles.loadingIndicator} size="large" color={chatTheme.primary} />
+              ) : (
+                <View style={styles.empty}>
+                  <Ionicons name="chatbubble-ellipses-outline" size={80} color="#c5c5c5" />
+                  <Text style={styles.emptyTitle}>No messages yet</Text>
+                  <Text style={styles.emptySubtitle}>
+                    {isOnline
+                      ? 'Send a message to start the conversation.'
+                      : 'You are offline. Messages will send when you reconnect.'}
+                  </Text>
+                </View>
+              )
             }
-          }}
-        />
+            ListHeaderComponent={
+              loadingMore ? (
+                <View style={styles.loadingMoreContainer}>
+                  <ActivityIndicator size="small" color={chatTheme.primary} />
+                  <Text style={styles.loadingMoreText}>Loading older messages…</Text>
+                </View>
+              ) : null
+            }
+            initialNumToRender={24}
+            maxToRenderPerBatch={16}
+            windowSize={15}
+            removeClippedSubviews={false}
+            maintainVisibleContentPosition={
+              Platform.OS === 'web'
+                ? undefined
+                : { minIndexForVisible: 0, autoscrollToTopThreshold: 10 }
+            }
+            onScroll={handleScroll}
+            scrollEventThrottle={16}
+            onContentSizeChange={onContentSizeChange}
+            onLayout={onListLayout}
+          />
+
+          {showScrollDown && (
+            <TouchableOpacity
+              style={[styles.scrollFab, { bottom: 76 + insets.bottom }]}
+              onPress={scrollToBottomAndStick}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="chevron-down" size={22} color={chatTheme.primary} />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {replyTo && (
+          <ReplyPreviewBar
+            message={replyTo}
+            senderName={replyTo.profiles?.display_name}
+            onCancel={() => setReplyTo(null)}
+          />
+        )}
 
         <ChatInput
-          placeholder="Message..."
+          placeholder={editingMessage ? 'Edit message' : 'Message'}
+          draft={composerDraft}
+          onDraftChange={handleDraftChange}
           onSend={sendMessage}
           onSendVoice={sendVoiceMessage}
-          onAttachmentPress={() => setShowAttachmentMenu(true)}
-          // Only add bottom padding when keyboard is visible
-          style={{ paddingBottom: isKeyboardVisible ? insets.bottom : 0 }}
+          onAttachmentsSelected={handleAttachmentsSelected}
+          pendingAttachmentCount={pendingAttachments.length}
+          onPendingAttachmentsPress={() => setShowAttachmentPreview(true)}
+          mentionMembers={chatType === 'group' ? groupMembers : undefined}
+          style={{ paddingBottom: isKeyboardVisible ? 0 : insets.bottom }}
           disabled={!user?.id}
         />
       </KeyboardAvoidingView>
 
-      <Modal visible={showAttachmentMenu} transparent animationType="slide">
-        <TouchableWithoutFeedback onPress={() => setShowAttachmentMenu(false)}>
-          <View style={styles.modalOverlay}>
-            <View style={styles.attachmentSheet}>
-              <View style={styles.sheetHandle} />
-              <Text style={styles.sheetTitle}>Share Content</Text>
-              <View style={styles.attachmentOptions}>
-                <TouchableOpacity style={styles.attachmentOption} onPress={pickImage}>
-                  <View style={[styles.optionIcon, { backgroundColor: '#4CAF50' }]}>
-                    <Ionicons name="image" size={24} color="#fff" />
-                  </View>
-                  <Text style={styles.optionText}>Photo & Video</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.attachmentOption} onPress={pickDocument}>
-                  <View style={[styles.optionIcon, { backgroundColor: '#2196F3' }]}>
-                    <Ionicons name="document" size={24} color="#fff" />
-                  </View>
-                  <Text style={styles.optionText}>Document</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </TouchableWithoutFeedback>
-      </Modal>
+      <AttachmentPreview
+        attachments={pendingAttachments}
+        visible={showAttachmentPreview}
+        onClose={() => {
+          if (pendingAttachments.length === 0) {
+            setShowAttachmentPreview(false);
+            return;
+          }
+          Alert.alert(
+            'Discard attachments?',
+            'Your selected files will be removed.',
+            [
+              { text: 'Keep editing', style: 'cancel' },
+              {
+                text: 'Discard',
+                style: 'destructive',
+                onPress: () => {
+                  setPendingAttachments([]);
+                  setShowAttachmentPreview(false);
+                },
+              },
+            ]
+          );
+        }}
+        onRemove={handleRemoveAttachment}
+        onClearAll={handleClearAllAttachments}
+        onSendAll={handleSendFiles}
+        onSendSingle={handleSendSingleFile}
+      />
+
+      <ChatMediaViewer
+        items={chatMediaItems}
+        initialIndex={mediaViewer.index}
+        visible={mediaViewer.visible}
+        onClose={closeMediaViewer}
+      />
+
+      <ChatSearchOverlay
+        visible={searchVisible}
+        messages={visibleMessages}
+        onClose={() => setSearchVisible(false)}
+        onSelect={scrollToMessage}
+      />
+
+      <MessageActionSheet
+        visible={!!actionMessage}
+        message={actionMessage}
+        isOutgoing={actionMessage?.sender_id === user?.id}
+        isGroup={chatType === 'group'}
+        isStarred={actionMessage ? starredIds.includes(actionMessage.id) : false}
+        canEdit={
+          !!actionMessage &&
+          actionMessage.sender_id === user?.id &&
+          actionMessage.message_type === 'text' &&
+          isWithinMinutes(actionMessage.created_at, 15)
+        }
+        canDeleteForAll={
+          !!actionMessage &&
+          actionMessage.sender_id === user?.id &&
+          isWithinMinutes(actionMessage.created_at, 60)
+        }
+        onClose={() => setActionMessage(null)}
+        onAction={handleMessageAction}
+      />
+
+      <MomentChatPreview
+        momentId={momentPreviewId}
+        visible={!!momentPreviewId}
+        onClose={() => setMomentPreviewId(null)}
+      />
+
+      <ForwardToChatPicker
+        visible={!!forwardMessage}
+        excludeChatId={chatId}
+        excludeChatType={chatType}
+        onClose={() => setForwardMessage(null)}
+        onSelect={handleForwardTo}
+      />
+
+      <ReadReceiptSheet
+        messageId={readReceiptMessageId}
+        visible={!!readReceiptMessageId}
+        onClose={() => setReadReceiptMessageId(null)}
+      />
     </SafeAreaView>
   );
 }
@@ -2078,15 +2086,24 @@ const handleInfoPress = useCallback(() => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f0f0f0',
+    backgroundColor: chatTheme.chatBg,
+  },
+  chatBody: {
+    flex: 1,
+    backgroundColor: chatTheme.chatBg,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#007AFF',
+    backgroundColor: chatTheme.headerBg,
     height: 70,
-    paddingHorizontal: 8,
+    paddingHorizontal: 4,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
   },
   headerLeft: {
     flexDirection: 'row',
@@ -2118,7 +2135,7 @@ const styles = StyleSheet.create({
   },
   headerStatus: {
     fontSize: 12,
-    color: 'rgba(255, 255, 255, 0.8)',
+    color: chatTheme.headerStatus,
     marginTop: 2,
   },
   headerActions: {
@@ -2127,23 +2144,85 @@ const styles = StyleSheet.create({
   },
   listContent: {
     flexGrow: 1,
-    paddingHorizontal: 12,
-    paddingBottom: 8,
+    paddingHorizontal: 8,
+    paddingTop: 8,
+    paddingBottom: 12,
   },
   sectionHeader: {
     alignItems: 'center',
-    marginVertical: 8,
+    marginVertical: 10,
   },
   sectionHeaderContent: {
-    backgroundColor: 'rgba(0, 0, 0, 0.1)',
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 12,
+    backgroundColor: chatTheme.datePillBg,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 8,
+    elevation: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
   },
   sectionHeaderText: {
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '600',
-    color: '#666',
+    color: chatTheme.datePillText,
+  },
+  unreadDivider: {
+    alignSelf: 'center',
+    backgroundColor: 'rgba(0, 122, 255, 0.12)',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 10,
+    marginVertical: 10,
+  },
+  unreadDividerText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: chatTheme.primary,
+  },
+  albumRow: {
+    flexDirection: 'row',
+    marginVertical: 2,
+    paddingHorizontal: 4,
+  },
+  albumRowOut: { justifyContent: 'flex-end' },
+  albumRowIn: { justifyContent: 'flex-start' },
+  albumAvatarSlot: { width: 36, marginRight: 6, justifyContent: 'flex-end' },
+  albumAvatar: { width: 32, height: 32, borderRadius: 16 },
+  albumAvatarSpacer: { width: 32, height: 32 },
+  albumContent: { maxWidth: '82%' },
+  albumContentOut: { alignItems: 'flex-end' },
+  albumContentIn: { alignItems: 'flex-start' },
+  pinnedBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#fff',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#e0e0e0',
+  },
+  pinnedText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#444',
+  },
+  scrollFab: {
+    position: 'absolute',
+    right: 16,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: chatTheme.scrollFabBg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
   },
   messageContainer: {
     flexDirection: 'row',
@@ -2339,7 +2418,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 100,
+    paddingVertical: 48,
   },
   emptyTitle: {
     fontSize: 18,
@@ -2353,51 +2432,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 8,
     paddingHorizontal: 40,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
-  },
-  attachmentSheet: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
-    paddingBottom: 30,
-  },
-  sheetHandle: {
-    width: 40,
-    height: 4,
-    backgroundColor: '#ddd',
-    borderRadius: 2,
-    alignSelf: 'center',
-    marginBottom: 20,
-  },
-  sheetTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#000',
-    marginBottom: 20,
-  },
-  attachmentOptions: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-  },
-  attachmentOption: {
-    alignItems: 'center',
-  },
-  optionIcon: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  optionText: {
-    fontSize: 14,
-    color: '#333',
   },
   loadingMoreContainer: {
     flexDirection: 'row',

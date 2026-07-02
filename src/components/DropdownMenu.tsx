@@ -12,9 +12,11 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import { supabase } from '../lib/supabase';
+import { api } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
+import { useRealtimeTopic } from '../hooks/useRealtimeTopic';
 import Portal from './Portal';
+import { USE_NATIVE_DRIVER } from '../lib/animation';
 
 interface DropdownMenuProps {
   triggerIcon?: 'ellipsis-horizontal' | 'ellipsis-vertical';
@@ -45,53 +47,32 @@ export default function DropdownMenu({ triggerIcon = 'ellipsis-vertical' }: Drop
     return unsubscribe;
   }, [navigation, visible]);
 
-  // === FETCH + LIVE PROFILE UPDATE ===
-  useEffect(() => {
+  const fetchProfile = async () => {
     if (!user) return;
-
-    const fetchProfile = async () => {
-      // Fetch the profile from the 'profiles' table using user_id
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('display_name, avatar_url, email')
-        .eq('user_id', user.id)  // Use user_id to filter in the 'profiles' table
-        .single();
-      
-      if (error) {
-        console.error('Error fetching profile:', error);
-      } else {
-        setProfile(data);
+    try {
+      const { profile: data } = await api.profiles.me();
+      if (data) {
+        setProfile({
+          display_name: (data.display_name as string) || '',
+          avatar_url: (data.avatar_url as string) || '',
+          email: (data.email as string) || '',
+        });
       }
-    };
+    } catch (error) {
+      console.error('Error fetching profile:', error);
+    }
+  };
 
+  useEffect(() => {
     fetchProfile();
+  }, [user?.id]);
 
-    // Subscribe to real-time profile updates
-    const channel = supabase
-      .channel(`profile-${user.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'profiles',
-          filter: `user_id=eq.${user.id}`,  // Use user_id filter
-        },
-        (payload) => {
-          setProfile(payload.new as Profile);
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [user]);
+  useRealtimeTopic(user ? 'profiles' : null, fetchProfile);
 
   const closeMenu = () => {
     Animated.parallel([
-      Animated.timing(opacityAnim, { toValue: 0, duration: 120, useNativeDriver: true }),
-      Animated.timing(scaleAnim, { toValue: 0.8, duration: 120, useNativeDriver: true }),
+      Animated.timing(opacityAnim, { toValue: 0, duration: 120, useNativeDriver: USE_NATIVE_DRIVER }),
+      Animated.timing(scaleAnim, { toValue: 0.8, duration: 120, useNativeDriver: USE_NATIVE_DRIVER }),
     ]).start(() => setVisible(false));
   };
 
@@ -104,12 +85,12 @@ export default function DropdownMenu({ triggerIcon = 'ellipsis-vertical' }: Drop
         Animated.timing(opacityAnim, {
           toValue: 1,
           duration: 150,
-          useNativeDriver: true,
+          useNativeDriver: USE_NATIVE_DRIVER,
           easing: Easing.out(Easing.ease),
         }),
         Animated.spring(scaleAnim, {
           toValue: 1,
-          useNativeDriver: true,
+          useNativeDriver: USE_NATIVE_DRIVER,
           friction: 6,
           tension: 80,
         }),

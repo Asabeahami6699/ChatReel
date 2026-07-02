@@ -15,13 +15,17 @@ import {
   AppStateStatus,
   Animated,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
 import * as ImagePicker from 'expo-image-picker';
-import { decode } from 'base64-arraybuffer';
-import { supabase } from '../../lib/supabase';
-import { Ionicons } from '@expo/vector-icons'; // Make sure to install: expo install @expo/vector-icons
+import { api } from '../../lib/api';
+import { uploadBase64 } from '../../lib/uploads';
+import { useAuth } from '../../hooks/useAuth';
+import { useRealtimeTopic } from '../../hooks/useRealtimeTopic';
+import { Ionicons } from '@expo/vector-icons';
+import { USE_NATIVE_DRIVER } from '../../lib/animation';
 
 // === Schema ===
 const profileSchema = z.object({
@@ -50,8 +54,8 @@ const AvatarPreview = ({
 
   const pulse = () => {
     Animated.sequence([
-      Animated.timing(scaleAnim, { toValue: 1.1, duration: 300, useNativeDriver: true }),
-      Animated.timing(scaleAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
+      Animated.timing(scaleAnim, { toValue: 1.1, duration: 300, useNativeDriver: USE_NATIVE_DRIVER }),
+      Animated.timing(scaleAnim, { toValue: 1, duration: 300, useNativeDriver: USE_NATIVE_DRIVER }),
     ]).start();
   };
 
@@ -87,8 +91,49 @@ const AvatarPreview = ({
   );
 };
 
+const StatusPulseDot = () => {
+  const pulseAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 1000,
+          useNativeDriver: USE_NATIVE_DRIVER,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 0,
+          duration: 1000,
+          useNativeDriver: USE_NATIVE_DRIVER,
+        }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulseAnim]);
+
+  const scale = pulseAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 2.2],
+  });
+  const opacity = pulseAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.6, 0],
+  });
+
+  return (
+    <Animated.View
+      style={[styles.pulseDot, { transform: [{ scale }], opacity }]}
+      pointerEvents="none"
+    />
+  );
+};
+
 // === Main Screen ===
 const ProfileScreen = ({ navigation }: { navigation: any }) => {
+  const { user } = useAuth();
+  const insets = useSafeAreaInsets();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
@@ -117,46 +162,40 @@ const ProfileScreen = ({ navigation }: { navigation: any }) => {
     },
   });
 
-  // === Load Profile ===
+  const loadProfile = useCallback(async () => {
+    try {
+      if (!user?.id) throw new Error('Not authenticated');
+
+      setUserId(user.id);
+
+      const { profile: data } = await api.profiles.me();
+
+      const profile = data || {};
+      const formData = {
+        display_name: profile.display_name || '',
+        email: profile.email || user.email || '',
+        avatar_url: profile.avatar_url || '',
+        bio: profile.bio || '',
+        country: profile.country || '',
+        region: profile.region || '',
+        language: profile.language || '',
+      };
+
+      reset(formData);
+      setAvatarUrl(formData.avatar_url);
+      setCurrentAppStatus(AppState.currentState === 'active' ? 'Online' : 'Offline');
+    } catch (err: any) {
+      Alert.alert('Error', err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [reset, user?.id, user?.email]);
+
   useEffect(() => {
-    const loadProfile = async () => {
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) throw new Error('Not authenticated');
-
-        setUserId(user.id);
-
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('user_id', user.id)
-          .single();
-
-        if (error && error.code !== 'PGRST116') throw error;
-
-        const profile = data || {};
-        const formData = {
-          display_name: profile.display_name || '',
-          email: profile.email || user.email || '',
-          avatar_url: profile.avatar_url || '',
-          bio: profile.bio || '',
-          country: profile.country || '',
-          region: profile.region || '',
-          language: profile.language || '',
-        };
-
-        reset(formData);
-        setAvatarUrl(formData.avatar_url);
-        setCurrentAppStatus(AppState.currentState === 'active' ? 'Online' : 'Offline');
-      } catch (err: any) {
-        Alert.alert('Error', err.message);
-      } finally {
-        setLoading(false);
-      }
-    };
-
     loadProfile();
-  }, [reset]);
+  }, [loadProfile]);
+
+  useRealtimeTopic(user?.id ? 'profiles' : null, loadProfile);
 
   // === Auto Status Sync ===
   useEffect(() => {
@@ -170,10 +209,7 @@ const ProfileScreen = ({ navigation }: { navigation: any }) => {
         const newStatus: 'Online' | 'Offline' = isActive ? 'Online' : 'Offline';
         setCurrentAppStatus(newStatus);
 
-        await supabase
-          .from('profiles')
-          .upsert({ status: newStatus, updated_at: new Date().toISOString() })
-          .eq('user_id', userId);
+        await api.profiles.updateMe({ status: newStatus });
       }, 1000);
     };
 
@@ -201,48 +237,16 @@ const ProfileScreen = ({ navigation }: { navigation: any }) => {
     setSaving(true);
 
     try {
-      const { data: profileData } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('user_id', userId)
-        .single();
-
-      if (!profileData) {
-        const { error: insertError } = await supabase
-          .from('profiles')
-          .insert({
-            user_id: userId,
-            display_name: data.display_name,
-            email: data.email,
-            avatar_url: data.avatar_url || '',
-            bio: data.bio || '',
-            country: data.country || '',
-            region: data.region || '',
-            language: data.language || '',
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          });
-
-        if (insertError) throw insertError;
-        Alert.alert('Success', 'Profile created!');
-      } else {
-        const { error: updateError } = await supabase
-          .from('profiles')
-          .update({
-            display_name: data.display_name,
-            email: data.email,
-            avatar_url: data.avatar_url || '',
-            bio: data.bio || '',
-            country: data.country || '',
-            region: data.region || '',
-            language: data.language || '',
-            updated_at: new Date().toISOString(),
-          })
-          .eq('user_id', userId);
-
-        if (updateError) throw updateError;
-        Alert.alert('Success', 'Profile updated!');
-      }
+      await api.profiles.updateMe({
+        display_name: data.display_name,
+        email: data.email,
+        avatar_url: data.avatar_url || '',
+        bio: data.bio || '',
+        country: data.country || '',
+        region: data.region || '',
+        language: data.language || '',
+      });
+      Alert.alert('Success', 'Profile saved!');
     } catch (err: any) {
       Alert.alert('Error', err.message);
     } finally {
@@ -271,28 +275,24 @@ const ProfileScreen = ({ navigation }: { navigation: any }) => {
     if (result.canceled || !result.assets[0].base64) return;
 
     const base64 = result.assets[0].base64;
-    const fileExt = result.assets[0].uri.split('.').pop()?.toLowerCase() || 'jpg';
-    const fileName = `${userId}/avatar.${fileExt}`;
-    const filePath = `avatars/${fileName}`;
+    const rawExt = result.assets[0].uri.split('.').pop()?.toLowerCase() || 'jpg';
+    const fileExt = rawExt === 'jpg' || rawExt === 'jpeg' ? 'jpg' : rawExt === 'png' ? 'png' : 'jpg';
+    const storagePath = `${userId}/avatar.${fileExt}`;
 
     setUploadingAvatar(true);
     setAvatarUrl(result.assets[0].uri);
 
     try {
-      const { error: uploadError } = await supabase.storage
-        .from('avatars')
-        .upload(filePath, decode(base64), {
-          upsert: true,
-          contentType: `image/${fileExt === 'png' ? 'png' : 'jpeg'}`,
-        });
+      const publicUrl = await uploadBase64({
+        bucket: 'avatars',
+        path: storagePath,
+        contentBase64: base64,
+        contentType: `image/${fileExt === 'png' ? 'png' : 'jpeg'}`,
+      });
+      const url = `${publicUrl}?t=${Date.now()}`;
 
-      if (uploadError) throw uploadError;
-
-      const { data } = supabase.storage.from('avatars').getPublicUrl(filePath);
-      const publicUrl = `${data.publicUrl}?t=${Date.now()}`;
-
-      setAvatarUrl(publicUrl);
-      setValue('avatar_url', publicUrl);
+      setAvatarUrl(url);
+      setValue('avatar_url', url);
 
       Alert.alert('Success', 'Avatar updated!');
     } catch (err: any) {
@@ -342,14 +342,14 @@ const ProfileScreen = ({ navigation }: { navigation: any }) => {
             <View style={styles.statusBadge}>
               <View style={[styles.statusDot, currentAppStatus === 'Online' ? styles.onlineDot : styles.offlineDot]} />
               <Text style={styles.statusBadgeText}>{currentAppStatus}</Text>
-              {currentAppStatus === 'Online' && <View style={styles.pulseDot} />}
+              {currentAppStatus === 'Online' && <StatusPulseDot />}
             </View>
           </View>
         </View>
       </ScrollView>
 
       {/* === Floating Save Button === */}
-      <View style={styles.floatingButtonContainer}>
+      <View style={[styles.floatingButtonContainer, { bottom: 30 + insets.bottom }]}>
         <TouchableOpacity
           style={[styles.saveBtn, saving && styles.saveBtnDisabled]}
           onPress={handleSubmit(onSubmit)}
@@ -573,9 +573,7 @@ const styles = StyleSheet.create({
     height: 12,
     borderRadius: 6,
     backgroundColor: '#4CAF50',
-    opacity: 0,
     left: 16,
-    animation: 'pulse 2s infinite',
   },
   statusBadgeText: {
     fontSize: 14,

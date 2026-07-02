@@ -1,7 +1,6 @@
 // src/screens/Explore/ProductDetailScreen.tsx
 import React, { useState } from 'react';
 import {
-  SafeAreaView,
   ScrollView,
   View,
   Text,
@@ -54,7 +53,7 @@ export default function ProductDetailScreen({ route, navigation }) {
   // Order Confirmation View
   if (orderConfirmed) {
     return (
-      <SafeAreaView style={styles.container}>
+      <View style={styles.container}>
         <ScrollView contentContainerStyle={styles.confirmationContent}>
           {/* Success Icon */}
           <View style={styles.successIcon}>
@@ -129,13 +128,13 @@ export default function ProductDetailScreen({ route, navigation }) {
             <Text style={styles.secondaryButtonText}>View Order Details</Text>
           </TouchableOpacity>
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   // Product Detail View
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       {/* Header - Hide this when in stack navigator to avoid double header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
@@ -313,7 +312,7 @@ export default function ProductDetailScreen({ route, navigation }) {
           <Text style={styles.buyButtonText}>Buy Now</Text>
         </TouchableOpacity>
       </View>
-    </SafeAreaView>
+    </View>
   );
 }
 

@@ -9,18 +9,21 @@ import {
   Alert,
   StyleSheet,
   ActivityIndicator,
-  SafeAreaView,
   ScrollView,
   FlatList,
   Modal,
   Linking,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
-import { supabase } from '../../lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { api } from '../../lib/api';
+import { uploadFromUri } from '../../lib/uploads';
 import { useAuth } from '../../hooks/useAuth';
-import { decode } from 'base64-arraybuffer';
+import { useCurrentProfileId } from '../../hooks/useCurrentProfileId';
+import { useFriendshipsRealtime } from '../../hooks/useFriendshipsRealtime';
+import { notifyRealtimeTopic } from '../../lib/realtimeHub';
 
 export type Friend = {
   id: string;
@@ -33,60 +36,46 @@ type RootStackParamList = { NewGroup: undefined };
 type Props = NativeStackScreenProps<RootStackParamList, 'NewGroup'>;
 
 const useAcceptedFriends = () => {
-  const { user } = useAuth();
   const [friends, setFriends] = useState<Friend[]>([]);
   const [loading, setLoading] = useState(true);
-  const [currentProfileId, setCurrentProfileId] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!user?.id) return;
-    supabase
-      .from('profiles')
-      .select('id')
-      .eq('user_id', user.id)
-      .single()
-      .then(({ data }) => data && setCurrentProfileId(data.id));
-  }, [user?.id]);
+  const currentProfileId = useCurrentProfileId();
 
   const fetchFriends = useCallback(async () => {
     if (!currentProfileId) return;
     setLoading(true);
 
-    const { data, error } = await supabase
-      .from('friendships')
-      .select(`
-        id, user_id, friend_id, status,
-        sender_profile:profiles!friendships_user_id_fkey (id, user_id, display_name, email, avatar_url),
-        receiver_profile:profiles!friendships_friend_id_fkey (id, user_id, display_name, email, avatar_url)
-      `)
-      .or(`user_id.eq.${currentProfileId},friend_id.eq.${currentProfileId}`)
-      .eq('status', 'accepted');
-
-    if (error) {
-      console.error('useAcceptedFriends → error', error);
-      Alert.alert('Error', 'Could not load friends');
-    } else {
-      const mapped: Friend[] = data
-        ?.map((row) => {
+    try {
+      const { friendships: data } = await api.friendships.list('accepted');
+      const mapped: Friend[] = (data ?? [])
+        .map((row: Record<string, unknown>) => {
           const isSender = row.user_id === currentProfileId;
-          const profile = isSender ? row.receiver_profile : row.sender_profile;
+          const profile = (isSender ? row.receiver_profile : row.sender_profile) as Record<
+            string,
+            unknown
+          > | null;
           if (!profile?.user_id) return null;
           return {
-            id: profile.user_id,
-            name: profile.display_name ?? profile.email ?? 'Unknown',
-            email: profile.email,
-            avatar_url: profile.avatar_url,
+            id: profile.user_id as string,
+            name: (profile.display_name as string) ?? (profile.email as string) ?? 'Unknown',
+            email: profile.email as string | undefined,
+            avatar_url: profile.avatar_url as string | undefined,
           };
         })
-        .filter((f): f is Friend => f !== null) ?? [];
+        .filter((f): f is Friend => f !== null);
 
-      const unique = Array.from(new Map(mapped.map((i) => [i.id, i])).values());
-      setFriends(unique);
+      setFriends(Array.from(new Map(mapped.map((i) => [i.id, i])).values()));
+    } catch {
+      Alert.alert('Error', 'Could not load friends');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, [currentProfileId]);
 
-  useEffect(() => { fetchFriends(); }, [fetchFriends]);
+  useEffect(() => {
+    fetchFriends();
+  }, [fetchFriends]);
+
+  useFriendshipsRealtime(currentProfileId, fetchFriends);
 
   return { friends, loading, refetch: fetchFriends };
 };
@@ -130,61 +119,18 @@ const NewGroupScreen = ({ navigation }: Props) => {
 
   const uploadAvatarAndGetUrl = async (uri: string, groupId: string): Promise<string> => {
     if (!uri) return '';
-
     try {
-      console.log('📤 Uploading avatar for group:', groupId);
-      
-      // Get file extension
       const fileExt = uri.split('.').pop()?.toLowerCase() || 'jpg';
-      const fileName = `avatar.${fileExt}`;
-      const filePath = `${groupId}/${fileName}`;
-
-      console.log('File path:', filePath);
-      
-      // Convert the image to base64
-      const response = await fetch(uri);
-      const blob = await response.blob();
-      
-      // Convert blob to base64
-      const base64 = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          const result = reader.result as string;
-          // Remove the data URL prefix
-          const base64Data = result.split(',')[1];
-          resolve(base64Data);
-        };
-        reader.readAsDataURL(blob);
-      });
-
-      // Upload to storage
-      const { error: uploadError } = await supabase.storage
-        .from('group_avatar')
-        .upload(filePath, decode(base64), {
-          contentType: `image/${fileExt === 'png' ? 'png' : 'jpeg'}`,
-          upsert: true,
-        });
-
-      if (uploadError) {
-        console.error('Upload error:', uploadError);
-        throw uploadError;
-      }
-
-      console.log('✅ Upload successful');
-      
-      // Generate public URL
-      const { data } = supabase.storage
-        .from('group_avatar')
-        .getPublicUrl(filePath);
-
-      const publicUrl = `${data.publicUrl}?t=${Date.now()}`;
-      console.log('Generated public URL:', publicUrl);
-      
-      return publicUrl;
-
-    } catch (error: any) {
-      console.error('uploadAvatarAndGetUrl failed:', error);
-      Alert.alert('Upload Failed', error.message || 'Could not upload image');
+      const filePath = `${groupId}/avatar.${fileExt}`;
+      return await uploadFromUri(
+        'group_avatar',
+        filePath,
+        uri,
+        `image/${fileExt === 'png' ? 'png' : 'jpeg'}`
+      );
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Could not upload image';
+      Alert.alert('Upload Failed', message);
       return '';
     }
   };
@@ -219,105 +165,26 @@ const NewGroupScreen = ({ navigation }: Props) => {
 
       // 1. Create the group first
       console.log('📝 Creating group...');
-      const groupData = { 
-        name: groupName.trim(), 
-        creator_id: user.id 
-      };
+      const { group, invite } = await api.groups.create({
+        name: groupName.trim(),
+        member_user_ids: selectedIds,
+      });
 
-      const { data: group, error: groupError } = await supabase
-        .from('groups')
-        .insert(groupData)
-        .select()
-        .single();
+      notifyRealtimeTopic('groups');
+      notifyRealtimeTopic('groupMembers');
 
-      if (groupError) {
-        console.error('❌ Group creation failed:', groupError);
-        throw groupError;
-      }
-      
-      if (!group) {
-        throw new Error('Group was not returned after creation');
-      }
+      const groupId = group.id as string;
 
-      const groupId = group.id;
-      console.log('✅ Group created with ID:', groupId);
-
-      // 2. Upload avatar if exists and update group
-      let avatarUrl = '';
       if (avatarUri) {
-        console.log('🖼️ Uploading avatar...');
-        try {
-          avatarUrl = await uploadAvatarAndGetUrl(avatarUri, groupId);
-          
-          if (avatarUrl) {
-            console.log('✅ Avatar uploaded, URL:', avatarUrl);
-            
-            // Update the group with avatar URL
-            console.log('🔄 Updating group with avatar URL...');
-            const { error: updateError } = await supabase
-              .from('groups')
-              .update({ avatar_url: avatarUrl })
-              .eq('id', groupId);
-
-            if (updateError) {
-              console.error('❌ Failed to update avatar URL:', updateError);
-              console.log('⚠️ Continuing without avatar URL in database');
-            } else {
-              console.log('✅ Group updated with avatar URL');
-            }
-          }
-        } catch (avatarError: any) {
-          console.error('❌ Avatar upload failed:', avatarError);
-          // Non-critical error, continue without avatar
+        const avatarUrl = await uploadAvatarAndGetUrl(avatarUri, groupId);
+        if (avatarUrl) {
+          await api.groups.update(groupId, { avatar_url: avatarUrl });
         }
       }
 
-      // 3. Add members
-      console.log('👥 Adding members...');
-      const members = [
-        { group_id: groupId, user_id: user.id, role: 'admin' },
-        ...selectedIds.map(id => ({ group_id: groupId, user_id: id, role: 'member' }))
-      ];
-
-      const { error: membersError } = await supabase
-        .from('group_members')
-        .insert(members);
-
-      if (membersError) {
-        console.error('❌ Failed to add members:', membersError);
-        throw new Error('Failed to add members to group');
-      }
-
-      console.log('✅ Members added:', members.length);
-
-      // 4. Generate invite link
-      console.log('🔗 Generating invite link...');
-      const { data: invite, error: inviteError } = await supabase
-        .from('group_invites')
-        .insert({ group_id: groupId, created_by: user.id })
-        .select()
-        .single();
-
-      const link = invite 
-        ? `chatapp://invite/${invite.token}` 
+      const link = invite
+        ? `chatapp://invite/${(invite as Record<string, unknown>).token}`
         : `chatapp://group/${groupId}`;
-
-      if (inviteError) {
-        console.warn('⚠️ Invite creation failed:', inviteError);
-      }
-
-      // 5. Verify the group was created with avatar URL
-      console.log('🔍 Verifying group in database...');
-      const { data: verifyGroup } = await supabase
-        .from('groups')
-        .select('id, name, avatar_url, created_at')
-        .eq('id', groupId)
-        .single();
-      
-      console.log('📊 VERIFICATION RESULTS:');
-      console.log('Group ID:', verifyGroup?.id);
-      console.log('Group Name:', verifyGroup?.name);
-      console.log('Avatar URL:', verifyGroup?.avatar_url || 'NULL (if no avatar uploaded)');
       console.log('Created At:', verifyGroup?.created_at);
 
       if (!verifyGroup) {
@@ -360,7 +227,7 @@ const NewGroupScreen = ({ navigation }: Props) => {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <Ionicons name="arrow-back" size={28} color="#fff" />

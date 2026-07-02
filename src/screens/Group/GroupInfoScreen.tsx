@@ -1,7 +1,6 @@
 // src/screens/Chat/GroupInfoScreen.tsx
 import React, { useState, useEffect } from 'react';
 import {
-  SafeAreaView,
   View,
   Text,
   StyleSheet,
@@ -19,13 +18,19 @@ import {
   Platform,
   RefreshControl,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { IconButton } from 'react-native-paper';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons, MaterialIcons, Feather } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
 import { supabase } from '../../lib/supabase';
+import { api } from '../../lib/api';
+import { uploadFromUri } from '../../lib/uploads';
 import { useAuth } from '../../hooks/useAuth';
+import { useRealtimeTopic } from '../../hooks/useRealtimeTopic';
+import { notifyRealtimeTopic } from '../../lib/realtimeHub';
+import * as ImagePicker from 'expo-image-picker';
 
 // Storage keys
 const GROUP_INFO_STORAGE_KEY = '@group_info_';
@@ -74,7 +79,7 @@ type GroupInvite = {
 
 type OfflineAction = {
   id: string;
-  type: 'update_description' | 'update_privacy' | 'update_role' | 'remove_member' | 'create_invite' | 'revoke_invite';
+  type: 'update_description' | 'update_privacy' | 'update_role' | 'remove_member' | 'create_invite' | 'revoke_invite' | 'add_member' | 'update_avatar';
   data: any;
   timestamp: number;
   groupId: string;
@@ -83,15 +88,13 @@ type OfflineAction = {
 export default function GroupInfoScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
-  console.log('GroupInfoScreen mounted');
-  console.log('Route params:', route.params);
-  console.log('groupId from params:', route.params?.groupId);
-  console.log('Full route:', route);
   const { groupId } = route.params;
   const { user } = useAuth();
 
   const [groupInfo, setGroupInfo] = useState<GroupInfo | null>(null);
   const [members, setMembers] = useState<GroupMember[]>([]);
+  const [visibleMembers, setVisibleMembers] = useState<GroupMember[]>([]);
+  const [showAllMembers, setShowAllMembers] = useState(false);
   const [invites, setInvites] = useState<GroupInvite[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -107,6 +110,15 @@ export default function GroupInfoScreen() {
   const [isOnline, setIsOnline] = useState(true);
   const [isDataStale, setIsDataStale] = useState(false);
   const [hasPendingActions, setHasPendingActions] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  
+  // Collapsible sections
+  const [expandedSections, setExpandedSections] = useState({
+    members: true,
+    settings: false,
+    invites: false,
+    info: false
+  });
 
   // Check network status and pending actions
   useEffect(() => {
@@ -114,7 +126,6 @@ export default function GroupInfoScreen() {
       const online = state.isConnected || false;
       setIsOnline(online);
       
-      // Sync pending actions when coming back online
       if (online && hasPendingActions) {
         syncPendingActions();
       }
@@ -129,6 +140,195 @@ export default function GroupInfoScreen() {
     fetchGroupInfo();
   }, [groupId]);
 
+  // Update visible members when members list changes
+  useEffect(() => {
+    if (showAllMembers) {
+      setVisibleMembers(members);
+    } else {
+      setVisibleMembers(members.slice(0, 20));
+    }
+  }, [members, showAllMembers]);
+
+ // Update your existing useEffect to include group updates
+useEffect(() => {
+  if (!groupId || !isOnline) return;
+
+  // Sort function for consistent ordering
+  const sortMembers = (membersList: GroupMember[]): GroupMember[] => {
+    const rolePriority: Record<string, number> = {
+      'creator': 3,
+      'admin': 2,
+      'member': 1
+    };
+    
+    return [...membersList].sort((a, b) => {
+      const priorityA = rolePriority[a.role] || 0;
+      const priorityB = rolePriority[b.role] || 0;
+      
+      if (priorityB !== priorityA) {
+        return priorityB - priorityA;
+      }
+      
+      const nameA = a.profiles?.display_name || '';
+      const nameB = b.profiles?.display_name || '';
+      return nameA.localeCompare(nameB);
+    });
+  };
+
+  // Subscribe to group members changes
+  const membersChannel = supabase
+    .channel(`group-members-${groupId}`)
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'group_members',
+        filter: `group_id=eq.${groupId}`
+      },
+      async (payload) => {
+        const newMember = payload.new as GroupMember;
+        
+        if (members.some(m => m.id === newMember.id || m.user_id === newMember.user_id)) {
+          return;
+        }
+
+        const { profile } = await api.profiles.getByUserId(newMember.user_id);
+
+        const processedMember: GroupMember = {
+          ...newMember,
+          role: newMember.user_id === groupInfo?.creator_id ? 'creator' : newMember.role,
+          profiles: profile 
+            ? {
+                user_id: profile.user_id,
+                display_name: profile.display_name || `User ${profile.user_id?.slice(0, 8)}`,
+                avatar_url: profile.avatar_url,
+                email: profile.email || 'No email'
+              }
+            : {
+                user_id: newMember.user_id,
+                display_name: 'New Member',
+                avatar_url: null,
+                email: 'No email'
+              }
+        };
+
+        const updatedMembers = sortMembers([...members, processedMember]);
+        setMembers(updatedMembers);
+        
+        if (groupInfo) {
+          const updatedGroupInfo = {
+            ...groupInfo,
+            members_count: (groupInfo.members_count || 0) + 1
+          };
+          setGroupInfo(updatedGroupInfo);
+          await saveToStorage(GROUP_INFO_STORAGE_KEY, updatedGroupInfo);
+        }
+
+        await saveToStorage(GROUP_MEMBERS_STORAGE_KEY, updatedMembers);
+      }
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: 'DELETE',
+        schema: 'public',
+        table: 'group_members',
+        filter: `group_id=eq.${groupId}`
+      },
+      (payload) => {
+        const oldMember = payload.old as GroupMember;
+        const updatedMembers = sortMembers(
+          members.filter(m => m.id !== oldMember.id)
+        );
+        setMembers(updatedMembers);
+        
+        if (groupInfo) {
+          const updatedGroupInfo = {
+            ...groupInfo,
+            members_count: Math.max(0, (groupInfo.members_count || 0) - 1)
+          };
+          setGroupInfo(updatedGroupInfo);
+          saveToStorage(GROUP_INFO_STORAGE_KEY, updatedGroupInfo);
+        }
+
+        saveToStorage(GROUP_MEMBERS_STORAGE_KEY, updatedMembers);
+      }
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'group_members',
+        filter: `group_id=eq.${groupId}`
+      },
+      async (payload) => {
+        const updatedMember = payload.new as GroupMember;
+        const updatedMembers = sortMembers(
+          members.map(member => 
+            member.id === updatedMember.id ? {
+              ...member,
+              role: updatedMember.role
+            } : member
+          )
+        );
+        
+        setMembers(updatedMembers);
+        
+        if (updatedMember.role === 'creator' && groupInfo) {
+          const updatedGroupInfo = {
+            ...groupInfo,
+            creator_id: updatedMember.user_id
+          };
+          setGroupInfo(updatedGroupInfo);
+          await saveToStorage(GROUP_INFO_STORAGE_KEY, updatedGroupInfo);
+        }
+
+        await saveToStorage(GROUP_MEMBERS_STORAGE_KEY, updatedMembers);
+      }
+    )
+    .subscribe();
+
+  // Subscribe to group updates (for privacy changes, avatar, description, etc.)
+  const groupChannel = supabase
+    .channel(`group-updates-${groupId}`)
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'groups',
+        filter: `id=eq.${groupId}`
+      },
+      async (payload) => {
+        const updatedGroup = payload.new as GroupInfo;
+        
+        // Update local state
+        if (groupInfo) {
+          const updatedGroupInfo = {
+            ...groupInfo,
+            ...updatedGroup
+          };
+          setGroupInfo(updatedGroupInfo);
+          
+          // Update derived states
+          setIsPublic(updatedGroup.is_public || false);
+          setDescription(updatedGroup.description || '');
+          
+          // Save to storage
+          await saveToStorage(GROUP_INFO_STORAGE_KEY, updatedGroupInfo);
+        }
+      }
+    )
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(membersChannel);
+    supabase.removeChannel(groupChannel);
+  };
+}, [groupId, isOnline, members, groupInfo]);
+
   // Storage utilities
   const saveToStorage = async (key: string, data: any) => {
     try {
@@ -137,7 +337,7 @@ export default function GroupInfoScreen() {
         timestamp: Date.now()
       }));
     } catch (error) {
-      console.error('Error saving to storage:', error);
+      
     }
   };
 
@@ -149,7 +349,7 @@ export default function GroupInfoScreen() {
         return parsed.data;
       }
     } catch (error) {
-      console.error('Error loading from storage:', error);
+      
     }
     return null;
   };
@@ -163,7 +363,7 @@ export default function GroupInfoScreen() {
         return parsed.timestamp < fiveMinutesAgo;
       }
     } catch (error) {
-      console.error('Error checking data staleness:', error);
+      
     }
     return true;
   };
@@ -181,7 +381,7 @@ export default function GroupInfoScreen() {
       await AsyncStorage.setItem(OFFLINE_ACTIONS_KEY, JSON.stringify(actions));
       setHasPendingActions(true);
     } catch (error) {
-      console.error('Error saving offline action:', error);
+      
     }
   };
 
@@ -193,7 +393,7 @@ export default function GroupInfoScreen() {
       await AsyncStorage.setItem(OFFLINE_ACTIONS_KEY, JSON.stringify(filteredActions));
       setHasPendingActions(filteredActions.length > 0);
     } catch (error) {
-      console.error('Error removing offline action:', error);
+      
     }
   };
 
@@ -204,7 +404,7 @@ export default function GroupInfoScreen() {
       const groupActions = actions.filter(action => action.groupId === groupId);
       setHasPendingActions(groupActions.length > 0);
     } catch (error) {
-      console.error('Error checking pending actions:', error);
+      
     }
   };
 
@@ -215,7 +415,6 @@ export default function GroupInfoScreen() {
     invites?: GroupInvite[]
   }) => {
     try {
-      // Update React state immediately
       if (updates.groupInfo && groupInfo) {
         const newGroupInfo = { ...groupInfo, ...updates.groupInfo };
         setGroupInfo(newGroupInfo);
@@ -232,7 +431,7 @@ export default function GroupInfoScreen() {
         await saveToStorage(GROUP_INVITES_STORAGE_KEY, updates.invites);
       }
     } catch (error) {
-      console.error('Error updating local state:', error);
+      
     }
   };
 
@@ -255,50 +454,40 @@ export default function GroupInfoScreen() {
         try {
           switch (action.type) {
             case 'update_description':
-              await supabase
-                .from('groups')
-                .update({ description: action.data.description })
-                .eq('id', groupId);
+              await api.groups.update(groupId, { description: action.data.description });
               break;
             case 'update_privacy':
-              await supabase
-                .from('groups')
-                .update({ is_public: action.data.is_public })
-                .eq('id', groupId);
+              await api.groups.update(groupId, { is_public: action.data.is_public });
               break;
             case 'update_role':
-              await supabase
-                .from('group_members')
-                .update({ role: action.data.newRole })
-                .eq('id', action.data.memberId);
+              await api.groups.updateMemberRole(groupId, action.data.memberId, action.data.newRole);
               break;
             case 'remove_member':
-              await supabase
-                .from('group_members')
-                .delete()
-                .eq('id', action.data.memberId);
+              await api.groups.removeMember(groupId, action.data.memberId);
               break;
             case 'create_invite':
-              await supabase
-                .from('group_invites')
-                .insert(action.data);
+              await api.groups.createInvite(groupId);
               break;
             case 'revoke_invite':
-              await supabase
-                .from('group_invites')
-                .update({ expires_at: new Date().toISOString() })
-                .eq('id', action.data.inviteId);
+              await api.groups.revokeInvite(groupId, action.data.inviteId);
+              break;
+            case 'update_avatar':
+              await api.groups.update(groupId, { avatar_url: action.data.avatar_url });
+              break;
+            case 'add_member':
+              await api.groups.addMembers(
+                groupId,
+                (action.data.members as { user_id: string }[]).map((m) => m.user_id)
+              );
               break;
           }
           await removeOfflineAction(action.id);
           successCount++;
         } catch (error) {
-          console.error(`Error syncing action ${action.type}:`, error);
           errorCount++;
         }
       }
       
-      // Refresh data after syncing
       await fetchGroupInfo(true);
       
       Alert.alert(
@@ -307,7 +496,6 @@ export default function GroupInfoScreen() {
         [{ text: 'OK' }]
       );
     } catch (error) {
-      console.error('Error syncing pending actions:', error);
       Alert.alert('Sync Error', 'Failed to sync changes.');
     } finally {
       setLoading(false);
@@ -318,21 +506,17 @@ export default function GroupInfoScreen() {
     try {
       if (!forceRefresh) setLoading(true);
       
-      // Check if we're online
       const netInfo = await NetInfo.fetch();
       const online = netInfo.isConnected;
       setIsOnline(online || false);
 
-      // ALWAYS try to load from storage first for fast display
       const [cachedGroup, cachedMembers, cachedInvites] = await Promise.all([
         loadFromStorage(GROUP_INFO_STORAGE_KEY),
         loadFromStorage(GROUP_MEMBERS_STORAGE_KEY),
         loadFromStorage(GROUP_INVITES_STORAGE_KEY)
       ]);
 
-      // Always use cached data if available
       if (cachedGroup || cachedMembers || cachedInvites) {
-        console.log('Loaded cached data');
         if (cachedGroup) {
           setGroupInfo(cachedGroup);
           setDescription(cachedGroup.description || '');
@@ -341,184 +525,47 @@ export default function GroupInfoScreen() {
         if (cachedMembers) setMembers(cachedMembers);
         if (cachedInvites) setInvites(cachedInvites);
         
-        // Set loading to false immediately when we have cached data
         if (!forceRefresh) setLoading(false);
       }
 
-      // If offline, don't try to fetch from network
       if (!online) {
-        console.log('Offline mode - using cached data');
         if (!cachedGroup && !cachedMembers && !cachedInvites) {
-          // Only show alert if we have NO cached data at all
           Alert.alert(
             'Offline Mode',
             'You are offline. Using cached data if available.',
             [{ text: 'OK' }]
           );
         }
-        // Make sure loading is false
         if (!forceRefresh) setLoading(false);
         return;
       }
 
-      // Online - fetch fresh data in background
-      console.log('Online - fetching fresh data');
-      
-      // Parallelize API calls
-      const [groupResult, membersResult] = await Promise.allSettled([
-        supabase
-          .from('groups')
-          .select('*')
-          .eq('id', groupId)
-          .single(),
-        supabase
-          .from('group_members')
-          .select('*')
-          .eq('group_id', groupId)
-      ]);
+      const { group: groupData, members: sortedMembers, invites: processedInvites } =
+        await api.groups.details(groupId);
 
-      // Handle group fetch error
-      if (groupResult.status === 'rejected') {
-        throw groupResult.reason;
-      }
-      
-      const { data: groupData, error: groupError } = groupResult.value;
-      if (groupError) throw groupError;
-
-      // Handle members fetch error
-      if (membersResult.status === 'rejected') {
-        throw membersResult.reason;
-      }
-      
-      const { data: membersData, error: membersError } = membersResult.value;
-      if (membersError) throw membersError;
-
-      // Early return if no group data
       if (!groupData) {
         Alert.alert('Error', 'Group not found');
         navigation.goBack();
         return;
       }
 
-      // Get unique user IDs from members
-      const memberUserIds = [...new Set(membersData?.map(m => m.user_id).filter(Boolean) || [])];
-      
-      // Fetch profiles and invites in parallel
-      const [profilesResult, invitesResult] = await Promise.allSettled([
-        memberUserIds.length > 0 
-          ? supabase
-              .from('profiles')
-              .select('user_id, display_name, avatar_url, email')
-              .in('user_id', memberUserIds)
-          : Promise.resolve({ data: [], error: null }),
-        supabase
-          .from('group_invites')
-          .select('*')
-          .eq('group_id', groupId)
-          .is('used_at', null)
-          .gt('expires_at', new Date().toISOString())
-          .order('created_at', { ascending: false })
-      ]);
-
-      const profilesData = profilesResult.status === 'fulfilled' 
-        ? profilesResult.value.data 
-        : [];
-      
-      const invitesData = invitesResult.status === 'fulfilled' 
-        ? invitesResult.value.data 
-        : [];
-
-      // Get creator ID for role assignment
-      const creatorId = groupData.creator_id;
-
-      // Process members with profiles
-      const profilesMap = new Map(
-        (profilesData || []).map(profile => [profile.user_id, profile])
-      );
-
-      const processedMembers: GroupMember[] = (membersData || []).map(member => {
-        const profile = profilesMap.get(member.user_id);
-        
-        return {
-          ...member,
-          role: member.user_id === creatorId ? 'creator' : member.role,
-          profiles: profile 
-            ? {
-                user_id: profile.user_id,
-                display_name: profile.display_name || `User ${profile.user_id?.slice(0, 8)}`,
-                avatar_url: profile.avatar_url,
-                email: profile.email || 'No email'
-              }
-            : {
-                user_id: member.user_id,
-                display_name: 'Unknown User',
-                avatar_url: null,
-                email: 'No email'
-              }
-        };
-      });
-
-      // Process invites
-      let processedInvites: GroupInvite[] = [];
-      if (invitesData && invitesData.length > 0) {
-        const inviteCreatorIds = [...new Set(invitesData.map(i => i.created_by).filter(Boolean))];
-        
-        const { data: creatorProfiles } = await supabase
-          .from('profiles')
-          .select('user_id, display_name, avatar_url')
-          .in('user_id', inviteCreatorIds);
-        
-        const creatorProfilesMap = new Map(
-          (creatorProfiles || []).map(profile => [profile.user_id, profile])
-        );
-
-        processedInvites = invitesData.map(invite => {
-          const creatorProfile = creatorProfilesMap.get(invite.created_by);
-          
-          return {
-            ...invite,
-            created_by_profile: creatorProfile
-              ? {
-                  display_name: creatorProfile.display_name || `User ${creatorProfile.user_id?.slice(0, 8)}`,
-                  avatar_url: creatorProfile.avatar_url
-                }
-              : {
-                  display_name: 'Unknown',
-                  avatar_url: null
-                }
-          };
-        });
-      }
-
-      // Save to AsyncStorage
       await Promise.all([
-        saveToStorage(GROUP_INFO_STORAGE_KEY, {
-          ...groupData,
-          members_count: membersData?.length || 0,
-        }),
-        saveToStorage(GROUP_MEMBERS_STORAGE_KEY, processedMembers),
-        saveToStorage(GROUP_INVITES_STORAGE_KEY, processedInvites)
+        saveToStorage(GROUP_INFO_STORAGE_KEY, groupData),
+        saveToStorage(GROUP_MEMBERS_STORAGE_KEY, sortedMembers),
+        saveToStorage(GROUP_INVITES_STORAGE_KEY, processedInvites),
       ]);
 
-      // Update state
-      setGroupInfo({
-        ...groupData,
-        members_count: membersData?.length || 0,
-      });
-      setMembers(processedMembers);
-      setInvites(processedInvites);
-      setDescription(groupData.description || '');
-      setIsPublic(groupData.is_public || false);
+      setGroupInfo(groupData);
+      setMembers(sortedMembers as GroupMember[]);
+      setInvites(processedInvites as GroupInvite[]);
+      setDescription((groupData.description as string) || '');
+      setIsPublic(Boolean(groupData.is_public));
       setIsDataStale(false);
       
     } catch (error: any) {
-      console.error('Error fetching group info:', error);
-      
-      // Even if there's an error, use cached data if available
       if (groupInfo || members.length > 0 || invites.length > 0) {
-        console.log('Using cached data despite error');
+        // Using cached data despite error
       } else {
-        // Show error only if no cached data
         if (error?.message?.includes('404') || error?.message?.includes('not found')) {
           Alert.alert('Error', 'Group not found. It may have been deleted.');
           navigation.goBack();
@@ -543,11 +590,14 @@ export default function GroupInfoScreen() {
     await fetchGroupInfo(true);
   };
 
+  useRealtimeTopic('groupInvites', () => {
+    if (isOnline) void fetchGroupInfo(true);
+  }, Boolean(groupId));
+
   const generateInviteLink = async () => {
     try {
       setGeneratingInvite(true);
 
-      // If offline, queue the action
       if (!isOnline) {
         const tempId = Date.now().toString();
         const newInvite = {
@@ -587,19 +637,8 @@ export default function GroupInfoScreen() {
         return;
       }
 
-      // Online - create immediately
-      const { data, error } = await supabase
-        .from('group_invites')
-        .insert({
-          group_id: groupId,
-          created_by: user?.id,
-        })
-        .select()
-        .single();
+      const { invite: data } = await api.groups.createInvite(groupId);
 
-      if (error) throw error;
-
-      // Save to storage
       const newInvite = {
         ...data,
         created_by_profile: {
@@ -611,8 +650,8 @@ export default function GroupInfoScreen() {
       const updatedInvites = [...invites, newInvite];
       setInvites(updatedInvites);
       await saveToStorage(GROUP_INVITES_STORAGE_KEY, updatedInvites);
+      notifyRealtimeTopic('groupInvites');
 
-      // Construct the invite link
       const inviteLink = `yourapp://join-group?token=${data.token}`;
       const webInviteLink = `https://yourapp.com/join/${data.token}`;
       
@@ -638,7 +677,6 @@ export default function GroupInfoScreen() {
       );
       
     } catch (error: any) {
-      console.error('Error generating invite:', error);
       Alert.alert('Error', error.message || 'Failed to generate invite link');
     } finally {
       setGeneratingInvite(false);
@@ -652,7 +690,6 @@ export default function GroupInfoScreen() {
         title: `Join ${groupInfo?.name}`,
       });
     } catch (error) {
-      console.error('Error sharing:', error);
       copyInviteLink(deepLink);
     }
   };
@@ -669,29 +706,21 @@ export default function GroupInfoScreen() {
         return;
       }
 
-      const { error } = await supabase
-        .from('group_invites')
-        .update({ 
-          expires_at: new Date().toISOString()
-        })
-        .eq('id', inviteId);
-
-      if (error) throw error;
+      await api.groups.revokeInvite(groupId, inviteId);
 
       const updatedInvites = invites.filter(inv => inv.id !== inviteId);
       setInvites(updatedInvites);
       await saveToStorage(GROUP_INVITES_STORAGE_KEY, updatedInvites);
-      
+      notifyRealtimeTopic('groupInvites');
+
       Alert.alert('Success', 'Invite link revoked');
     } catch (error) {
-      console.error('Error revoking invite:', error);
       Alert.alert('Error', 'Failed to revoke invite');
     }
   };
 
   const updateGroupDescription = async () => {
     try {
-      // Update local state immediately
       const updatedGroupInfo = groupInfo ? { 
         ...groupInfo, 
         description 
@@ -703,7 +732,6 @@ export default function GroupInfoScreen() {
       
       setEditingDescription(false);
 
-      // If offline, queue the action
       if (!isOnline) {
         await addOfflineAction({
           type: 'update_description',
@@ -716,64 +744,49 @@ export default function GroupInfoScreen() {
         return;
       }
 
-      // Online - update server
-      const { error } = await supabase
-        .from('groups')
-        .update({ description })
-        .eq('id', groupId);
-
-      if (error) throw error;
+      await api.groups.update(groupId, { description });
 
       Alert.alert('Success', 'Description updated');
     } catch (error) {
-      console.error('Error updating description:', error);
       Alert.alert('Error', 'Failed to update description');
     }
   };
 
-  const updateGroupPrivacy = async (value: boolean) => {
-    try {
-      // Update local state immediately
-      const updatedGroupInfo = groupInfo ? { 
-        ...groupInfo, 
-        is_public: value 
-      } : null;
-      
-      if (updatedGroupInfo) {
-        await updateLocalState({ groupInfo: updatedGroupInfo });
-      }
+ const updateGroupPrivacy = async (value: boolean) => {
+  try {
+    setIsPublic(value);
 
-      // If offline, queue the action
-      if (!isOnline) {
-        await addOfflineAction({
-          type: 'update_privacy',
-          data: { is_public: value },
-          timestamp: Date.now(),
-          groupId
-        });
-        
-        Alert.alert('Saved Locally', 'Privacy setting updated. Will sync when online.');
-        return;
-      }
-
-      // Online - update server
-      const { error } = await supabase
-        .from('groups')
-        .update({ is_public: value })
-        .eq('id', groupId);
-
-      if (error) throw error;
-      
-      Alert.alert('Success', 'Privacy setting updated');
-    } catch (error) {
-      console.error('Error updating privacy:', error);
-      Alert.alert('Error', 'Failed to update privacy settings');
+    const updatedGroupInfo = groupInfo ? { ...groupInfo, is_public: value } : null;
+    if (updatedGroupInfo) {
+      setGroupInfo(updatedGroupInfo);
+      await saveToStorage(GROUP_INFO_STORAGE_KEY, updatedGroupInfo);
     }
-  };
 
+    if (!isOnline) {
+      await addOfflineAction({
+        type: 'update_privacy',
+        data: { is_public: value },
+        timestamp: Date.now(),
+        groupId,
+      });
+      return;
+    }
+
+    await api.groups.update(groupId, { is_public: value });
+  } catch {
+    setIsPublic(!value);
+    const revertedGroupInfo = groupInfo ? { ...groupInfo, is_public: !value } : null;
+    if (revertedGroupInfo) {
+      setGroupInfo(revertedGroupInfo);
+      await saveToStorage(GROUP_INFO_STORAGE_KEY, revertedGroupInfo);
+    }
+    if (isOnline) {
+      Alert.alert('Error', 'Failed to update privacy settings. Please try again.');
+    }
+  }
+};
   const updateMemberRole = async (memberId: string, newRole: 'admin' | 'member') => {
     try {
-      // Update local state immediately
       const updatedMembers = members.map(member =>
         member.id === memberId ? { ...member, role: newRole } : member
       );
@@ -782,7 +795,6 @@ export default function GroupInfoScreen() {
       
       setShowMemberActions(false);
 
-      // If offline, queue the action
       if (!isOnline) {
         await addOfflineAction({
           type: 'update_role',
@@ -795,17 +807,10 @@ export default function GroupInfoScreen() {
         return;
       }
 
-      // Online - update server
-      const { error } = await supabase
-        .from('group_members')
-        .update({ role: newRole })
-        .eq('id', memberId);
-
-      if (error) throw error;
+      await api.groups.updateMemberRole(groupId, memberId, newRole);
       
       Alert.alert('Success', 'Member role updated');
     } catch (error) {
-      console.error('Error updating member role:', error);
       Alert.alert('Error', 'Failed to update member role');
     }
   };
@@ -818,7 +823,6 @@ export default function GroupInfoScreen() {
     }
 
     try {
-      // Update local state immediately
       const updatedMembers = members.filter(member => member.id !== memberId);
       const updatedGroupInfo = groupInfo ? { 
         ...groupInfo, 
@@ -834,7 +838,6 @@ export default function GroupInfoScreen() {
       
       setShowMemberActions(false);
 
-      // If offline, queue the action
       if (!isOnline) {
         await addOfflineAction({
           type: 'remove_member',
@@ -847,17 +850,10 @@ export default function GroupInfoScreen() {
         return;
       }
 
-      // Online - update server
-      const { error } = await supabase
-        .from('group_members')
-        .delete()
-        .eq('id', memberId);
-
-      if (error) throw error;
+      await api.groups.removeMember(groupId, memberId);
       
       Alert.alert('Success', 'Member removed');
     } catch (error) {
-      console.error('Error removing member:', error);
       Alert.alert('Error', 'Failed to remove member');
     }
   };
@@ -889,18 +885,11 @@ export default function GroupInfoScreen() {
                 return;
               }
 
-              const { error } = await supabase
-                .from('group_members')
-                .delete()
-                .eq('group_id', groupId)
-                .eq('user_id', user?.id);
-
-              if (error) throw error;
+              await api.groups.leave(groupId);
 
               Alert.alert('Success', 'You have left the group');
               navigation.navigate('ChatList');
             } catch (error) {
-              console.error('Error leaving group:', error);
               Alert.alert('Error', 'Failed to leave group');
             }
           },
@@ -932,24 +921,8 @@ export default function GroupInfoScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              await supabase
-                .from('group_invites')
-                .delete()
-                .eq('group_id', groupId);
+              await api.groups.delete(groupId);
 
-              await supabase
-                .from('group_members')
-                .delete()
-                .eq('group_id', groupId);
-
-              const { error } = await supabase
-                .from('groups')
-                .delete()
-                .eq('id', groupId);
-
-              if (error) throw error;
-
-              // Clear local storage
               await Promise.all([
                 AsyncStorage.removeItem(GROUP_INFO_STORAGE_KEY + groupId),
                 AsyncStorage.removeItem(GROUP_MEMBERS_STORAGE_KEY + groupId),
@@ -959,7 +932,6 @@ export default function GroupInfoScreen() {
               Alert.alert('Success', 'Group deleted successfully');
               navigation.navigate('ChatList');
             } catch (error) {
-              console.error('Error deleting group:', error);
               Alert.alert('Error', 'Failed to delete group');
             }
           },
@@ -968,21 +940,82 @@ export default function GroupInfoScreen() {
     );
   };
 
+  // Function to pick and update group avatar
+  const pickGroupAvatar = async () => {
+    try {
+      // Request permissions
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission required', 'Please grant camera roll permissions to change your avatar.');
+        return;
+      }
+
+      // Launch image picker
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        setUploadingAvatar(true);
+        
+        const imageUri = result.assets[0].uri;
+        
+        const fileName = `${groupId}/avatar_${Date.now()}.jpg`;
+        const publicUrl = await uploadFromUri('group_avatar', fileName, imageUri, 'image/jpeg');
+
+        const updatedGroupInfo = groupInfo ? { ...groupInfo, avatar_url: publicUrl } : null;
+
+        if (updatedGroupInfo) {
+          setGroupInfo(updatedGroupInfo);
+          await saveToStorage(GROUP_INFO_STORAGE_KEY, updatedGroupInfo);
+        }
+
+        if (!isOnline) {
+          await addOfflineAction({
+            type: 'update_avatar',
+            data: { avatar_url: publicUrl },
+            timestamp: Date.now(),
+            groupId,
+          });
+
+          Alert.alert('Saved Locally', 'Avatar updated. Will sync when online.');
+          return;
+        }
+
+        await api.groups.update(groupId, { avatar_url: publicUrl });
+
+        Alert.alert('Success', 'Group avatar updated!');
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to update avatar');
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
+
   const currentUserRole = members.find(m => m.user_id === user?.id)?.role;
   const isCreator = currentUserRole === 'creator';
   const isAdmin = isCreator || currentUserRole === 'admin';
+
+  const toggleSection = (section: keyof typeof expandedSections) => {
+    setExpandedSections(prev => ({
+      ...prev,
+      [section]: !prev[section]
+    }));
+  };
 
   const renderMemberItem = ({ item }: { item: GroupMember }) => {
     const isCurrentUser = item.user_id === user?.id;
     const canManage = isAdmin && !isCurrentUser && item.role !== 'creator';
     
-    // Truncate name if longer than 15 characters
     const displayName = item.profiles?.display_name || 'Unknown User';
     const truncatedName = displayName.length > 15 
       ? `${displayName.substring(0, 15)}...` 
       : displayName;
     
-    // Get role badge text and color
     const getRoleBadge = () => {
       switch(item.role) {
         case 'creator':
@@ -1000,12 +1033,14 @@ export default function GroupInfoScreen() {
       <TouchableOpacity
         style={styles.memberItem}
         onPress={() => {
-          if (canManage) {
-            setSelectedMember(item);
-            setShowMemberActions(true);
-          }
+          // Navigate to chat with this member
+          navigation.navigate('ChatRoom', {
+            chatType: 'individual',
+            chatId: item.user_id,
+            chatName: item.profiles?.display_name || 'User',
+            avatarUrl: item.profiles?.avatar_url,
+          });
         }}
-        disabled={!canManage}
       >
         <View style={styles.memberInfo}>
           <Image
@@ -1031,7 +1066,16 @@ export default function GroupInfoScreen() {
         </View>
         
         {canManage && (
-          <Feather name="more-vertical" size={20} color="#666" />
+          <TouchableOpacity 
+            onPress={(e) => {
+              e.stopPropagation();
+              setSelectedMember(item);
+              setShowMemberActions(true);
+            }}
+            style={styles.manageButton}
+          >
+            <Feather name="more-vertical" size={20} color="#666" />
+          </TouchableOpacity>
         )}
       </TouchableOpacity>
     );
@@ -1069,7 +1113,7 @@ export default function GroupInfoScreen() {
 
   if (loading && !refreshing) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
         <View style={styles.header}>
           <IconButton icon="arrow-left" size={24} onPress={() => navigation.goBack()} />
           <Text style={styles.headerTitle}>Group Info</Text>
@@ -1087,7 +1131,7 @@ export default function GroupInfoScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
       <ScrollView 
         showsVerticalScrollIndicator={false}
         refreshControl={
@@ -1110,12 +1154,6 @@ export default function GroupInfoScreen() {
                 <Feather name="wifi-off" size={12} color="#fff" />
                 <Text style={styles.offlineBadgeText}>Offline</Text>
               </View>
-            )}
-            {isDataStale && isOnline && (
-              <TouchableOpacity onPress={refreshData} style={styles.staleBadge}>
-                <Feather name="refresh-cw" size={12} color="#fff" />
-                <Text style={styles.staleBadgeText}>Update Available</Text>
-              </TouchableOpacity>
             )}
             {hasPendingActions && (
               <TouchableOpacity onPress={syncPendingActions} style={styles.pendingBadge}>
@@ -1157,12 +1195,20 @@ export default function GroupInfoScreen() {
         <View style={styles.groupHeader}>
           <View style={styles.avatarContainer}>
             <Image
-              source={{ uri: groupInfo?.avatar_url || 'https://via.placeholder.com/80' }}
+              source={{ uri: groupInfo?.avatar_url || 'https://via.placeholder.com/60' }}
               style={styles.groupAvatar}
             />
             {isAdmin && (
-              <TouchableOpacity style={styles.editAvatarButton}>
-                <Ionicons name="camera" size={16} color="#fff" />
+              <TouchableOpacity 
+                style={styles.editAvatarButton}
+                onPress={pickGroupAvatar}
+                disabled={uploadingAvatar}
+              >
+                {uploadingAvatar ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Ionicons name="camera" size={16} color="#fff" />
+                )}
               </TouchableOpacity>
             )}
           </View>
@@ -1227,49 +1273,92 @@ export default function GroupInfoScreen() {
           )}
         </View>
 
-        {/* Invite Links Section */}
-        {isAdmin && (
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Invite Links ({invites.length})</Text>
-              <TouchableOpacity
-                style={[styles.addButton, !isOnline && styles.disabledButton]}
-                onPress={() => setShowInviteOptions(true)}
-                disabled={!isOnline && invites.some(inv => inv.token.startsWith('offline_'))}
-              >
-                <Ionicons name="link" size={20} color="#fff" />
-                <Text style={styles.addButtonText}>Create Link</Text>
-              </TouchableOpacity>
+        {/* Members Section - Always visible */}
+        <View style={styles.section}>
+          <TouchableOpacity 
+            style={styles.collapsibleHeader}
+            onPress={() => toggleSection('members')}
+            activeOpacity={0.7}
+          >
+            <View style={styles.collapsibleHeaderLeft}>
+              <Feather 
+                name={expandedSections.members ? "chevron-down" : "chevron-right"} 
+                size={20} 
+                color="#666" 
+              />
+              <Text style={styles.collapsibleTitle}>Members ({members.length})</Text>
             </View>
-            
-            {invites.length > 0 ? (
+            {isAdmin && expandedSections.members && (
+              <TouchableOpacity
+                style={styles.addMemberButton}
+                onPress={() => {
+                  navigation.navigate('FriendsList', { 
+                    mode: 'select',
+                    groupId: groupId,
+                    groupName: groupInfo?.name,
+                    existingMembers: members.map(m => m.user_id)
+                  });
+                }}
+              >
+                <Feather name="user-plus" size={18} color="#007AFF" />
+                <Text style={styles.addMemberText}>Add</Text>
+              </TouchableOpacity>
+            )}
+          </TouchableOpacity>
+          
+          {expandedSections.members && (
+            <>
               <FlatList
-                data={invites}
-                renderItem={renderInviteItem}
+                data={visibleMembers}
+                renderItem={renderMemberItem}
                 keyExtractor={(item) => item.id}
                 scrollEnabled={false}
-                ItemSeparatorComponent={() => (
-                  <View style={[styles.separator, { marginLeft: invites.length > 0 ? 36 : 60 }]} />
-                )}
+                ItemSeparatorComponent={() => <View style={styles.separator} />}
               />
-            ) : (
-              <View style={styles.emptyState}>
-                <Feather name="link" size={40} color="#ddd" />
-                <Text style={styles.emptyStateText}>No active invite links</Text>
-                <Text style={styles.emptyStateSubtext}>
-                  {isOnline 
-                    ? 'Create an invite link to share with others'
-                    : 'Cannot create invite links while offline'}
-                </Text>
-              </View>
-            )}
-          </View>
-        )}
+              
+              {members.length > 20 && !showAllMembers && (
+                <TouchableOpacity
+                  style={styles.showMoreButton}
+                  onPress={() => setShowAllMembers(true)}
+                >
+                  <Text style={styles.showMoreText}>
+                    Show {members.length - 20} more members...
+                  </Text>
+                </TouchableOpacity>
+              )}
+              
+              {showAllMembers && members.length > 20 && (
+                <TouchableOpacity
+                  style={styles.showMoreButton}
+                  onPress={() => setShowAllMembers(false)}
+                >
+                  <Text style={styles.showMoreText}>
+                    Show less
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </>
+          )}
+        </View>
 
-        {/* Group Settings Section */}
-        {isAdmin && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Group Settings</Text>
+        {/* Group Settings Section - Collapsible */}
+        <View style={styles.section}>
+          <TouchableOpacity 
+            style={styles.collapsibleHeader}
+            onPress={() => toggleSection('settings')}
+            activeOpacity={0.7}
+          >
+            <View style={styles.collapsibleHeaderLeft}>
+              <Feather 
+                name={expandedSections.settings ? "chevron-down" : "chevron-right"} 
+                size={20} 
+                color="#666" 
+              />
+              <Text style={styles.collapsibleTitle}>Group Settings</Text>
+            </View>
+          </TouchableOpacity>
+          
+          {expandedSections.settings && isAdmin && (
             <View style={styles.settingItem}>
               <View style={styles.settingInfo}>
                 <Ionicons name="globe" size={24} color="#007AFF" />
@@ -1287,79 +1376,126 @@ export default function GroupInfoScreen() {
                 disabled={!isOnline}
               />
             </View>
+          )}
+        </View>
+
+        {/* Invite Links Section - Collapsible */}
+        {isAdmin && (
+          <View style={styles.section}>
+            <TouchableOpacity 
+              style={styles.collapsibleHeader}
+              onPress={() => toggleSection('invites')}
+              activeOpacity={0.7}
+            >
+              <View style={styles.collapsibleHeaderLeft}>
+                <Feather 
+                  name={expandedSections.invites ? "chevron-down" : "chevron-right"} 
+                  size={20} 
+                  color="#666" 
+                />
+                <Text style={styles.collapsibleTitle}>Invite Links ({invites.length})</Text>
+              </View>
+              {expandedSections.invites && (
+                <TouchableOpacity
+                  style={[styles.addButton, !isOnline && styles.disabledButton]}
+                  onPress={() => setShowInviteOptions(true)}
+                  disabled={!isOnline && invites.some(inv => inv.token.startsWith('offline_'))}
+                >
+                  <Feather name="link" size={16} color="#fff" />
+                  <Text style={styles.addButtonText}>Create</Text>
+                </TouchableOpacity>
+              )}
+            </TouchableOpacity>
+            
+            {expandedSections.invites && (
+              <>
+                {invites.length > 0 ? (
+                  <FlatList
+                    data={invites}
+                    renderItem={renderInviteItem}
+                    keyExtractor={(item) => item.id}
+                    scrollEnabled={false}
+                    ItemSeparatorComponent={() => (
+                      <View style={[styles.separator, { marginLeft: invites.length > 0 ? 36 : 60 }]} />
+                    )}
+                  />
+                ) : (
+                  <View style={styles.emptyState}>
+                    <Feather name="link" size={40} color="#ddd" />
+                    <Text style={styles.emptyStateText}>No active invite links</Text>
+                    <Text style={styles.emptyStateSubtext}>
+                      {isOnline 
+                        ? 'Create an invite link to share with others'
+                        : 'Cannot create invite links while offline'}
+                    </Text>
+                  </View>
+                )}
+              </>
+            )}
           </View>
         )}
 
-        {/* Members Section */}
+        {/* Group Information Section - Collapsible and Horizontal */}
         <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Members ({members.length})</Text>
-            {isAdmin && (
-              <TouchableOpacity
-                style={[styles.addButton, !isOnline && styles.disabledButton]}
-                onPress={() => setShowInviteOptions(true)}
+          <TouchableOpacity 
+            style={styles.collapsibleHeader}
+            onPress={() => toggleSection('info')}
+            activeOpacity={0.7}
+          >
+            <View style={styles.collapsibleHeaderLeft}>
+              <Feather 
+                name={expandedSections.info ? "chevron-down" : "chevron-right"} 
+                size={20} 
+                color="#666" 
+              />
+              <Text style={styles.collapsibleTitle}>Group Information</Text>
+            </View>
+          </TouchableOpacity>
+          
+          {expandedSections.info && (
+            <View style={styles.infoGrid}>
+              <View style={styles.infoCard}>
+                <Feather name="calendar" size={24} color="#007AFF" />
+                <Text style={styles.infoCardTitle}>Created</Text>
+                <Text style={styles.infoCardValue}>
+                  {new Date(groupInfo?.created_at || '').toLocaleDateString()}
+                </Text>
+              </View>
+              
+              <View style={styles.infoCard}>
+                <Feather name="user" size={24} color="#007AFF" />
+                <Text style={styles.infoCardTitle}>Created By</Text>
+                <Text style={styles.infoCardValue} numberOfLines={1}>
+                  {members.find(m => m.role === 'creator')?.profiles?.display_name || 'Unknown'}
+                </Text>
+              </View>
+            </View>
+          )}
+        </View>
+
+        {/* Danger Actions - No title, in a row */}
+        <View style={[styles.section, { paddingBottom: 30 }]}>
+          <View style={styles.dangerActionsRow}>
+            <TouchableOpacity 
+              style={[styles.dangerActionButton, styles.leaveButton, !isOnline && styles.disabledButton]} 
+              onPress={leaveGroup}
+              disabled={!isOnline}
+            >
+              <Feather name="log-out" size={18} color="#FF3B30" />
+              <Text style={styles.leaveButtonText}>Leave Group</Text>
+            </TouchableOpacity>
+            
+            {isCreator && (
+              <TouchableOpacity 
+                style={[styles.dangerActionButton, styles.deleteButton, !isOnline && styles.disabledButton]} 
+                onPress={deleteGroup}
                 disabled={!isOnline}
               >
-                <Ionicons name="person-add" size={20} color="#fff" />
-                <Text style={styles.addButtonText}>Invite</Text>
+                <Feather name="trash-2" size={18} color="#FF3B30" />
+                <Text style={styles.deleteButtonText}>Delete</Text>
               </TouchableOpacity>
             )}
           </View>
-
-          <FlatList
-            data={members}
-            renderItem={renderMemberItem}
-            keyExtractor={(item) => item.id}
-            scrollEnabled={false}
-            ItemSeparatorComponent={() => <View style={styles.separator} />}
-          />
-        </View>
-
-        {/* Group Info */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Group Information</Text>
-          <View style={styles.infoItem}>
-            <Feather name="calendar" size={20} color="#666" />
-            <Text style={styles.infoText}>
-              Created on {new Date(groupInfo?.created_at || '').toLocaleDateString()}
-            </Text>
-          </View>
-          <View style={styles.infoItem}>
-            <Feather name="user" size={20} color="#666" />
-            <Text style={styles.infoText}>
-              Created by {members.find(m => m.role === 'creator')?.profiles?.display_name || 'Unknown'}
-            </Text>
-          </View>
-          <View style={styles.infoItem}>
-            <Feather name="hash" size={20} color="#666" />
-            <Text style={styles.infoText} numberOfLines={1}>
-              Group ID: {groupId.slice(0, 8)}...
-            </Text>
-          </View>
-        </View>
-
-        {/* Danger Zone */}
-        <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: '#FF3B30' }]}>Danger Zone</Text>
-          <TouchableOpacity 
-            style={[styles.dangerButton, !isOnline && styles.disabledButton]} 
-            onPress={leaveGroup}
-            disabled={!isOnline}
-          >
-            <Feather name="log-out" size={20} color="#FF3B30" />
-            <Text style={styles.dangerButtonText}>Leave Group</Text>
-          </TouchableOpacity>
-          
-          {isCreator && (
-            <TouchableOpacity 
-              style={[styles.dangerButton, { backgroundColor: '#FF3B3010' }, !isOnline && styles.disabledButton]} 
-              onPress={deleteGroup}
-              disabled={!isOnline}
-            >
-              <Feather name="trash-2" size={20} color="#FF3B30" />
-              <Text style={styles.dangerButtonText}>Delete Group</Text>
-            </TouchableOpacity>
-          )}
         </View>
 
         {/* Spacer */}
@@ -1386,7 +1522,7 @@ export default function GroupInfoScreen() {
                 disabled={generatingInvite || !isOnline}
               >
                 <View style={styles.inviteOptionIcon}>
-                  <Ionicons name="link" size={28} color="#007AFF" />
+                  <Feather name="link" size={28} color="#007AFF" />
                 </View>
                 <View style={styles.inviteOptionDetails}>
                   <Text style={styles.inviteOptionTitle}>
@@ -1544,7 +1680,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 8,
-    paddingVertical: 8,
+    paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#f0f0f0',
   },
@@ -1567,21 +1703,6 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   offlineBadgeText: {
-    color: '#fff',
-    fontSize: 10,
-    fontWeight: 'bold',
-  },
-  staleBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FF9500',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 10,
-    marginTop: 2,
-    gap: 4,
-  },
-  staleBadgeText: {
     color: '#fff',
     fontSize: 10,
     fontWeight: 'bold',
@@ -1647,9 +1768,9 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   groupAvatar: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     borderWidth: 3,
     borderColor: '#fff',
     backgroundColor: '#e0e0e0',
@@ -1671,7 +1792,7 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: 'bold',
     color: '#000',
-    marginBottom: 12,
+    marginBottom: 16,
   },
   groupStats: {
     flexDirection: 'row',
@@ -1687,7 +1808,8 @@ const styles = StyleSheet.create({
     color: '#666',
   },
   section: {
-    padding: 20,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#f0f0f0',
   },
@@ -1696,6 +1818,26 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 16,
+  },
+  collapsibleHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  collapsibleHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  collapsibleTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000',
+  },
+  memberActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   sectionTitle: {
     fontSize: 18,
@@ -1713,6 +1855,18 @@ const styles = StyleSheet.create({
   },
   addButtonText: {
     color: '#fff',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  addMemberButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  addMemberText: {
+    color: '#007AFF',
     fontSize: 14,
     fontWeight: '500',
   },
@@ -1763,6 +1917,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingVertical: 12,
+    marginTop: 8,
   },
   settingInfo: {
     flexDirection: 'row',
@@ -1788,6 +1943,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingVertical: 12,
+  },
+  manageButton: {
+    padding: 4,
   },
   memberInfo: {
     flexDirection: 'row',
@@ -1861,6 +2019,16 @@ const styles = StyleSheet.create({
     backgroundColor: '#f0f0f0',
     marginLeft: 60,
   },
+  showMoreButton: {
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  showMoreText: {
+    color: '#007AFF',
+    fontSize: 14,
+    fontWeight: '500',
+  },
   emptyState: {
     alignItems: 'center',
     paddingVertical: 32,
@@ -1876,29 +2044,63 @@ const styles = StyleSheet.create({
     color: '#999',
     textAlign: 'center',
   },
-  infoItem: {
+  infoGrid: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingVertical: 8,
+    justifyContent: 'space-between',
+    marginTop: 12,
   },
-  infoText: {
-    fontSize: 14,
+  infoCard: {
+    flex: 1,
+    alignItems: 'center',
+    padding: 16,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 12,
+    marginHorizontal: 4,
+  },
+  infoCardTitle: {
+    fontSize: 12,
     color: '#666',
+    marginTop: 8,
+    marginBottom: 4,
+    textAlign: 'center',
   },
-  dangerButton: {
+  infoCardValue: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#000',
+    textAlign: 'center',
+  },
+  dangerActionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  dangerActionButton: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    justifyContent: 'center',
+    gap: 8,
     paddingVertical: 12,
+    borderRadius: 8,
+  },
+  leaveButton: {
     borderWidth: 1,
     borderColor: '#FF3B30',
-    borderRadius: 8,
-    paddingHorizontal: 16,
-    marginBottom: 8,
+    backgroundColor: '#fff',
   },
-  dangerButtonText: {
-    fontSize: 16,
+  leaveButtonText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#FF3B30',
+  },
+  deleteButton: {
+    backgroundColor: '#FF3B3010',
+    borderWidth: 1,
+    borderColor: '#FF3B30',
+  },
+  deleteButtonText: {
+    fontSize: 14,
     fontWeight: '500',
     color: '#FF3B30',
   },
@@ -1913,6 +2115,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 20,
     padding: 20,
     paddingBottom: Platform.OS === 'ios' ? 40 : 30,
+    maxHeight: '80%',
   },
   modalHeader: {
     flexDirection: 'row',

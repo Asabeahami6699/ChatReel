@@ -6,14 +6,17 @@ import {
   StyleSheet,
   FlatList,
   Alert,
-  SafeAreaView,
   ActivityIndicator,
   Image,
   RefreshControl,
 } from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context'
 import { Button, IconButton, Divider, Card, Title, Paragraph } from 'react-native-paper'
-import { supabase } from '../../lib/supabase'
+import { api } from '../../lib/api'
 import { useAuth } from '../../hooks/useAuth'
+import { useCurrentProfileId } from '../../hooks/useCurrentProfileId'
+import { useFriendshipsRealtime } from '../../hooks/useFriendshipsRealtime'
+import { notifyFriendshipsListenersImmediate } from '../../lib/friendshipsRealtime'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import NetInfo from '@react-native-community/netinfo'
 import { TouchableOpacity } from 'react-native';
@@ -28,7 +31,7 @@ export default function FriendRequestsScreen() {
   const [outgoingRequests, setOutgoingRequests] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
-  const [currentProfilesId, setCurrentProfilesId] = useState<string | null>(null)
+  const currentProfilesId = useCurrentProfileId()
   const [isOnline, setIsOnline] = useState(true)
   const [isDataStale, setIsDataStale] = useState(false)
 
@@ -70,28 +73,6 @@ export default function FriendRequestsScreen() {
     return false;
   };
 
-  // Fetch current user's profiles.id
-  useEffect(() => {
-    const fetchCurrentProfilesId = async () => {
-      if (!user?.id) return
-      try {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('id')
-          .eq('user_id', user.id)
-          .single()
-        if (error || !data) {
-          console.error('Current profiles fetch error:', error)
-          return
-        }
-        setCurrentProfilesId(data.id)
-      } catch (err) {
-        console.error('Current profiles error:', err)
-      }
-    }
-    fetchCurrentProfilesId()
-  }, [user?.id])
-
   // Fetch incoming and outgoing pending requests
   const fetchRequests = async (forceRefresh = false) => {
     if (!user?.id || !currentProfilesId) {
@@ -117,60 +98,9 @@ export default function FriendRequestsScreen() {
 
       setLoading(true);
 
-      // Incoming: friend_id = currentProfilesId, status = pending
-      const { data: incomingData, error: incomingError } = await supabase
-        .from('friendships')
-        .select(`
-          id,
-          user_id,
-          created_at,
-          profiles!friendships_user_id_fkey(id, display_name, email, avatar_url)
-        `)
-        .eq('friend_id', currentProfilesId)
-        .eq('status', 'pending')
-        .order('created_at', { ascending: false })
+      const { incoming, outgoing } = await api.friendships.requests()
 
-      if (incomingError) throw incomingError
-
-      const incoming = incomingData?.map((f) => ({
-        friendshipId: f.id,
-        id: f.user_id,
-        display_name: f.profiles?.display_name || f.profiles?.email || 'Unknown',
-        email: f.profiles?.email || '',
-        avatar_url: f.profiles?.avatar_url,
-        status: 'pending' as const,
-        created_at: f.created_at,
-      })) || []
-
-      // Outgoing: user_id = currentProfilesId, status = pending
-      const { data: outgoingData, error: outgoingError } = await supabase
-        .from('friendships')
-        .select(`
-          id,
-          friend_id,
-          created_at,
-          profiles!friendships_friend_id_fkey(id, display_name, email, avatar_url)
-        `)
-        .eq('user_id', currentProfilesId)
-        .eq('status', 'pending')
-        .order('created_at', { ascending: false })
-
-      if (outgoingError) throw outgoingError
-
-      const outgoing = outgoingData?.map((f) => ({
-        friendshipId: f.id,
-        id: f.friend_id,
-        display_name: f.profiles?.display_name || f.profiles?.email || 'Unknown',
-        email: f.profiles?.email || '',
-        avatar_url: f.profiles?.avatar_url,
-        status: 'pending' as const,
-        created_at: f.created_at,
-      })) || []
-
-      // Save to storage
       await saveRequestsToStorage(incoming, outgoing);
-      
-      // Update state
       setIncomingRequests(incoming)
       setOutgoingRequests(outgoing)
       setIsDataStale(false)
@@ -191,96 +121,21 @@ export default function FriendRequestsScreen() {
     }
   }, [currentProfilesId])
 
-  // Real-time subscriptions (only when online)
-  useEffect(() => {
-    if (!user?.id || !currentProfilesId || !isOnline) return;
-
-    // Incoming: Listen to all changes where user is friend_id
-    const incomingChannel = supabase
-      .channel('incoming-requests')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'friendships',
-          filter: `friend_id=eq.${currentProfilesId}`,
-        },
-        () => {
-          setTimeout(() => fetchRequests(true), 1000);
-        }
-      )
-      .subscribe()
-
-    // Outgoing: Listen to all changes where user is user_id
-    const outgoingChannel = supabase
-      .channel('outgoing-requests')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'friendships',
-          filter: `user_id=eq.${currentProfilesId}`,
-        },
-        () => {
-          setTimeout(() => fetchRequests(true), 1000);
-        }
-      )
-      .subscribe()
-
-    return () => {
-      supabase.removeChannel(incomingChannel)
-      supabase.removeChannel(outgoingChannel)
-    }
-  }, [user?.id, currentProfilesId, isOnline])
+  useFriendshipsRealtime(isOnline ? currentProfilesId : null, () => {
+    fetchRequests(true);
+  });
 
   // Accept incoming request
-  const handleAccept = async (friendshipId: string, senderProfilesId: string) => {
+  const handleAccept = async (friendshipId: string, _senderProfilesId: string) => {
     if (!currentProfilesId) return
+    const previousIncoming = incomingRequests
+    setIncomingRequests((prev) => prev.filter((r) => r.friendshipId !== friendshipId))
     try {
-      // Update incoming to accepted
-      const { error: updateError } = await supabase
-        .from('friendships')
-        .update({ status: 'accepted', updated_at: new Date().toISOString() })
-        .eq('id', friendshipId)
-
-      if (updateError) throw updateError
-
-      // Insert reverse friendship as accepted (using profiles IDs)
-      const { error: insertError } = await supabase
-        .from('friendships')
-        .insert({
-          user_id: currentProfilesId,  // Current profiles ID (sender of reverse)
-          friend_id: senderProfilesId,  // Sender's profiles ID (receiver of reverse)
-          status: 'accepted',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-
-      if (insertError) throw insertError
-
-      // Send push notification to sender (using sender's user_id from profiles)
-      const { data: senderProfile } = await supabase
-        .from('profiles')
-        .select('user_id')
-        .eq('id', senderProfilesId)
-        .single()
-
-      if (senderProfile) {
-        await supabase.functions.invoke('send-push', {
-          body: {
-            recipient_id: senderProfile.user_id,
-            title: 'Friend Request Accepted!',
-            body: `${user.email || 'You'} accepted your friend request!`,
-          },
-        })
-      }
-
-      Alert.alert('Success', 'Friend request accepted!')
-      // Refresh requests
-      fetchRequests(true);
+      await api.friendships.accept(friendshipId)
+      notifyFriendshipsListenersImmediate()
+      fetchRequests(true)
     } catch (err) {
+      setIncomingRequests(previousIncoming)
       console.error('Accept error:', err)
       Alert.alert('Error', 'Failed to accept request')
     }
@@ -288,18 +143,14 @@ export default function FriendRequestsScreen() {
 
   // Reject incoming request (set to blocked)
   const handleReject = async (friendshipId: string) => {
+    const previousIncoming = incomingRequests
+    setIncomingRequests((prev) => prev.filter((r) => r.friendshipId !== friendshipId))
     try {
-      const { error } = await supabase
-        .from('friendships')
-        .update({ status: 'blocked', updated_at: new Date().toISOString() })
-        .eq('id', friendshipId)
-
-      if (error) throw error
-
-      Alert.alert('Success', 'Friend request rejected.')
-      // Refresh requests
-      fetchRequests(true);
+      await api.friendships.reject(friendshipId)
+      notifyFriendshipsListenersImmediate()
+      fetchRequests(true)
     } catch (err) {
+      setIncomingRequests(previousIncoming)
       console.error('Reject error:', err)
       Alert.alert('Error', 'Failed to reject request')
     }
@@ -307,18 +158,14 @@ export default function FriendRequestsScreen() {
 
   // Cancel outgoing request
   const handleCancel = async (friendshipId: string) => {
+    const previousOutgoing = outgoingRequests
+    setOutgoingRequests((prev) => prev.filter((r) => r.friendshipId !== friendshipId))
     try {
-      const { error } = await supabase
-        .from('friendships')
-        .delete()
-        .eq('id', friendshipId)
-
-      if (error) throw error
-
-      Alert.alert('Success', 'Request cancelled.')
-      // Refresh requests
-      fetchRequests(true);
+      await api.friendships.cancel(friendshipId)
+      notifyFriendshipsListenersImmediate()
+      fetchRequests(true)
     } catch (err) {
+      setOutgoingRequests(previousOutgoing)
       console.error('Cancel error:', err)
       Alert.alert('Error', 'Failed to cancel request')
     }
@@ -400,7 +247,7 @@ export default function FriendRequestsScreen() {
   const hasRequests = allRequests.length > 0
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
       {loading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#007AFF" />

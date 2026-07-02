@@ -1,37 +1,33 @@
 // App.tsx
-import React, { useEffect } from 'react';
+import React from 'react';
 import { StatusBar } from 'expo-status-bar';
+import * as SplashScreen from 'expo-splash-screen';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { AuthProvider } from './src/context/AuthContext';
+import { RealtimeProvider } from './src/components/RealtimeProvider';
+import { PushNotificationRegistrar } from './src/components/PushNotificationRegistrar';
 import { Provider as PaperProvider } from 'react-native-paper';
 import { RootNavigator } from './src/navigation/RootNavigator';
+import { ReelUploadToast } from './src/components/ReelUploadToast';
+import { MomentUploadToast } from './src/components/MomentUploadToast';
 
-// MUST BE THE VERY FIRST IMPORTS
 import 'react-native-get-random-values';
-import sodium from 'react-native-libsodium';
 
-// Initialize libsodium properly (new 2025 API)
-const initializeSodium = async () => {
-  try {
-    await sodium.ready; // This replaces startSodium() and is the official way now
-    console.log('libsodium initialized successfully');
-  } catch (error) {
-    console.error('Failed to initialize libsodium:', error);
-  }
-};
+SplashScreen.preventAutoHideAsync().catch(() => {});
 
 export default function App() {
-  useEffect(() => {
-    initializeSodium();
-  }, []);
-
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <PaperProvider>
           <AuthProvider>
-            <RootNavigator />
+            <RealtimeProvider>
+              <PushNotificationRegistrar />
+              <RootNavigator />
+              <ReelUploadToast />
+              <MomentUploadToast />
+            </RealtimeProvider>
             <StatusBar style="auto" />
           </AuthProvider>
         </PaperProvider>

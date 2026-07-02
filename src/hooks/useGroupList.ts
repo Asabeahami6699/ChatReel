@@ -1,31 +1,37 @@
 // src/hooks/useGroupList.ts
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
-import { supabase } from '../lib/supabase';
+import { api } from '../lib/api';
 import { useAuth } from './useAuth';
+import { useRealtimeTopic } from './useRealtimeTopic';
 
 export type Group = {
   id: string;
   name: string;
-  avatar_url?: string;
+  avatar_url?: string | null;
   member_count: number;
-  last_message?: string;
-  last_message_at?: string;
-  unread_count?: number;
+  last_message?: string | null;
+  last_message_at?: string | null;
+  unread_count: number;
   user_role?: 'creator' | 'admin' | 'member';
-  description?: string;
-  is_public?: boolean;
-  creator_id?: string;
-  created_at?: string;
-  updated_at?: string;
+  description?: string | null;
+  is_public?: boolean | null;
+  creator_id?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  last_message_sender?: string | null;
+  last_message_sender_display_name?: string;
 };
 
-// Storage
-const KEY_GROUPS = '@groups_list_v1';
-const KEY_TIMESTAMP = '@groups_list_timestamp_v1';
+const KEY_GROUPS = '@groups_list_v2';
+const KEY_TIMESTAMP = '@groups_list_timestamp_v2';
+const GROUP_LAST_MESSAGES_KEY = '@group_last_messages_v2_';
+const USER_PROFILES_KEY = '@user_profiles_cache_v2_';
 
-export const useGroupList = (searchQuery: string = '') => {
+const PROFILE_INVALID_NAMES = new Set(['', 'Unknown User', 'Member']);
+
+export const useGroupList = (searchQuery = '') => {
   const { user } = useAuth();
   const [groups, setGroups] = useState<Group[]>([]);
   const [loading, setLoading] = useState(true);
@@ -33,190 +39,216 @@ export const useGroupList = (searchQuery: string = '') => {
   const [isOnline, setIsOnline] = useState(true);
   const [isDataStale, setIsDataStale] = useState(false);
 
-  // Listen to network
-  useEffect(() => {
-    const unsub = NetInfo.addEventListener(state => {
-      setIsOnline(Boolean(state.isConnected));
-    });
-    return () => unsub();
-  }, []);
+  // -----------------------
+  // Storage helpers
+  // -----------------------
+  const userSuffix = user?.id ?? 'anon';
 
-  // Load local cache
-  const loadCache = async () => {
+  const saveJSON = async (key: string, value: any) => {
     try {
-      const raw = await AsyncStorage.getItem(KEY_GROUPS);
-      const timestamp = await AsyncStorage.getItem(KEY_TIMESTAMP);
-
-      if (raw && timestamp) {
-        const fiveMin = Date.now() - 5 * 60 * 1000;
-        setIsDataStale(Number(timestamp) < fiveMin);
-        return JSON.parse(raw);
-      }
+      await AsyncStorage.setItem(key + userSuffix, JSON.stringify(value));
     } catch (e) {
-      console.error('Cache load error:', e);
+      console.error('[useGroupList] saveJSON error:', e);
+    }
+  };
+
+  const loadJSON = async (key: string) => {
+    try {
+      const raw = await AsyncStorage.getItem(key + userSuffix);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+      console.error('[useGroupList] loadJSON error:', e);
+      return null;
+    }
+  };
+
+  const saveGroupLastMessages = async (data: Record<string, any>) =>
+    saveJSON(GROUP_LAST_MESSAGES_KEY, data);
+  const loadGroupLastMessages = async () => (await loadJSON(GROUP_LAST_MESSAGES_KEY)) || {};
+
+  const saveUserProfilesCache = async (data: Record<string, any>) =>
+    saveJSON(USER_PROFILES_KEY, data);
+  const loadUserProfilesCache = async () => (await loadJSON(USER_PROFILES_KEY)) || {};
+
+  // -----------------------
+  // Utility to normalise display name
+  // -----------------------
+  const normalizeDisplayName = (profile: { display_name?: string | null; email?: string | null }) => {
+    const dn = (profile?.display_name || '').trim();
+    if (dn && !PROFILE_INVALID_NAMES.has(dn)) return dn;
+    if (profile?.email) return profile.email.split('@')[0];
+    return 'Member';
+  };
+
+  // -----------------------
+  // Fetch user profiles (with caching)
+  // -----------------------
+  const fetchUserProfiles = useCallback(
+    async (userIds: string[] = []) => {
+      if (!userIds || userIds.length === 0) return {};
+      try {
+        const cached = (await loadUserProfilesCache()) || {};
+        // find which ids we need to fetch
+        const toFetch = userIds.filter(id => !cached[id]);
+        if (toFetch.length === 0) return cached;
+
+        // Fetch display_name, avatar_url, email for needed user ids
+        const { profiles } = await api.profiles.batch(toFetch);
+
+        const updated = { ...cached };
+        (profiles || []).forEach((p: any) => {
+          updated[p.user_id] = {
+            display_name: normalizeDisplayName(p),
+            avatar_url: p.avatar_url ?? null
+          };
+        });
+
+        // Ensure defaults for any still-missing users
+        toFetch.forEach(id => {
+          if (!updated[id]) updated[id] = { display_name: 'Member', avatar_url: null };
+        });
+
+        await saveUserProfilesCache(updated);
+        return updated;
+      } catch (e) {
+        console.error('[useGroupList] fetchUserProfiles error:', e);
+        return (await loadUserProfilesCache()) || {};
+      }
+    },
+    [user?.id]
+  );
+
+  // -----------------------
+  // Get current user's display name (cached)
+  // -----------------------
+  const getCurrentUserDisplayName = useCallback(async () => {
+    if (!user?.id) return 'You';
+    try {
+      const cached = await loadUserProfilesCache();
+      if (cached[user.id]?.display_name) return cached[user.id].display_name;
+      const { profile: data } = await api.profiles.me();
+      if (!data) {
+        return 'You';
+      }
+
+      const dn = normalizeDisplayName({
+        display_name: data.display_name as string,
+        email: data.email as string,
+      });
+      const updated = { ...(await loadUserProfilesCache()), [user.id]: { display_name: dn, avatar_url: data?.avatar_url ?? null } };
+      await saveUserProfilesCache(updated);
+      return dn;
+    } catch (e) {
+      console.error('[useGroupList] getCurrentUserDisplayName:', e);
+      return 'You';
+    }
+  }, [user?.id]);
+
+  // -----------------------
+  // Read/Write full groups cache
+  // -----------------------
+  const loadGroupsCache = useCallback(async (): Promise<Group[] | null> => {
+    const raw = await loadJSON(KEY_GROUPS);
+    const ts = await loadJSON(KEY_TIMESTAMP);
+    if (raw && ts) {
+      const fiveMin = Date.now() - 5 * 60 * 1000;
+      setIsDataStale(Number(ts) < fiveMin);
+      return raw as Group[];
     }
     return null;
-  };
+  }, []);
 
-  const saveCache = async (data: Group[]) => {
-    try {
-      await AsyncStorage.setItem(KEY_GROUPS, JSON.stringify(data));
-      await AsyncStorage.setItem(KEY_TIMESTAMP, Date.now().toString());
-    } catch (e) {
-      console.error('Cache save error:', e);
-    }
-  };
+  const saveGroupsCache = useCallback(async (data: Group[]) => {
+    await saveJSON(KEY_GROUPS, data);
+    await saveJSON(KEY_TIMESTAMP, Date.now());
+  }, []);
 
-  // ----------- FETCH GROUPS -----------
+  // -----------------------
+  // Mark messages in group as read
+  // -----------------------
+  const markGroupMessagesAsRead = useCallback(
+    async (groupId: string) => {
+      if (!user?.id) return;
+      try {
+        const { error } = await api.messages.markRead({ group_id: groupId }).then(
+          () => ({ error: null }),
+          (e) => ({ error: e })
+        );
+
+        if (error) console.error('[useGroupList] markGroupMessagesAsRead error:', error);
+
+        // update caches & state
+        const lastMessages = await loadGroupLastMessages();
+        if (lastMessages[groupId]) {
+          lastMessages[groupId].unread_count = 0;
+          await saveGroupLastMessages(lastMessages);
+        }
+        setGroups(prev => prev.map(g => (g.id === groupId ? { ...g, unread_count: 0 } : g)));
+      } catch (e) {
+        console.error('[useGroupList] markGroupMessagesAsRead catch:', e);
+      }
+    },
+    [user?.id]
+  );
+
+  // -----------------------
+  // Main fetchGroups implementation
+  // -----------------------
   const fetchGroups = useCallback(
-    async (forceRefresh = false) => {
+    async (forceRefresh = false, silent = false) => {
       if (!user?.id) {
         setGroups([]);
         setLoading(false);
         return;
       }
-
       try {
         const net = await NetInfo.fetch();
         const online = Boolean(net.isConnected);
         setIsOnline(online);
 
-        // Load from cache if not forcing refresh
-        if (!forceRefresh) {
-          const cached = await loadCache();
+        // If offline, try cache and bail
+        if (!online) {
+          const cached = await loadGroupsCache();
           if (cached) setGroups(cached);
-
-          if (!online) {
-            setLoading(false);
-            return;
-          }
-        }
-
-        setLoading(true);
-
-        console.log('Fetching groups for user:', user.id);
-
-        // 1. CREATOR GROUPS
-        const creatorRes = await supabase
-          .from('groups')
-          .select('*')
-          .eq('creator_id', user.id);
-
-        if (creatorRes.error) throw creatorRes.error;
-
-        // 2. MEMBER GROUPS
-        const memberRes = await supabase
-          .from('group_members')
-          .select(`
-            group_id,
-            role,
-            groups!inner (
-              id,
-              name,
-              avatar_url,
-              description,
-              is_public,
-              creator_id,
-              created_at,
-              updated_at
-            )
-          `)
-          .eq('user_id', user.id);
-
-        if (memberRes.error) throw memberRes.error;
-
-        const groupsMap = new Map<string, any>();
-
-        // Add creator groups
-        creatorRes.data?.forEach(g => {
-          groupsMap.set(g.id, {
-            ...g,
-            user_role: 'creator'
-          });
-        });
-
-        // Add member groups
-        memberRes.data?.forEach(row => {
-          const g = row.groups;
-          if (!g) return;
-
-          if (!groupsMap.has(g.id)) {
-            groupsMap.set(g.id, {
-              ...g,
-              user_role: row.role === 'admin' ? 'admin' : 'member'
-            });
-          }
-        });
-
-        const allGroups = Array.from(groupsMap.values());
-        if (allGroups.length === 0) {
-          await saveCache([]);
-          setGroups([]);
           setLoading(false);
           return;
         }
 
-        const groupIds = allGroups.map(g => g.id);
+        // Load cache for instant UI if not forcing refresh
+        if (!forceRefresh) {
+          const cached = await loadGroupsCache();
+          if (cached) setGroups(cached);
+        }
 
-        // 3. MEMBER COUNTS
-        const countRes = await supabase
-          .from('group_members')
-          .select('group_id')
-          .in('group_id', groupIds);
+        // Silent refreshes (realtime-driven) shouldn't flash the loading state.
+        if (!silent) setLoading(true);
 
-        const countMap = new Map<string, number>();
-        countRes.data?.forEach(row => {
-          countMap.set(row.group_id, (countMap.get(row.group_id) || 0) + 1);
-        });
+        const { groups: formatted } = await api.chats.groups();
 
-        allGroups.forEach(g => {
-          if (g.user_role === 'creator') {
-            countMap.set(g.id, (countMap.get(g.id) || 0) + 1);
-          }
-        });
+        try {
+          const lastMessagesCache: Record<string, unknown> = {};
+          (formatted as Group[]).forEach((g) => {
+            lastMessagesCache[g.id] = {
+              message: g.last_message,
+              timestamp: g.last_message_at,
+              unread_count: g.unread_count,
+              sender_display_name: g.last_message_sender_display_name,
+            };
+          });
+          await Promise.all([
+            saveGroupLastMessages(lastMessagesCache),
+            saveGroupsCache(formatted as Group[]),
+          ]);
+        } catch (e) {
+          console.warn('[useGroupList] cache save warning:', e);
+        }
 
-        // 4. LAST MESSAGES
-        const msgRes = await supabase
-          .from('messages')
-          .select('*')
-          .in('group_id', groupIds)
-          .order('created_at', { ascending: false });
-
-        const formatted: Group[] = allGroups.map(g => {
-          const msgs = msgRes.data?.filter(m => m.group_id === g.id) || [];
-          const latest = msgs[0];
-
-          const unread = msgs.filter(
-            m => m.sender_id !== user.id && !m.is_read
-          ).length;
-
-          return {
-            ...g,
-            member_count: countMap.get(g.id) || 1,
-            last_message: latest?.content,
-            last_message_at: latest?.created_at,
-            unread_count: unread
-          };
-        });
-
-        // Sort by activity
-        formatted.sort((a, b) => {
-          const ta = a.last_message_at
-            ? new Date(a.last_message_at).getTime()
-            : new Date(a.created_at || 0).getTime();
-          const tb = b.last_message_at
-            ? new Date(b.last_message_at).getTime()
-            : new Date(b.created_at || 0).getTime();
-          return tb - ta;
-        });
-
-        await saveCache(formatted);
-        setGroups(formatted);
+        setGroups(formatted as Group[]);
         setIsDataStale(false);
       } catch (err) {
-        console.error('Fetch error:', err);
-
-        const cached = await loadCache();
+        console.error('[useGroupList] fetchGroups error:', err);
+        setIsDataStale(true);
+        const cached = await loadGroupsCache();
         if (cached) setGroups(cached);
       } finally {
         setLoading(false);
@@ -226,59 +258,78 @@ export const useGroupList = (searchQuery: string = '') => {
     [user?.id]
   );
 
-  // Initial fetch
+  // -----------------------
+  // Initial load (cache-first) and profiles cache load/cleanup
+  // -----------------------
   useEffect(() => {
-    fetchGroups();
-  }, [fetchGroups]);
+    let mounted = true;
 
-  // ---------- REAL-TIME ----------
-  useEffect(() => {
-    if (!user?.id || !isOnline) return;
+    const init = async () => {
+      if (!mounted) return;
+      const cachedGroups = await loadGroupsCache();
+      const lastMsgs = await loadGroupLastMessages();
+      if (cachedGroups) {
+        // apply last messages from last message cache (fast)
+        const enhanced = cachedGroups.map((g: Group) => ({
+          ...g,
+          last_message: lastMsgs[g.id]?.message ?? g.last_message,
+          last_message_at: lastMsgs[g.id]?.timestamp ?? g.last_message_at,
+          unread_count: lastMsgs[g.id]?.unread_count ?? g.unread_count ?? 0,
+          last_message_sender_display_name: lastMsgs[g.id]?.sender_display_name ?? g.last_message_sender_display_name
+        }));
+        setGroups(enhanced);
+      }
 
-    const gIds = groups.map(g => g.id);
-    if (gIds.length === 0) return;
+      // load profiles cache (no-op if none)
+      const profilesCache = await loadUserProfilesCache();
+      if (!profilesCache || Object.keys(profilesCache).length === 0) {
+        // No heavy work here; fetchUserProfiles will fill it when needed.
+      } else {
+        // Optional: small cleanup if needed. We don't mutate here unless necessary.
+      }
 
-    const channel = supabase
-      .channel('group-list-rt')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'group_members',
-          filter: `user_id=eq.${user.id}`
-        },
-        () => fetchGroups(true)
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'messages',
-          filter: `group_id=in.(${gIds.join(',')})`
-        },
-        () => fetchGroups(true)
-      )
-      .subscribe();
+      // then fetch fresh if online
+      const net = await NetInfo.fetch();
+      if (net.isConnected) {
+        fetchGroups();
+      } else {
+        setLoading(false);
+      }
+    };
 
-    return () => supabase.removeChannel(channel);
-  }, [groups, user?.id, isOnline, fetchGroups]);
+    init();
+    return () => {
+      mounted = false;
+    };
+  }, [user?.id]);
 
-  // --------- SEARCH ---------
-  const filtered = searchQuery.trim()
-    ? groups.filter(g =>
-        (g.name + ' ' + (g.description || '') + ' ' + (g.last_message || ''))
-          .toLowerCase()
-          .includes(searchQuery.toLowerCase())
-      )
-    : groups;
+  const refreshFromRealtime = useCallback(() => {
+    if (isOnline) fetchGroups(true, true);
+  }, [fetchGroups, isOnline]);
 
-  const refresh = () => {
+  useRealtimeTopic('messages', refreshFromRealtime, Boolean(user?.id && isOnline));
+  useRealtimeTopic('groups', refreshFromRealtime, Boolean(user?.id && isOnline));
+  useRealtimeTopic('groupMembers', refreshFromRealtime, Boolean(user?.id && isOnline));
+
+  // -----------------------
+  // Search filter (client-side)
+  // -----------------------
+  const filtered = useMemo(() => {
+    if (!searchQuery.trim()) return groups;
+    const q = searchQuery.trim().toLowerCase();
+    return groups.filter(g =>
+      ((g.name || '') + ' ' + (g.description || '') + ' ' + (g.last_message || '') + ' ' + (g.last_message_sender_display_name || ''))
+        .toLowerCase()
+        .includes(q)
+    );
+  }, [groups, searchQuery]);
+
+  // refresh wrapper
+  const refresh = useCallback(() => {
     if (!isOnline) return;
     setRefreshing(true);
     fetchGroups(true);
-  };
+  }, [isOnline, fetchGroups]);
 
   return {
     groups: filtered,
@@ -286,6 +337,7 @@ export const useGroupList = (searchQuery: string = '') => {
     refreshing,
     refresh,
     isOnline,
-    isDataStale
+    isDataStale,
+    markGroupMessagesAsRead
   };
 };

@@ -1,907 +1,907 @@
-// D:\chatApp\chatApp\src\screens\Explore\FeedScreen.tsx
-import React, { useState, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  SafeAreaView,
-  View,
-  Text,
-  StyleSheet,
-  FlatList,
-  TouchableOpacity,
+  ActivityIndicator,
+  Alert,
   Image,
   Modal,
-  Dimensions,
-  StatusBar,
-  TextInput,
+  Platform,
+  Pressable,
+  RefreshControl,
   ScrollView,
-  Alert,
-  Animated,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { api, type MomentAuthorFeedDTO, type MomentSlideDTO } from '../../lib/api';
+import {
+  getMomentVideoThumbnailUri,
+  peekMomentVideoThumbnailUri,
+} from '../../lib/momentVideoThumbnail';
+import { useMomentsFeed } from '../../hooks/useMomentsFeed';
+import { useIsFocused } from '@react-navigation/native';
+import { useCurrentProfileId } from '../../hooks/useCurrentProfileId';
+import { MomentComposer, type MomentDraft, type MomentDraftItem } from './MomentComposer';
+import { MomentViewer } from './MomentViewer';
+import { getTextBackground } from '../../lib/momentTextBackgrounds';
 
-const { width, height } = Dimensions.get('window');
+const C = {
+  primary: '#007AFF',
+  primaryDark: '#1e73ce',
+  primarySoft: '#e8f2ff',
+  bg: '#ffffff',
+  surface: '#f4f8fc',
+  border: '#e2eaf3',
+  text: '#1c1c1e',
+  muted: '#6b7280',
+};
+
+function authorName(author: MomentAuthorFeedDTO['author']): string {
+  return author.display_name?.trim() || author.email?.split('@')[0] || 'User';
+}
+
+function formatTimeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 1) return 'Just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return 'Earlier';
+}
+
+function momentPreviewUri(slide: MomentSlideDTO): string | null {
+  if (slide.media_type === 'video') {
+    return slide.thumbnail_url ?? peekMomentVideoThumbnailUri(slide.id);
+  }
+  if (slide.media_type === 'image') return slide.media_url;
+  if (slide.media_type === 'reel') {
+    return slide.reel?.thumbnail_url ?? slide.media_url;
+  }
+  return null;
+}
+
+function MomentSlidePreview({
+  slide,
+  style,
+}: {
+  slide: MomentSlideDTO;
+  style: object;
+}) {
+  const [videoThumb, setVideoThumb] = useState<string | null>(
+    slide.thumbnail_url ?? peekMomentVideoThumbnailUri(slide.id)
+  );
+
+  useEffect(() => {
+    if (slide.media_type !== 'video' || slide.thumbnail_url || !slide.media_url) return;
+    let cancelled = false;
+    void getMomentVideoThumbnailUri(slide.id, slide.media_url).then((uri) => {
+      if (!cancelled && uri) setVideoThumb(uri);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [slide.id, slide.media_type, slide.media_url, slide.thumbnail_url]);
+
+  if (slide.media_type === 'text') {
+    const bg = getTextBackground(slide.text_background);
+    return (
+      <LinearGradient
+        colors={[...bg.colors]}
+        style={style}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+      >
+        <Text
+          style={[styles.textPreviewLabel, bg.darkText && styles.textPreviewLabelDark]}
+          numberOfLines={3}
+        >
+          {slide.caption || '…'}
+        </Text>
+      </LinearGradient>
+    );
+  }
+
+  if (slide.media_type === 'reel') {
+    const thumb = momentPreviewUri(slide);
+    if (thumb) {
+      return (
+        <View style={style}>
+          <Image source={{ uri: thumb }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+          <View style={styles.reelPreviewBadge}>
+            <Ionicons name="film-outline" size={14} color="#fff" />
+          </View>
+        </View>
+      );
+    }
+    return <View style={[style, styles.videoThumbFallback]} />;
+  }
+
+  if (slide.media_type === 'video') {
+    const thumb = slide.thumbnail_url ?? videoThumb;
+    if (thumb) {
+      return (
+        <View style={style}>
+          <Image source={{ uri: thumb }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+          <View style={styles.videoPreviewPlay}>
+            <Ionicons name="play" size={16} color="#fff" />
+          </View>
+        </View>
+      );
+    }
+    return (
+      <View style={[style, styles.videoThumbFallback]}>
+        <Ionicons name="videocam-outline" size={22} color="rgba(255,255,255,0.85)" />
+      </View>
+    );
+  }
+
+  if (slide.media_url) {
+    return <Image source={{ uri: slide.media_url }} style={style} resizeMode="cover" />;
+  }
+
+  return <View style={[style, styles.videoThumbFallback]} />;
+}
 
 export default function FeedScreen() {
-  const [statuses, setStatuses] = useState([
-    {
-      id: '1',
-      type: 'myStatus',
-      name: 'Your Story',
-      time: 'Add to your story',
-      avatar: require('../../../assets/images/iphone.jpg'),
-      hasUnseen: false,
-      isMe: true,
-      stories: [],
-      gradient: ['#667eea', '#764ba2'],
-    },
-    {
-      id: '2',
-      type: 'recent',
-      name: 'Sarah Chen',
-      time: 'Just now',
-      avatar: require('../../../assets/images/foodecar.jpg'),
-      hasUnseen: true,
-      isMe: false,
-      seen: false,
-      stories: [
-        { id: 's1', image: require('../../../assets/images/foodecar.jpg'), type: 'image', duration: 5, caption: 'Exploring new places! 🌍' }
-      ],
-      gradient: ['#f093fb', '#f5576c'],
-    },
-    {
-      id: '3',
-      type: 'recent',
-      name: 'Mike Rodriguez',
-      time: '15 min ago',
-      avatar: require('../../../assets/images/sandwich.jpg'),
-      hasUnseen: true,
-      isMe: false,
-      seen: false,
-      stories: [
-        { id: 's2', image: require('../../../assets/images/sandwich.jpg'), type: 'image', duration: 5, caption: 'Food adventures never end! 🍔' }
-      ],
-      gradient: ['#4facfe', '#00f2fe'],
-    },
-    {
-      id: '4',
-      type: 'viewed',
-      name: 'Emma Watson',
-      time: '1 hr ago',
-      avatar: require('../../../assets/images/17pro.jpg'),
-      hasUnseen: false,
-      isMe: false,
-      seen: true,
-      stories: [
-        { id: 's3', image: require('../../../assets/images/17pro.jpg'), type: 'image', duration: 5, caption: 'Tech dreams coming true! 📱' }
-      ],
-      gradient: ['#43e97b', '#38f9d7'],
-    },
-    {
-      id: '5',
-      type: 'viewed',
-      name: 'John Smith',
-      time: '3 hrs ago',
-      avatar: require('../../../assets/images/bugatti.jpg'),
-      hasUnseen: false,
-      isMe: false,
-      seen: true,
-      stories: [
-        { id: 's4', image: require('../../../assets/images/bugatti.jpg'), type: 'image', duration: 5, caption: 'Need for speed! 🏎️' }
-      ],
-      gradient: ['#fa709a', '#fee140'],
-    },
-  ]);
+  const insets = useSafeAreaInsets();
+  const isScreenFocused = useIsFocused();
+  const myProfileId = useCurrentProfileId();
+  const { authors, loading, refreshing, error, refresh, markSlideViewed } = useMomentsFeed();
 
-  const [selectedStatus, setSelectedStatus] = useState(null);
-  const [showStatusViewer, setShowStatusViewer] = useState(false);
-  const [showCamera, setShowCamera] = useState(false);
-  const [currentStoryIndex, setCurrentStoryIndex] = useState(0);
-  const [newStatusCaption, setNewStatusCaption] = useState('');
-  const [selectedImage, setSelectedImage] = useState(null);
-  const scaleAnim = useRef(new Animated.Value(1)).current;
+  const [myProfile, setMyProfile] = useState<{
+    display_name: string | null;
+    email: string | null;
+    avatar_url: string | null;
+  } | null>(null);
 
-  const pickImage = async () => {
-    let result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [9, 16],
-      quality: 1,
-    });
+  const [composerDraft, setComposerDraft] = useState<MomentDraft | null>(null);
+  const [viewerAuthor, setViewerAuthor] = useState<MomentAuthorFeedDTO | null>(null);
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
 
-    if (!result.canceled) {
-      setSelectedImage(result.assets[0].uri);
-      setShowCamera(true);
-    }
-  };
+  const renderSlidePreview = (slide: MomentSlideDTO, style: object) => (
+    <MomentSlidePreview slide={slide} style={style} />
+  );
 
-  const takePhoto = async () => {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission required', 'Camera access is needed to take photos');
-      return;
+  useEffect(() => {
+    api.profiles
+      .me()
+      .then(({ profile }) => {
+        setMyProfile({
+          display_name: (profile?.display_name as string) ?? null,
+          email: (profile?.email as string) ?? null,
+          avatar_url: (profile?.avatar_url as string) ?? null,
+        });
+      })
+      .catch(() => undefined);
+  }, []);
+
+  const myFeed = useMemo(
+    () => authors.find((a) => a.author.id === myProfileId) ?? null,
+    [authors, myProfileId]
+  );
+
+  const othersNew = useMemo(
+    () => authors.filter((a) => a.author.id !== myProfileId && a.has_unseen),
+    [authors, myProfileId]
+  );
+
+  const othersSeen = useMemo(
+    () => authors.filter((a) => a.author.id !== myProfileId && !a.has_unseen),
+    [authors, myProfileId]
+  );
+
+  const stripAuthors = useMemo(() => {
+    const byId = new Map<string, MomentAuthorFeedDTO>();
+
+    if (myProfileId) {
+      byId.set(
+        myProfileId,
+        myFeed ?? {
+          author: {
+            id: myProfileId,
+            user_id: '',
+            display_name: myProfile?.display_name ?? null,
+            email: myProfile?.email ?? null,
+            avatar_url: myProfile?.avatar_url ?? null,
+          },
+          slides: [],
+          has_unseen: false,
+          latest_at: '',
+        }
+      );
     }
 
-    let result = await ImagePicker.launchCameraAsync({
-      allowsEditing: true,
-      aspect: [9, 16],
-      quality: 1,
-    });
-
-    if (!result.canceled) {
-      setSelectedImage(result.assets[0].uri);
-      setShowCamera(true);
-    }
-  };
-
-  const postStatus = () => {
-    if (!selectedImage) {
-      Alert.alert('Please add a photo or video');
-      return;
+    for (const a of authors) {
+      if (!byId.has(a.author.id)) byId.set(a.author.id, a);
     }
 
-    const newStory = {
-      id: Date.now().toString(),
-      image: { uri: selectedImage },
-      caption: newStatusCaption,
-      type: 'image',
-      duration: 5,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    };
-
-    setStatuses(prev => prev.map(status => {
-      if (status.isMe) {
-        return {
-          ...status,
-          stories: [...status.stories, newStory],
-          time: 'Just now',
-          hasUnseen: true,
-        };
+    const ordered: MomentAuthorFeedDTO[] = [];
+    if (myProfileId && byId.has(myProfileId)) {
+      ordered.push(byId.get(myProfileId)!);
+    }
+    for (const a of authors) {
+      if (a.author.id !== myProfileId && byId.has(a.author.id)) {
+        ordered.push(byId.get(a.author.id)!);
+        byId.delete(a.author.id);
       }
-      return status;
+    }
+    return ordered;
+  }, [authors, myFeed, myProfileId, myProfile]);
+
+  const appendDraftItems = useCallback((newItems: MomentDraftItem[]) => {
+    if (!newItems.length) return;
+    setComposerDraft((prev) => ({
+      items: [...(prev?.items ?? []), ...newItems],
     }));
+  }, []);
 
-    setSelectedImage(null);
-    setNewStatusCaption('');
-    setShowCamera(false);
-    Alert.alert('Story posted!', 'Your story is now live for 24 hours');
-  };
+  const updateDraftItem = useCallback((index: number, patch: Partial<MomentDraftItem>) => {
+    setComposerDraft((prev) => {
+      if (!prev?.items[index]) return prev;
+      const items = [...prev.items];
+      items[index] = { ...items[index], ...patch };
+      return { items };
+    });
+  }, []);
 
-  const animatePress = () => {
-    Animated.sequence([
-      Animated.timing(scaleAnim, {
-        toValue: 0.9,
-        duration: 100,
-        useNativeDriver: true,
-      }),
-      Animated.timing(scaleAnim, {
-        toValue: 1,
-        duration: 100,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  };
+  const runAddAction = useCallback(async (action: () => Promise<void>) => {
+    setAddMenuOpen(false);
+    await action();
+  }, []);
 
-  const renderStatusCircle = ({ item, index }) => {
-    const isMyStatus = item.isMe;
-    const hasStories = item.stories && item.stories.length > 0;
+  const assetToDraftItem = (asset: ImagePicker.ImagePickerAsset): MomentDraftItem => ({
+    uri: asset.uri,
+    mediaType: asset.type === 'video' ? 'video' : 'image',
+    fileName: asset.fileName ?? undefined,
+    mime: asset.mimeType ?? undefined,
+  });
+
+  const pickFromGallery = useCallback(async () => {
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert('Permission needed', 'Allow gallery access to pick moments.');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images', 'videos'] as ImagePicker.MediaType[],
+        allowsMultipleSelection: true,
+        selectionLimit: 30,
+        quality: 0.9,
+        videoMaxDuration: 60,
+      });
+      if (result.canceled || !result.assets?.length) return;
+      appendDraftItems(result.assets.map(assetToDraftItem));
+    } catch {
+      Alert.alert('Gallery', 'Could not open the gallery. Please try again.');
+    }
+  }, [appendDraftItems]);
+
+  const takePhoto = useCallback(async () => {
+    if (Platform.OS === 'web') {
+      Alert.alert('Camera', 'Taking photos is not supported on web. Use Gallery instead.');
+      return;
+    }
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission needed', 'Allow camera access to take a photo.');
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['images'] as ImagePicker.MediaType[],
+        allowsEditing: true,
+        aspect: [9, 16],
+        quality: 0.9,
+      });
+      if (result.canceled || !result.assets?.[0]) return;
+      appendDraftItems([assetToDraftItem(result.assets[0])]);
+    } catch {
+      Alert.alert('Camera', 'Could not open the camera. Please try again.');
+    }
+  }, [appendDraftItems]);
+
+  const recordVideo = useCallback(async () => {
+    if (Platform.OS === 'web') {
+      Alert.alert('Camera', 'Recording video is not supported on web. Use Gallery instead.');
+      return;
+    }
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission needed', 'Allow camera access to record a video.');
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['videos'] as ImagePicker.MediaType[],
+        allowsEditing: false,
+        videoMaxDuration: 60,
+      });
+      if (result.canceled || !result.assets?.[0]) return;
+      appendDraftItems([assetToDraftItem(result.assets[0])]);
+    } catch {
+      Alert.alert('Camera', 'Could not open the camera. Please try again.');
+    }
+  }, [appendDraftItems]);
+
+  const addTextMoment = useCallback(async () => {
+    appendDraftItems([
+      {
+        mediaType: 'text',
+        textBackground: 'ocean',
+        caption: '',
+      },
+    ]);
+  }, [appendDraftItems]);
+
+  const openAddMenu = useCallback(() => {
+    setAddMenuOpen(true);
+  }, []);
+
+  const openAuthor = useCallback((author: MomentAuthorFeedDTO) => {
+    if (author.author.id === myProfileId && author.slides.length === 0) {
+      openAddMenu();
+      return;
+    }
+    if (!author.slides.length) return;
+    setViewerAuthor(author);
+  }, [myProfileId, openAddMenu]);
+
+  const handleSlideViewed = useCallback(
+    async (authorId: string, slideId: string) => {
+      markSlideViewed(authorId, slideId);
+      try {
+        await api.moments.view(slideId);
+      } catch {
+        /* ignore */
+      }
+    },
+    [markSlideViewed]
+  );
+
+  const renderBubble = (item: MomentAuthorFeedDTO) => {
+    const isMe = item.author.id === myProfileId;
+    const isNew = !isMe && item.has_unseen;
+    const preview = item.slides[item.slides.length - 1];
 
     return (
-      <TouchableOpacity 
-        style={styles.statusCircle}
-        onPress={() => {
-          animatePress();
-          if (isMyStatus) {
-            if (hasStories) {
-              setSelectedStatus(item);
-              setCurrentStoryIndex(0);
-              setShowStatusViewer(true);
-            } else {
-              Alert.alert(
-                'Create Story',
-                'Share a moment with your friends',
-                [
-                  { text: '📸 Take Photo', onPress: takePhoto, style: 'default' },
-                  { text: '🖼️ Choose from Gallery', onPress: pickImage, style: 'default' },
-                  { text: 'Cancel', style: 'cancel' },
-                ],
-                { cancelable: true }
-              );
-            }
-          } else if (hasStories) {
-            setSelectedStatus(item);
-            setCurrentStoryIndex(0);
-            setShowStatusViewer(true);
-          }
-        }}
-        activeOpacity={0.7}
+      <TouchableOpacity
+        style={styles.bubbleWrap}
+        onPress={() => openAuthor(item)}
+        activeOpacity={0.85}
       >
-        <Animated.View style={[
-          styles.circleContainer,
-          !item.seen && !isMyStatus && styles.unseenCircle,
-          isMyStatus && styles.myCircle,
-          { transform: [{ scale: scaleAnim }] }
-        ]}>
-          <Image source={item.avatar} style={styles.circleAvatar} />
-          {isMyStatus && (
-            <View style={styles.addStoryButton}>
-              <Ionicons name="add" size={20} color="#fff" />
+        {isNew ? (
+          <LinearGradient colors={[C.primary, '#5ac8fa']} style={styles.bubbleRing}>
+            <View style={styles.bubbleInner}>
+              {preview ? (
+                renderSlidePreview(preview, styles.bubbleImage)
+              ) : item.author.avatar_url ? (
+                <Image source={{ uri: item.author.avatar_url }} style={styles.bubbleImage} />
+              ) : (
+                <View style={styles.bubbleFallback}>
+                  <Text style={styles.bubbleLetter}>{authorName(item.author).charAt(0)}</Text>
+                </View>
+              )}
             </View>
-          )}
-        </Animated.View>
-        <Text style={styles.circleName} numberOfLines={1}>
-          {isMyStatus ? 'Your Story' : item.name.split(' ')[0]}
-        </Text>
-        {!isMyStatus && !item.seen && (
-          <View style={styles.liveIndicator}>
-            <View style={styles.livePulse} />
-            <Text style={styles.liveText}>LIVE</Text>
+          </LinearGradient>
+        ) : (
+          <View style={[styles.bubbleRing, styles.bubbleRingMuted]}>
+            <View style={styles.bubbleInner}>
+              {preview ? (
+                renderSlidePreview(preview, styles.bubbleImage)
+              ) : item.author.avatar_url ? (
+                <Image source={{ uri: item.author.avatar_url }} style={styles.bubbleImage} />
+              ) : (
+                <View style={styles.bubbleFallback}>
+                  <Text style={styles.bubbleLetter}>{authorName(item.author).charAt(0)}</Text>
+                </View>
+              )}
+            </View>
           </View>
         )}
+        {isMe && (
+          <View style={styles.bubbleAdd}>
+            <Ionicons name="add" size={14} color="#fff" />
+          </View>
+        )}
+        <Text style={styles.bubbleLabel} numberOfLines={1}>
+          {isMe ? 'You' : authorName(item.author).split(' ')[0]}
+        </Text>
       </TouchableOpacity>
     );
   };
 
-  const StatusViewer = () => {
-    if (!selectedStatus) return null;
-
-    const currentStory = selectedStatus.stories[currentStoryIndex];
-
+  const renderListRow = (item: MomentAuthorFeedDTO) => {
+    const preview = item.slides[item.slides.length - 1];
+    if (!preview) return null;
     return (
-      <Modal
-        visible={showStatusViewer}
-        animationType="fade"
-        statusBarTranslucent
+      <TouchableOpacity
+        style={styles.listRow}
+        onPress={() => openAuthor(item)}
+        activeOpacity={0.75}
       >
-        <View style={styles.statusViewer}>
-          {/* Progress Bars */}
-          <View style={styles.progressContainer}>
-            {selectedStatus.stories.map((story, index) => (
-              <View key={story.id} style={styles.progressBarBackground}>
-                <View 
-                  style={[
-                    styles.progressBar,
-                    { 
-                      width: `${(index < currentStoryIndex ? 100 : index === currentStoryIndex ? 50 : 0)}%`,
-                    }
-                  ]} 
-                />
-              </View>
-            ))}
-          </View>
-
-          {/* Status Header */}
-          <View style={styles.statusHeader}>
-            <TouchableOpacity 
-              style={styles.backButton}
-              onPress={() => setShowStatusViewer(false)}
-            >
-              <Ionicons name="chevron-down" size={28} color="#fff" />
-            </TouchableOpacity>
-            
-            <View style={styles.statusUserInfo}>
-              <Image source={selectedStatus.avatar} style={styles.statusViewerAvatar} />
-              <View>
-                <Text style={styles.statusViewerName}>{selectedStatus.name}</Text>
-                <Text style={styles.statusViewerTime}>{currentStory?.timestamp}</Text>
-              </View>
+        <View style={[styles.listAvatarRing, item.has_unseen && styles.listAvatarRingNew]}>
+          {item.author.avatar_url ? (
+            <Image source={{ uri: item.author.avatar_url }} style={styles.listAvatar} />
+          ) : (
+            <View style={[styles.listAvatar, styles.bubbleFallback]}>
+              <Text style={styles.bubbleLetter}>{authorName(item.author).charAt(0)}</Text>
             </View>
-
-            <TouchableOpacity style={styles.moreButton}>
-              <Ionicons name="ellipsis-horizontal" size={24} color="#fff" />
-            </TouchableOpacity>
-          </View>
-
-          {/* Status Content */}
-          <View style={styles.statusContent}>
-            {currentStory && (
-              <Image 
-                source={currentStory.image} 
-                style={styles.statusImage} 
-                resizeMode="cover"
-              />
-            )}
-            
-            {currentStory?.caption && (
-              <View style={styles.captionOverlay}>
-                <Text style={styles.captionText}>{currentStory.caption}</Text>
-              </View>
-            )}
-          </View>
-
-          {/* Interactive Areas */}
-          <TouchableOpacity 
-            style={[styles.navArea, styles.leftNav]}
-            onPress={() => currentStoryIndex > 0 && setCurrentStoryIndex(currentStoryIndex - 1)}
-          />
-          <TouchableOpacity 
-            style={[styles.navArea, styles.rightNav]}
-            onPress={() => currentStoryIndex < selectedStatus.stories.length - 1 && setCurrentStoryIndex(currentStoryIndex + 1)}
-          />
-
-          {/* Reaction Bar */}
-          <View style={styles.reactionBar}>
-            <TextInput
-              style={styles.replyInput}
-              placeholder="Send message..."
-              placeholderTextColor="rgba(255,255,255,0.7)"
+          )}
+        </View>
+        <View style={styles.listMeta}>
+          <Text style={styles.listName}>{authorName(item.author)}</Text>
+          <Text style={styles.listTime}>
+            {formatTimeAgo(preview.created_at)}
+            {item.slides.length > 1 ? ` · ${item.slides.length} moments` : ''}
+            {preview.view_once ? ' · View once' : ''}
+          </Text>
+        </View>
+        <View style={styles.listThumbWrap}>
+          {renderSlidePreview(preview, styles.listThumb)}
+          <View style={styles.listThumbPlay}>
+            <Ionicons
+              name={
+                preview.media_type === 'video'
+                  ? 'play'
+                  : preview.media_type === 'text'
+                    ? 'text'
+                    : 'image'
+              }
+              size={12}
+              color="#fff"
             />
-            <View style={styles.reactionIcons}>
-              <TouchableOpacity style={styles.reactionIcon}>
-                <Text style={styles.reactionEmoji}>❤️</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.reactionIcon}>
-                <Text style={styles.reactionEmoji}>😂</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.reactionIcon}>
-                <Text style={styles.reactionEmoji}>🔥</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.reactionIcon}>
-                <Ionicons name="send" size={20} color="#fff" />
-              </TouchableOpacity>
+          </View>
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  return (
+    <View style={styles.container}>
+      <StatusBar backgroundColor={C.bg} barStyle="dark-content" />
+
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={C.primary} />
+        }
+      >
+        {loading && authors.length === 0 ? (
+          <View style={styles.loadingBox}>
+            <ActivityIndicator size="large" color={C.primary} />
+            <Text style={styles.loadingText}>Loading moments…</Text>
+          </View>
+        ) : error && authors.length === 0 ? (
+          <View style={styles.loadingBox}>
+            <Ionicons name="cloud-offline-outline" size={40} color={C.muted} />
+            <Text style={styles.errorText}>{error}</Text>
+            <TouchableOpacity style={styles.retryBtn} onPress={refresh}>
+              <Text style={styles.retryBtnText}>Retry</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <>
+            <View style={styles.stripCard}>
+              <View style={styles.stripHead}>
+                <Text style={styles.stripTitle}>Moments</Text>
+                <Text style={styles.stripSub}>Tap to view · expires automatically</Text>
+              </View>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.stripScroll}
+              >
+                {stripAuthors.map((a) => (
+                  <React.Fragment key={`strip-${a.author.id}`}>{renderBubble(a)}</React.Fragment>
+                ))}
+              </ScrollView>
             </View>
+
+            {myFeed && myFeed.slides.length > 0 && (
+              <TouchableOpacity style={styles.youRow} onPress={() => openAuthor(myFeed)}>
+                <LinearGradient
+                  colors={[C.primarySoft, '#fff']}
+                  style={styles.youRowGrad}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                >
+                  <View style={styles.youThumbWrap}>
+                    {renderSlidePreview(
+                      myFeed.slides[myFeed.slides.length - 1],
+                      styles.youThumb
+                    )}
+                  </View>
+                  <View style={styles.youText}>
+                    <Text style={styles.youTitle}>Your moment</Text>
+                    <Text style={styles.youSub}>
+                      {myFeed.slides.length} active · {formatTimeAgo(myFeed.latest_at)}
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-forward" size={20} color={C.muted} />
+                </LinearGradient>
+              </TouchableOpacity>
+            )}
+
+            {othersNew.length > 0 && (
+              <View style={styles.section}>
+                <View style={styles.sectionHead}>
+                  <View style={styles.sectionDot} />
+                  <Text style={styles.sectionTitle}>New</Text>
+                </View>
+                {othersNew.map((a) => (
+                  <React.Fragment key={`new-${a.author.id}`}>{renderListRow(a)}</React.Fragment>
+                ))}
+              </View>
+            )}
+
+            {othersSeen.length > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitleMuted}>Earlier</Text>
+                {othersSeen.map((a) => (
+                  <React.Fragment key={`seen-${a.author.id}`}>{renderListRow(a)}</React.Fragment>
+                ))}
+              </View>
+            )}
+
+            {!loading && authors.length === 0 && (
+              <View style={styles.emptyState}>
+                <Ionicons name="sparkles-outline" size={48} color={C.muted} />
+                <Text style={styles.emptyTitle}>No moments yet</Text>
+                <Text style={styles.emptySub}>Post the first moment for your friends.</Text>
+              </View>
+            )}
+          </>
+        )}
+      </ScrollView>
+
+      <TouchableOpacity
+        style={[styles.fab, { bottom: insets.bottom + 24 }]}
+        onPress={openAddMenu}
+        activeOpacity={0.9}
+        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+      >
+        <LinearGradient colors={[C.primary, C.primaryDark]} style={styles.fabGrad}>
+          <Ionicons name="add" size={28} color="#fff" />
+        </LinearGradient>
+      </TouchableOpacity>
+
+      <MomentComposer
+        visible={!!composerDraft?.items.length}
+        draft={composerDraft}
+        onClose={() => setComposerDraft(null)}
+        onPosted={refresh}
+        onAddMedia={openAddMenu}
+        onUpdateItem={updateDraftItem}
+      />
+
+      <Modal visible={addMenuOpen} transparent animationType="fade" onRequestClose={() => setAddMenuOpen(false)}>
+        <View style={styles.addMenuRoot}>
+          <Pressable style={styles.addMenuBackdrop} onPress={() => setAddMenuOpen(false)} />
+          <View style={[styles.addMenuSheet, { paddingBottom: insets.bottom + 16 }]}>
+          <View style={styles.addMenuHandle} />
+          <Text style={styles.addMenuTitle}>Add to moment</Text>
+          <TouchableOpacity
+            style={styles.addMenuRow}
+            onPress={() => void runAddAction(recordVideo)}
+          >
+            <View style={[styles.addMenuIcon, { backgroundColor: '#e8f2ff' }]}>
+              <Ionicons name="videocam" size={22} color={C.primary} />
+            </View>
+            <View style={styles.addMenuText}>
+              <Text style={styles.addMenuLabel}>Record video</Text>
+              <Text style={styles.addMenuSub}>Opens camera to record</Text>
+            </View>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.addMenuRow}
+            onPress={() => void runAddAction(takePhoto)}
+          >
+            <View style={[styles.addMenuIcon, { backgroundColor: '#e8f2ff' }]}>
+              <Ionicons name="camera" size={22} color={C.primary} />
+            </View>
+            <View style={styles.addMenuText}>
+              <Text style={styles.addMenuLabel}>Take photo</Text>
+              <Text style={styles.addMenuSub}>Opens camera for a photo</Text>
+            </View>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.addMenuRow}
+            onPress={() => void runAddAction(pickFromGallery)}
+          >
+            <View style={[styles.addMenuIcon, { backgroundColor: '#e8f2ff' }]}>
+              <Ionicons name="images" size={22} color={C.primary} />
+            </View>
+            <View style={styles.addMenuText}>
+              <Text style={styles.addMenuLabel}>Gallery</Text>
+              <Text style={styles.addMenuSub}>Pick photos or videos (multi-select)</Text>
+            </View>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.addMenuRow}
+            onPress={() => void runAddAction(addTextMoment)}
+          >
+            <View style={[styles.addMenuIcon, { backgroundColor: '#e8f2ff' }]}>
+              <Ionicons name="text" size={22} color={C.primary} />
+            </View>
+            <View style={styles.addMenuText}>
+              <Text style={styles.addMenuLabel}>Words</Text>
+              <Text style={styles.addMenuSub}>Text moment with a background</Text>
+            </View>
+          </TouchableOpacity>
           </View>
         </View>
       </Modal>
-    );
-  };
 
-  const CameraModal = () => (
-    <Modal
-      visible={showCamera}
-      animationType="slide"
-      statusBarTranslucent
-    >
-      <View style={styles.cameraContainer}>
-        {/* Camera Header */}
-        <View style={styles.cameraHeader}>
-          <TouchableOpacity 
-            style={styles.cameraBackButton}
-            onPress={() => setShowCamera(false)}
-          >
-            <Ionicons name="chevron-down" size={28} color="#fff" />
-          </TouchableOpacity>
-          <Text style={styles.cameraTitle}>Create Story</Text>
-          <TouchableOpacity style={styles.postButton} onPress={postStatus}>
-            <Text style={styles.postButtonText}>Share</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Preview */}
-        {selectedImage && (
-          <View style={styles.previewContainer}>
-            <Image source={{ uri: selectedImage }} style={styles.previewImage} />
-            <View style={styles.captionContainer}>
-              <TextInput
-                style={styles.captionInput}
-                placeholder="Add your story caption..."
-                placeholderTextColor="rgba(255,255,255,0.7)"
-                value={newStatusCaption}
-                onChangeText={setNewStatusCaption}
-                multiline
-                textAlignVertical="center"
-              />
-              <Ionicons name="create-outline" size={20} color="rgba(255,255,255,0.7)" />
-            </View>
-          </View>
-        )}
-
-        {/* Camera Options */}
-        <View style={styles.cameraOptions}>
-          <TouchableOpacity style={styles.cameraOption} onPress={takePhoto}>
-            <View style={styles.optionIcon}>
-              <Ionicons name="camera" size={28} color="#007AFF" />
-            </View>
-            <Text style={styles.optionText}>Camera</Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity style={styles.cameraOption} onPress={pickImage}>
-            <View style={styles.optionIcon}>
-              <Ionicons name="images" size={28} color="#007AFF" />
-            </View>
-            <Text style={styles.optionText}>Gallery</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    </Modal>
-  );
-
-  return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar backgroundColor="#fff" barStyle="dark-content" />
-      
-      {/* Status Circles - Directly at top without header */}
-      <View style={styles.circlesSection}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.circlesScroll}>
-          {statuses.map((status, index) => (
-            <View key={status.id} style={styles.circleWrapper}>
-              {renderStatusCircle({ item: status, index })}
-            </View>
-          ))}
-        </ScrollView>
-      </View>
-
-      {/* Quick Actions - Minimal design */}
-      <View style={styles.quickActions}>
-        <TouchableOpacity style={styles.quickAction} onPress={takePhoto}>
-          <View style={[styles.quickIcon, { backgroundColor: '#007AFF' }]}>
-            <Ionicons name="camera" size={20} color="#fff" />
-          </View>
-          <Text style={styles.quickText}>Camera</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity style={styles.quickAction} onPress={pickImage}>
-          <View style={[styles.quickIcon, { backgroundColor: '#34C759' }]}>
-            <Ionicons name="images" size={20} color="#fff" />
-          </View>
-          <Text style={styles.quickText}>Gallery</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity style={styles.quickAction}>
-          <View style={[styles.quickIcon, { backgroundColor: '#FF9500' }]}>
-            <Ionicons name="videocam" size={20} color="#fff" />
-          </View>
-          <Text style={styles.quickText}>Video</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Recent Stories Section */}
-      <View style={styles.storiesSection}>
-        <Text style={styles.sectionTitle}>Recent Updates</Text>
-        <ScrollView showsVerticalScrollIndicator={false}>
-          {statuses.filter(s => !s.isMe && s.stories.length > 0).map((status) => (
-            <TouchableOpacity 
-              key={status.id}
-              style={styles.storyItem}
-              onPress={() => {
-                setSelectedStatus(status);
-                setCurrentStoryIndex(0);
-                setShowStatusViewer(true);
-              }}
-            >
-              <View style={styles.storyAvatarContainer}>
-                <Image source={status.avatar} style={styles.storyAvatar} />
-                {!status.seen && <View style={styles.unseenDot} />}
-              </View>
-              <View style={styles.storyInfo}>
-                <Text style={styles.storyName}>{status.name}</Text>
-                <Text style={styles.storyTime}>{status.time} • {status.stories.length} updates</Text>
-              </View>
-              <View style={styles.storyPreview}>
-                <Image source={status.stories[0].image} style={styles.previewThumb} />
-              </View>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
-
-      <StatusViewer />
-      <CameraModal />
-
-      {/* Floating Create Button */}
-      <TouchableOpacity 
-        style={styles.floatingCreateButton}
-        onPress={takePhoto}
-      >
-        <View style={styles.createButtonInner}>
-          <Ionicons name="camera" size={24} color="#fff" />
-        </View>
-      </TouchableOpacity>
-    </SafeAreaView>
+      <MomentViewer
+        visible={!!viewerAuthor && isScreenFocused}
+        author={viewerAuthor}
+        myProfileId={myProfileId}
+        onClose={() => setViewerAuthor(null)}
+        onSlideViewed={handleSlideViewed}
+      />
+    </View>
   );
 }
 
+const BUBBLE_W = 68;
+const BUBBLE_H = 92;
+
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
+  container: { flex: 1, backgroundColor: C.surface },
+  loadingBox: { alignItems: 'center', paddingVertical: 80, gap: 12 },
+  loadingText: { color: C.muted },
+  errorText: { color: C.muted, textAlign: 'center', paddingHorizontal: 32 },
+  retryBtn: {
+    marginTop: 8,
+    backgroundColor: C.primary,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 20,
   },
-  circlesSection: {
-    paddingVertical: 25,
-    paddingHorizontal: 15,
-    backgroundColor: '#fff',
+  retryBtnText: { color: '#fff', fontWeight: '700' },
+
+  stripCard: {
+    backgroundColor: C.bg,
+    marginHorizontal: 14,
+    marginTop: 12,
+    borderRadius: 18,
+    paddingVertical: 16,
+    shadowColor: C.primaryDark,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 3,
   },
-  circlesScroll: {
-    paddingHorizontal: 5,
+  stripHead: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    marginBottom: 14,
   },
-  circleWrapper: {
-    marginHorizontal: 8,
-  },
-  statusCircle: {
-    alignItems: 'center',
-    width: 80,
-  },
-  circleContainer: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
+  stripTitle: { fontSize: 18, fontWeight: '800', color: C.text },
+  stripSub: { fontSize: 12, color: C.muted, fontWeight: '500' },
+  stripScroll: { paddingHorizontal: 12, gap: 10 },
+
+  bubbleWrap: { alignItems: 'center', width: BUBBLE_W + 8 },
+  bubbleRing: {
+    width: BUBBLE_W,
+    height: BUBBLE_H,
+    borderRadius: 16,
+    padding: 3,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 8,
-    position: 'relative',
-    backgroundColor: '#f8f9fa',
   },
-  unseenCircle: {
-    borderWidth: 3,
-    borderColor: '#007AFF',
+  bubbleRingMuted: { backgroundColor: '#c8d4e0', padding: 2 },
+  bubbleInner: {
+    flex: 1,
+    width: '100%',
+    borderRadius: 13,
+    overflow: 'hidden',
+    backgroundColor: C.surface,
   },
-  myCircle: {
-    borderWidth: 3,
-    borderColor: '#007AFF',
+  bubbleImage: { width: '100%', height: '100%' },
+  bubbleFallback: {
+    flex: 1,
+    backgroundColor: C.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  circleAvatar: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-  },
-  addStoryButton: {
+  bubbleLetter: { color: '#fff', fontWeight: '800', fontSize: 22 },
+  bubbleAdd: {
     position: 'absolute',
-    bottom: -2,
-    right: -2,
-    backgroundColor: '#007AFF',
+    bottom: 4,
+    right: 4,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: C.primary,
+    borderWidth: 2,
+    borderColor: C.bg,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bubbleLabel: {
+    marginTop: 6,
+    fontSize: 11,
+    fontWeight: '600',
+    color: C.muted,
+    maxWidth: BUBBLE_W + 4,
+    textAlign: 'center',
+  },
+
+  youRow: {
+    marginHorizontal: 14,
+    marginTop: 12,
+    borderRadius: 14,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  youRowGrad: { flexDirection: 'row', alignItems: 'center', padding: 12 },
+  youThumbWrap: { marginRight: 12, borderRadius: 10, overflow: 'hidden' },
+  youThumb: { width: 48, height: 64, borderRadius: 10 },
+  textPreviewLabel: {
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: '700',
+    textAlign: 'center',
+    padding: 4,
+  },
+  textPreviewLabelDark: { color: '#1c1c1e' },
+  reelPreviewBadge: {
+    position: 'absolute',
+    right: 6,
+    bottom: 6,
     width: 24,
     height: 24,
     borderRadius: 12,
-    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.55)',
     alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#fff',
+    justifyContent: 'center',
   },
-  circleName: {
-    fontSize: 12,
+  videoThumbFallback: {
+    backgroundColor: '#1c1c1e',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  videoPreviewPlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.2)',
+  },
+  youText: { flex: 1 },
+  youTitle: { fontSize: 16, fontWeight: '700', color: C.text },
+  youSub: { fontSize: 13, color: C.muted, marginTop: 2 },
+
+  section: { marginTop: 20, paddingHorizontal: 14 },
+  sectionHead: { flexDirection: 'row', alignItems: 'center', marginBottom: 10, gap: 8 },
+  sectionDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: C.primary },
+  sectionTitle: { fontSize: 15, fontWeight: '800', color: C.text },
+  sectionTitleMuted: {
+    fontSize: 13,
     fontWeight: '600',
-    color: '#333',
-    textAlign: 'center',
+    color: C.muted,
+    marginBottom: 10,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
-  liveIndicator: {
-    position: 'absolute',
-    top: -5,
+
+  listRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FF3B30',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 8,
-  },
-  livePulse: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#fff',
-    marginRight: 4,
-  },
-  liveText: {
-    fontSize: 10,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
-  quickActions: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingHorizontal: 20,
-    paddingVertical: 15,
-    backgroundColor: '#f8f9fa',
-    marginHorizontal: 15,
-    borderRadius: 16,
-    marginBottom: 20,
-  },
-  quickAction: {
-    alignItems: 'center',
-  },
-  quickIcon: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: C.bg,
+    borderRadius: 14,
+    padding: 12,
     marginBottom: 8,
+    borderWidth: 1,
+    borderColor: C.border,
   },
-  quickText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#333',
-  },
-  storiesSection: {
-    flex: 1,
-    paddingHorizontal: 20,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 15,
-  },
-  storyItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-  },
-  storyAvatarContainer: {
-    position: 'relative',
-    marginRight: 12,
-  },
-  storyAvatar: {
+  listAvatarRing: {
     width: 50,
     height: 50,
     borderRadius: 25,
     borderWidth: 2,
-    borderColor: '#007AFF',
-  },
-  unseenDot: {
-    position: 'absolute',
-    top: -2,
-    right: -2,
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: '#007AFF',
-    borderWidth: 2,
-    borderColor: '#fff',
-  },
-  storyInfo: {
-    flex: 1,
-  },
-  storyName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 2,
-  },
-  storyTime: {
-    fontSize: 14,
-    color: '#666',
-  },
-  storyPreview: {
-    width: 60,
-    height: 60,
-    borderRadius: 12,
-    overflow: 'hidden',
-  },
-  previewThumb: {
-    width: '100%',
-    height: '100%',
-  },
-  statusViewer: {
-    flex: 1,
-    backgroundColor: '#000',
-  },
-  progressContainer: {
-    flexDirection: 'row',
-    paddingHorizontal: 10,
-    paddingTop: 50,
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 20,
-  },
-  progressBarBackground: {
-    flex: 1,
-    height: 3,
-    backgroundColor: 'rgba(255,255,255,0.3)',
-    marginHorizontal: 2,
-    borderRadius: 2,
-    overflow: 'hidden',
-  },
-  progressBar: {
-    height: '100%',
-    borderRadius: 2,
-    backgroundColor: '#fff',
-  },
-  statusHeader: {
-    flexDirection: 'row',
+    borderColor: '#c8d4e0',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 15,
-    paddingVertical: 12,
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 10,
-    paddingTop: 60,
-  },
-  backButton: {
-    padding: 8,
-  },
-  statusUserInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-    marginLeft: 12,
-  },
-  statusViewerAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    marginRight: 10,
-  },
-  statusViewerName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#fff',
-  },
-  statusViewerTime: {
-    fontSize: 14,
-    color: 'rgba(255,255,255,0.7)',
-    marginTop: 2,
-  },
-  moreButton: {
-    padding: 8,
-  },
-  statusContent: {
-    flex: 1,
     justifyContent: 'center',
-    alignItems: 'center',
-  },
-  statusImage: {
-    width: width,
-    height: height,
-  },
-  captionOverlay: {
-    position: 'absolute',
-    bottom: 120,
-    left: 20,
-    right: 20,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    padding: 16,
-    borderRadius: 12,
-  },
-  captionText: {
-    color: '#fff',
-    fontSize: 16,
-    textAlign: 'center',
-    fontWeight: '500',
-  },
-  navArea: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    width: '30%',
-  },
-  leftNav: {
-    left: 0,
-  },
-  rightNav: {
-    right: 0,
-  },
-  reactionBar: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    padding: 20,
-    paddingBottom: 40,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  replyInput: {
-    flex: 1,
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 20,
-    color: '#fff',
     marginRight: 12,
-    fontSize: 16,
+    overflow: 'hidden',
   },
-  reactionIcons: {
-    flexDirection: 'row',
+  listAvatarRingNew: { borderColor: C.primary },
+  listAvatar: { width: 42, height: 42, borderRadius: 21 },
+  listMeta: { flex: 1 },
+  listName: { fontSize: 15, fontWeight: '700', color: C.text },
+  listTime: { fontSize: 13, color: C.muted, marginTop: 2 },
+  listThumbWrap: {
+    width: 48,
+    height: 64,
+    borderRadius: 10,
+    overflow: 'hidden',
+    backgroundColor: C.surface,
+  },
+  listThumb: { width: '100%', height: '100%' },
+  listThumbPlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.25)',
     alignItems: 'center',
-  },
-  reactionIcon: {
-    padding: 8,
-    marginLeft: 8,
-  },
-  reactionEmoji: {
-    fontSize: 20,
-  },
-  cameraContainer: {
-    flex: 1,
-    backgroundColor: '#fff',
-  },
-  cameraHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    paddingTop: 50,
-    backgroundColor: '#fff',
-  },
-  cameraBackButton: {
-    padding: 8,
-  },
-  cameraTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  postButton: {
-    backgroundColor: '#007AFF',
-    paddingHorizontal: 20,
-    paddingVertical: 8,
-    borderRadius: 16,
-  },
-  postButtonText: {
-    color: '#fff',
-    fontWeight: '600',
-    fontSize: 16,
-  },
-  previewContainer: {
-    flex: 1,
     justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-    backgroundColor: '#fff',
   },
-  previewImage: {
-    width: '100%',
-    height: '70%',
-    borderRadius: 16,
-  },
-  captionContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#f8f9fa',
-    marginTop: 20,
-    padding: 16,
-    borderRadius: 12,
-    width: '100%',
-  },
-  captionInput: {
-    flex: 1,
-    color: '#333',
-    fontSize: 16,
-    marginRight: 10,
-  },
-  cameraOptions: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    padding: 20,
-    paddingBottom: 40,
-    backgroundColor: '#fff',
-  },
-  cameraOption: {
-    alignItems: 'center',
-  },
-  optionIcon: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: '#f8f9fa',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  optionText: {
-    color: '#333',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  floatingCreateButton: {
+
+  emptyState: { alignItems: 'center', paddingVertical: 48, gap: 8 },
+  emptyTitle: { fontSize: 18, fontWeight: '800', color: C.text },
+  emptySub: { fontSize: 14, color: C.muted },
+
+  fab: {
     position: 'absolute',
-    bottom: 30,
     right: 20,
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: '#007AFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#007AFF',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
-    elevation: 8,
+    borderRadius: 28,
+    zIndex: 100,
+    shadowColor: C.primary,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 12,
   },
-  createButtonInner: {
+  fabGrad: {
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: '#007AFF',
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
   },
+
+  addMenuRoot: { flex: 1, justifyContent: 'flex-end' },
+  addMenuBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  addMenuSheet: {
+    backgroundColor: C.bg,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+  },
+  addMenuHandle: {
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: C.border,
+    marginBottom: 12,
+  },
+  addMenuTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: C.text,
+    marginBottom: 12,
+    paddingHorizontal: 4,
+  },
+  addMenuRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+    gap: 14,
+  },
+  addMenuIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addMenuText: { flex: 1 },
+  addMenuLabel: { fontSize: 16, fontWeight: '700', color: C.text },
+  addMenuSub: { fontSize: 13, color: C.muted, marginTop: 2 },
 });

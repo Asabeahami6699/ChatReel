@@ -17,6 +17,7 @@ import AuthForm from '../../components/AuthForm'
 import { useAuth } from '../../hooks/useAuth'
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack'
 import type { AuthStackParamList } from '../../navigation/AuthNavigator'
+import { USE_NATIVE_DRIVER } from '../../lib/animation'
 
 type RegisterNavProp = NativeStackNavigationProp<AuthStackParamList, 'Register'>
 
@@ -70,7 +71,7 @@ export default function RegisterScreen() {
         toValue: 1,
         duration: 3000,
         easing: Easing.linear,
-        useNativeDriver: true,
+        useNativeDriver: USE_NATIVE_DRIVER,
       })
     ).start()
   }, [spinRef])
@@ -86,12 +87,23 @@ export default function RegisterScreen() {
       return
     }
 
-    const { error } = await signUp(email, password, {
-      data: { display_name: displayName },
+    const { error, data } = await signUp(email.trim(), password, {
+      display_name: displayName.trim(),
     })
 
-    if (error) Alert.alert('Sign up failed', error.message)
-    else Alert.alert('Check your email to confirm signup!')
+    if (error) {
+      Alert.alert('Sign up failed', error.message)
+      return
+    }
+
+    if (data?.session) {
+      Alert.alert('Success', 'Account created. You are signed in.')
+    } else {
+      Alert.alert(
+        'Confirm your email',
+        'We sent a confirmation link to your inbox. Open it, then return here to log in.\n\nFor local dev you can disable email confirmation in Supabase → Authentication → Providers → Email.'
+      )
+    }
   }
 
   const handleLogin = () => {

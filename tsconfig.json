@@ -5,11 +5,9 @@
     "lib": ["ESNext", "DOM"],
     "jsx": "react-native",
     "strict": true,
-    "moduleResolution": "node",
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "allowSyntheticDefaultImports": true,
-    "baseUrl": "./src"
+    "allowSyntheticDefaultImports": true
   },
   "include": ["src", "App.tsx"]
 }

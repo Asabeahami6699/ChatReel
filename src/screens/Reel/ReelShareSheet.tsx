@@ -1,85 +1,254 @@
-// D:\chatApp\chatApp\src\screens\Reel\ReelShareSheet.tsx
-import React from 'react';
+import React, { useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  Share,
   Alert,
+  Linking,
+  Platform,
+  Share,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
+import { setStringAsync as copyToClipboard } from '../../lib/clipboard';
 import { Ionicons } from '@expo/vector-icons';
+import { api, ApiError, type ReelDTO } from '../../lib/api';
+import { downloadReelVideo } from '../../lib/downloadReel';
+import { config } from '../../lib/config';
+import ShareReelToChatSheet from './ShareReelToChatSheet';
+import {
+  CaptionChoiceModal,
+  captionChoiceToApi,
+  type CaptionChoiceResult,
+} from '../../components/CaptionChoiceModal';
 
-interface ReelShareSheetProps {
-  reelId: string;
+interface Props {
+  reel: ReelDTO;
   onClose: () => void;
 }
 
-export default function ReelShareSheet({ onClose }: ReelShareSheetProps) {
-  const shareUrl = `https://myapp.com/reel/123`;
+function buildShareUrl(reelId: string): string {
+  // Deep link first; fall back to public web link if defined.
+  const base =
+    (config as unknown as { webBaseUrl?: string; deepLinkPrefix?: string }).webBaseUrl ||
+    (config as unknown as { deepLinkPrefix?: string }).deepLinkPrefix ||
+    'chatapp://';
+  const sep = base.endsWith('/') ? '' : '/';
+  return `${base}${sep}reel/${reelId}`;
+}
 
-  const onShare = async () => {
+export default function ReelShareSheet({ reel, onClose }: Props) {
+  const [copied, setCopied] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [postingMoment, setPostingMoment] = useState(false);
+  const [captionModalOpen, setCaptionModalOpen] = useState(false);
+  const link = buildShareUrl(reel.id);
+  const shareMessage = reel.caption
+    ? `${reel.caption}\n${link}`
+    : `Check out this reel ${link}`;
+
+  const onSystemShare = async () => {
     try {
       await Share.share({
-        message: `Check out this reel! ${shareUrl}`,
-        url: shareUrl,
+        message: shareMessage,
+        url: Platform.OS === 'ios' ? link : undefined,
       });
       onClose();
-    } catch (error) {
-      Alert.alert('Error', 'Failed to share');
+    } catch {
+      Alert.alert('Share', 'Failed to open share sheet');
     }
   };
 
-  const copyLink = () => {
-    // In real app: Clipboard.setString(shareUrl)
-    Alert.alert('Copied!', 'Link copied to clipboard');
+  const copyLink = async () => {
+    try {
+      await copyToClipboard(link);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      Alert.alert('Copy', 'Failed to copy link');
+    }
+  };
+
+  const openExternal = (url: string, label: string) => async () => {
+    const canOpen = await Linking.canOpenURL(url).catch(() => false);
+    if (!canOpen) {
+      Alert.alert(label, `${label} is not installed.`);
+      return;
+    }
+    Linking.openURL(url);
     onClose();
   };
 
+  const onDownload = async () => {
+    if (downloading) return;
+    setDownloading(true);
+    try {
+      await downloadReelVideo(reel);
+      onClose();
+    } catch {
+      Alert.alert('Download', 'Could not download this video.');
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const onAddToMoment = () => {
+    setCaptionModalOpen(true);
+  };
+
+  const postToMoment = async (result: CaptionChoiceResult) => {
+    setCaptionModalOpen(false);
+    if (result.action === 'cancel' || postingMoment) return;
+    const caption = captionChoiceToApi(result);
+    if (caption === null) return;
+
+    setPostingMoment(true);
+    try {
+      await api.moments.fromReel(
+        reel.id,
+        caption !== undefined ? { caption } : {}
+      );
+      Alert.alert('Posted', 'Added to your moment. Friends can view it from Explore.');
+      onClose();
+    } catch (e) {
+      const message = e instanceof ApiError ? e.message : 'Could not add to moment';
+      Alert.alert('Moment', message);
+    } finally {
+      setPostingMoment(false);
+    }
+  };
+
+  const encoded = encodeURIComponent(shareMessage);
+
+  if (chatOpen) {
+    return (
+      <ShareReelToChatSheet
+        reel={reel}
+        onClose={() => setChatOpen(false)}
+        onSent={onClose}
+      />
+    );
+  }
+
   return (
     <View style={styles.container}>
+      <View style={styles.handle} />
       <View style={styles.header}>
         <Text style={styles.title}>Share</Text>
-        <TouchableOpacity onPress={onClose}>
+        <TouchableOpacity onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
           <Ionicons name="close" size={24} color="#fff" />
         </TouchableOpacity>
       </View>
 
+      <View style={styles.linkRow}>
+        <Text style={styles.linkText} numberOfLines={1}>
+          {link}
+        </Text>
+        <TouchableOpacity onPress={copyLink} style={styles.copyButton}>
+          <Ionicons name={copied ? 'checkmark' : 'copy-outline'} size={18} color="#fff" />
+          <Text style={styles.copyText}>{copied ? 'Copied' : 'Copy'}</Text>
+        </TouchableOpacity>
+      </View>
+
       <View style={styles.grid}>
-        <TouchableOpacity style={styles.shareButton} onPress={onShare}>
+        <TouchableOpacity style={styles.shareButton} onPress={() => setChatOpen(true)}>
+          <View style={[styles.iconCircle, { backgroundColor: '#0ea5e9' }]}>
+            <Ionicons name="chatbubble-outline" size={28} color="#fff" />
+          </View>
+          <Text style={styles.label}>Send to chat</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.shareButton}
+          onPress={onAddToMoment}
+          disabled={postingMoment}
+        >
+          <View style={[styles.iconCircle, { backgroundColor: '#7c3aed' }]}>
+            <Ionicons
+              name={postingMoment ? 'hourglass-outline' : 'albums-outline'}
+              size={28}
+              color="#fff"
+            />
+          </View>
+          <Text style={styles.label}>{postingMoment ? 'Posting…' : 'Moment'}</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.shareButton}
+          onPress={openExternal(`whatsapp://send?text=${encoded}`, 'WhatsApp')}
+        >
           <View style={[styles.iconCircle, { backgroundColor: '#25D366' }]}>
             <Ionicons name="logo-whatsapp" size={28} color="#fff" />
           </View>
           <Text style={styles.label}>WhatsApp</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.shareButton} onPress={onShare}>
+        <TouchableOpacity
+          style={styles.shareButton}
+          onPress={openExternal(
+            `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(link)}`,
+            'Facebook'
+          )}
+        >
           <View style={[styles.iconCircle, { backgroundColor: '#1877F2' }]}>
             <Ionicons name="logo-facebook" size={28} color="#fff" />
           </View>
           <Text style={styles.label}>Facebook</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.shareButton} onPress={onShare}>
-          <View style={[styles.iconCircle, { backgroundColor: '#1DA1F2' }]}>
+        <TouchableOpacity
+          style={styles.shareButton}
+          onPress={openExternal(
+            `https://twitter.com/intent/tweet?text=${encoded}`,
+            'Twitter / X'
+          )}
+        >
+          <View style={[styles.iconCircle, { backgroundColor: '#000' }]}>
             <Ionicons name="logo-twitter" size={28} color="#fff" />
           </View>
-          <Text style={styles.label}>Twitter</Text>
+          <Text style={styles.label}>X / Twitter</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.shareButton} onPress={copyLink}>
-          <View style={[styles.iconCircle, { backgroundColor: '#888' }]}>
-            <Ionicons name="link" size={28} color="#fff" />
+        <TouchableOpacity style={styles.shareButton} onPress={onSystemShare}>
+          <View style={[styles.iconCircle, { backgroundColor: '#1976d2' }]}>
+            <Ionicons name="share-social" size={28} color="#fff" />
           </View>
-          <Text style={styles.label}>Copy Link</Text>
+          <Text style={styles.label}>More</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.shareButton}
+          onPress={onDownload}
+          disabled={downloading}
+        >
+          <View style={[styles.iconCircle, { backgroundColor: '#334155' }]}>
+            <Ionicons name={downloading ? 'hourglass-outline' : 'download-outline'} size={28} color="#fff" />
+          </View>
+          <Text style={styles.label}>{downloading ? 'Saving…' : 'Download'}</Text>
         </TouchableOpacity>
       </View>
+
+      <CaptionChoiceModal
+        visible={captionModalOpen}
+        title="Caption for your moment"
+        originalCaption={reel.caption}
+        onClose={() => setCaptionModalOpen(false)}
+        onConfirm={(result) => void postToMoment(result)}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { backgroundColor: '#111', borderTopLeftRadius: 20, borderTopRightRadius: 20 },
+  container: { flex: 1, backgroundColor: '#111' },
+  handle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#444',
+    alignSelf: 'center',
+    marginTop: 8,
+  },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -89,6 +258,26 @@ const styles = StyleSheet.create({
     borderColor: '#333',
   },
   title: { color: '#fff', fontSize: 18, fontWeight: '600' },
+  linkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    backgroundColor: '#181818',
+    marginHorizontal: 16,
+    marginTop: 16,
+    borderRadius: 12,
+  },
+  linkText: { flex: 1, color: '#ddd', marginRight: 12 },
+  copyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1976d2',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 16,
+    gap: 4,
+  },
+  copyText: { color: '#fff', fontWeight: '600', marginLeft: 4 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', padding: 20, justifyContent: 'space-around' },
   shareButton: { alignItems: 'center', width: '25%', marginBottom: 20 },
   iconCircle: {

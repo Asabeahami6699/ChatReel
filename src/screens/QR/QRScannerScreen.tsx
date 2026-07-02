@@ -13,7 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import { supabase } from '../../lib/supabase';
+import { api } from '../../lib/api';
 import { useAuth } from '../../hooks/useAuth';
 
 const isWeb = Platform.OS === 'web';
@@ -63,20 +63,7 @@ export default function QRScannerScreen() {
       const ref = url.searchParams.get('ref');
       if (!ref || !data.startsWith('myapp://link')) throw new Error('Invalid QR code');
 
-      const { data: session } = await supabase
-        .from('qr_sessions')
-        .select('*')
-        .eq('ref', ref)
-        .single();
-
-      if (!session) throw new Error('Invalid or expired QR code');
-      if (new Date(session.expires_at) < new Date()) throw new Error('QR code expired');
-
-      await supabase.from('linked_devices').insert({
-        user_id: user.id,
-        linked_user_id: session.user_id,
-        linked_at: new Date().toISOString(),
-      });
+      await api.qr.link(ref);
 
       Alert.alert('Success!', 'Device linked successfully', [
         { text: 'OK', onPress: () => navigation.replace('Chats') },
@@ -92,7 +79,7 @@ export default function QRScannerScreen() {
   // Web fallback
   if (isWeb) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
         <View style={styles.web}>
           <Ionicons name="phone-portrait" size={80} color="#007AFF" />
           <Text style={styles.webTitle}>Open on Mobile</Text>
@@ -107,7 +94,7 @@ export default function QRScannerScreen() {
 
   if (hasPermission === null) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
         <View style={styles.center}>
           <ActivityIndicator size="large" color="#fff" />
           <Text style={styles.text}>Loading camera...</Text>
@@ -118,7 +105,7 @@ export default function QRScannerScreen() {
 
   if (hasPermission === false || error) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
         <View style={styles.center}>
           <Ionicons name="camera-outline" size={80} color="#fff" />
           <Text style={styles.text}>Camera access required</Text>
@@ -137,7 +124,7 @@ export default function QRScannerScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
       {CameraView && (
         <CameraView
           style={StyleSheet.absoluteFillObject}

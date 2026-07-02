@@ -36,3 +36,6 @@ export async function decryptMessage(content: string, iv: string, shared: Uint8A
   const decryptedBytes = cbc.decrypt(ciphertextBytes, shared, ivBytes);
   return new TextDecoder().decode(decryptedBytes);
 }
+
+export const encrypt = encryptMessage;
+export const decrypt = decryptMessage;

@@ -12,9 +12,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import QRCode from 'react-native-qrcode-svg';
 import { Ionicons } from '@expo/vector-icons';
-import { supabase } from '../../lib/supabase';
+import { api } from '../../lib/api';
 import { useAuth } from '../../hooks/useAuth';
+import { useRealtimeTopic } from '../../hooks/useRealtimeTopic';
 import { useNavigation } from '@react-navigation/native';
+import { USE_NATIVE_DRIVER } from '../../lib/animation';
 
 export default function QRCodeScreen() {
   const { user } = useAuth();
@@ -22,7 +24,6 @@ export default function QRCodeScreen() {
   const [qrRef, setQrRef] = useState('');
   const [timeLeft, setTimeLeft] = useState(30);
 
-  // FIXED: Keep full ref
   const spinRef = useRef(new Animated.Value(0)).current;
   const spin = spinRef.interpolate({
     inputRange: [0, 1],
@@ -31,59 +32,55 @@ export default function QRCodeScreen() {
 
   const generateRef = async () => {
     if (!user) return;
-    const ref = `${user.id}_${Date.now()}`;
-    const { error } = await supabase
-      .from('qr_sessions')
-      .insert({
-        user_id: user.id,
-        ref,
-        expires_at: new Date(Date.now() + 30 * 1000).toISOString(),
-      });
-    if (error) {
+    try {
+      const { ref } = await api.qr.createSession();
+      setQrRef(ref);
+      setTimeLeft(30);
+    } catch {
       Alert.alert('Error', 'Failed to generate QR');
-      return;
     }
-    setQrRef(ref);
-    setTimeLeft(30);
   };
 
-  // Auto refresh
   useEffect(() => {
     generateRef();
-    const id = setInterval(generateRef, 30000);
-    return () => clearInterval(id);
-  }, [user]);
+  }, [user?.id]);
 
-  // Countdown
+  useRealtimeTopic(user ? 'linkedDevices' : null, () => {
+    Alert.alert('Device linked', 'A device was linked to your account.', [
+      { text: 'OK', onPress: () => navigation.navigate('Chats') },
+    ]);
+  });
+
+  useRealtimeTopic(user ? 'qrSessions' : null, generateRef);
+
   useEffect(() => {
     const id = setInterval(() => {
-      setTimeLeft(t => t > 0 ? t - 1 : 0);
+      setTimeLeft((t) => (t > 0 ? t - 1 : 0));
     }, 1000);
     return () => clearInterval(id);
   }, []);
 
-  // FIXED: Animate the ref, not .current
   useEffect(() => {
     Animated.loop(
       Animated.timing(spinRef, {
         toValue: 1,
         duration: 3000,
         easing: Easing.linear,
-        useNativeDriver: true,
+        useNativeDriver: USE_NATIVE_DRIVER,
       })
     ).start();
   }, [spinRef]);
 
   if (!qrRef) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
         <Text style={styles.loading}>Generating QR...</Text>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <Ionicons name="arrow-back" size={28} color="#000" />

@@ -1,115 +1,98 @@
 // hooks/useChat.ts
-import { useState, useEffect, useRef } from 'react'
-import { supabase } from '../lib/supabase'
-import { useAuth } from './useAuth'
-import { encrypt, decrypt, deriveSharedSecret } from '../lib/crypto'
-import * as SecureStore from 'expo-secure-store'
+import { useState, useEffect, useCallback } from 'react';
+import { api } from '../lib/api';
+import { useAuth } from './useAuth';
+import { useRealtimeTopic } from './useRealtimeTopic';
+import { encrypt, decrypt, deriveSharedSecret, generateKeyPair, encode } from '../lib/crypto';
+import * as SecureStore from 'expo-secure-store';
 
 type Message = {
-  id: string
-  content: string
-  sender_id: string
-  created_at: string
-  message_type: string
-  file_url?: string
-  plaintext?: boolean
-  iv?: string
-  ephemeral_public_key?: string
-  decrypted?: string
-  status?: 'sending' | 'sent' | 'failed'
-}
+  id: string;
+  content: string;
+  sender_id: string;
+  created_at: string;
+  message_type: string;
+  file_url?: string;
+  plaintext?: boolean;
+  iv?: string;
+  ephemeral_public_key?: string;
+  decrypted?: string;
+  status?: 'sending' | 'sent' | 'failed';
+};
 
 export const useChat = (chatId: string, isGroup: boolean) => {
-  const { user } = useAuth()
-  const [messages, setMessages] = useState<Message[]>([])
-  const [loading, setLoading] = useState(true)
+  const { user } = useAuth();
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const fetchMessages = async () => {
-    const { data } = await supabase
-      .from('messages')
-      .select('*')
-      .or(isGroup ? `group_id.eq.${chatId}` : `and(sender_id.eq.${user?.id},receiver_id.eq.${chatId}),and(sender_id.eq.${chatId},receiver_id.eq.${user?.id})`)
-      .order('created_at', { ascending: true })
-    setMessages(data || [])
-    setLoading(false)
-  }
-
-  useEffect(() => {
-    fetchMessages()
-  }, [chatId, isGroup])
+  const fetchMessages = useCallback(async () => {
+    try {
+      const { messages: data } = await api.messages.list(chatId, isGroup);
+      setMessages((data as Message[]) || []);
+    } catch (err) {
+      console.error('[useChat] fetch failed:', err);
+      setMessages([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [chatId, isGroup]);
 
   useEffect(() => {
-    const channel = supabase
-      .channel(`chat:${chatId}`)
-      .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'messages',
-        filter: isGroup ? `group_id=eq.${chatId}` : `receiver_id=eq.${user?.id}`,
-      }, async (payload) => {
-        const msg = payload.new
-        if (msg.plaintext) {
-          setMessages(prev => [...prev, { ...msg, decrypted: msg.content }])
-          return
-        }
+    fetchMessages();
+  }, [fetchMessages]);
 
-        const myKey = await SecureStore.getItemAsync(`id_${user?.id}`)
-        const shared = await deriveSharedSecret(myKey!, msg.ephemeral_public_key!)
-        const decrypted = await decrypt(msg.content, msg.iv!, shared)
-        setMessages(prev => [...prev, { ...msg, decrypted }])
-      })
-      .subscribe()
-
-    return () => supabase.removeChannel(channel)
-  }, [chatId, isGroup, user?.id])
+  useRealtimeTopic('messages', fetchMessages, Boolean(user?.id));
 
   const send = async (text: string) => {
-    const tempId = Date.now().toString()
+    if (!user?.id) return;
+
+    const tempId = Date.now().toString();
     const optimistic: Message = {
       id: tempId,
       content: text,
-      sender_id: user!.id,
+      sender_id: user.id,
       created_at: new Date().toISOString(),
+      message_type: 'text',
       status: 'sending',
-    }
-    setMessages(prev => [...prev, optimistic])
+    };
+    setMessages((prev) => [...prev, optimistic]);
 
     try {
-      let publicKeyB64: string
+      let publicKeyHex: string;
       if (isGroup) {
-        // For simplicity: use first member's identity key
-        const { data } = await supabase.from('group_members').select('user_id').eq('group_id', chatId).limit(1)
-        const memberId = data![0].user_id
-        const { data: key } = await supabase.from('public_keys').select('public_key').eq('user_id', memberId).eq('type', 'identity').single()
-        publicKeyB64 = key.public_key
+        const { members } = await api.groups.members(chatId);
+        const memberId = (members[0]?.user_id as string) ?? user.id;
+        const { public_key } = await api.keys.getIdentity(memberId);
+        publicKeyHex = public_key;
       } else {
-        const { data } = await supabase.from('public_keys').select('public_key').eq('user_id', chatId).eq('type', 'identity').single()
-        publicKeyB64 = data.public_key
+        const { public_key } = await api.keys.getIdentity(chatId);
+        publicKeyHex = public_key;
       }
 
-      const { privateKey: ephPriv, publicKey: ephPub } = await generateKeyPair()
-      const shared = await deriveSharedSecret(ephPriv, publicKeyB64)
-      const { iv, ciphertext } = await encrypt(text, shared)
+      const { privateKey: ephPriv, publicKey: ephPub } = await generateKeyPair();
+      const shared = await deriveSharedSecret(encode(ephPriv), publicKeyHex);
+      const { iv, ciphertext } = await encrypt(text, shared);
 
-      const { data } = await supabase
-        .from('messages')
-        .insert({
-          sender_id: user!.id,
-          receiver_id: isGroup ? null : chatId,
-          group_id: isGroup ? chatId : null,
-          content: ciphertext,
-          iv,
-          ephemeral_public_key: ephPub,
-          plaintext: false,
-        })
-        .select()
-        .single()
+      const { message: data } = await api.messages.send({
+        receiver_id: isGroup ? undefined : chatId,
+        group_id: isGroup ? chatId : undefined,
+        content: ciphertext,
+        iv,
+        ephemeral_public_key: encode(ephPub),
+        plaintext: false,
+        message_type: 'text',
+      });
 
-      setMessages(prev => prev.map(m => m.id === tempId ? { ...data, decrypted: text, status: 'sent' } : m))
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === tempId ? { ...(data as Message), decrypted: text, status: 'sent' } : m
+        )
+      );
     } catch (err) {
-      setMessages(prev => prev.map(m => m.id === tempId ? { ...m, status: 'failed' } : m))
+      console.error('[useChat] send failed:', err);
+      setMessages((prev) => prev.map((m) => (m.id === tempId ? { ...m, status: 'failed' } : m)));
     }
-  }
+  };
 
-  return { messages, loading, send }
-}
+  return { messages, loading, send };
+};
