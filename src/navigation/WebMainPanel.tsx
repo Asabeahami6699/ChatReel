@@ -3,7 +3,9 @@ import { View, StyleSheet, Text } from 'react-native';
 import { NavigationContainer, NavigationIndependentTree } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import ChatRoomScreen from '../screens/Chat/ChatRoomScreen';
+import ContactScreen from '../screens/Chat/ContactScreen';
 import EmptyChatScreen from '../screens/Chat/EmptyChatScreen';
+import GroupInfoScreen from '../screens/Group/GroupInfoScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -31,6 +33,8 @@ function WebChatRoomPanel({ params }: { params: ChatParams }) {
             component={ChatRoomScreen}
             initialParams={params}
           />
+          <Stack.Screen name="GroupInfo" component={GroupInfoScreen} />
+          <Stack.Screen name="Contact" component={ContactScreen} />
         </Stack.Navigator>
       </NavigationContainer>
     </NavigationIndependentTree>

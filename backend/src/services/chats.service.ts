@@ -52,14 +52,31 @@ export async function getIndividualChats(authUserId: string): Promise<Individual
   const friendIds = friends.map((f) => f.user_id);
   if (!friendIds.length) return [];
 
-  const { data: messages } = await supabaseAdmin
-    .from('messages')
-    .select('*')
-    .or(
-      `and(sender_id.eq.${authUserId},receiver_id.in.(${friendIds.join(',')})),and(sender_id.in.(${friendIds.join(',')}),receiver_id.eq.${authUserId})`
-    )
-    .order('created_at', { ascending: false })
-    .limit(100);
+  // Fetch the latest message per friend using a wide enough window, plus
+  // compute true unread counts via a separate query (no global limit).
+  const [{ data: messages }, { data: unreadRows }] = await Promise.all([
+    supabaseAdmin
+      .from('messages')
+      .select('*')
+      .or(
+        `and(sender_id.eq.${authUserId},receiver_id.in.(${friendIds.join(',')})),and(sender_id.in.(${friendIds.join(',')}),receiver_id.eq.${authUserId})`
+      )
+      .order('created_at', { ascending: false })
+      .limit(200),
+    supabaseAdmin
+      .from('messages')
+      .select('sender_id')
+      .in('sender_id', friendIds)
+      .eq('receiver_id', authUserId)
+      .eq('is_read', false),
+  ]);
+
+  // Build per-friend unread count from the dedicated unread query.
+  const unreadByFriend = new Map<string, number>();
+  (unreadRows ?? []).forEach((r) => {
+    const sid = r.sender_id as string;
+    unreadByFriend.set(sid, (unreadByFriend.get(sid) || 0) + 1);
+  });
 
   const formatted: IndividualChat[] = friends.map((friend) => {
     const friendMsgs =
@@ -70,7 +87,6 @@ export async function getIndividualChats(authUserId: string): Promise<Individual
       ) ?? [];
 
     const latest = friendMsgs[0];
-    const unread = friendMsgs.filter((m) => m.sender_id === friend.user_id && !m.is_read).length;
 
     return {
       id: friend.user_id,
@@ -79,7 +95,7 @@ export async function getIndividualChats(authUserId: string): Promise<Individual
       avatar_url: friend.avatar_url,
       last_message: latest?.content,
       last_message_at: latest?.created_at,
-      unread_count: unread,
+      unread_count: unreadByFriend.get(friend.user_id) ?? 0,
     };
   });
 

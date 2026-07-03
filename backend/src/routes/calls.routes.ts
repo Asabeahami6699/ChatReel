@@ -5,10 +5,13 @@ import { supabaseAdmin } from '../lib/supabaseAdmin';
 import { asyncHandler, AuthedRequest, requireAuth } from '../middleware/auth';
 import {
   areAuthUsersFriends,
+  countActiveParticipants,
   createLiveKitToken,
   isGroupMember,
+  isJoinedParticipant,
   makeDirectRoomName,
   makeGroupRoomName,
+  MAX_CALL_PARTICIPANTS,
   resolveDisplayName,
   type CallRow,
 } from '../services/calls.service';
@@ -525,7 +528,7 @@ router.get(
   asyncHandler(async (req: AuthedRequest, res) => {
     const userId = req.userId!;
 
-    const [{ data: direct }, { data: groupRows }] = await Promise.all([
+    const [{ data: direct }, { data: invitedRows }] = await Promise.all([
       supabaseAdmin
         .from('calls')
         .select('*')
@@ -544,10 +547,10 @@ router.get(
 
     const candidates: CallRow[] = [];
     if (direct?.[0]) candidates.push(direct[0] as CallRow);
-    for (const row of groupRows ?? []) {
+    for (const row of invitedRows ?? []) {
       const raw = (row as { call: CallRow | CallRow[] | null }).call;
       const c = Array.isArray(raw) ? raw[0] : raw;
-      if (c && c.status === 'ringing') candidates.push(c);
+      if (c && (c.status === 'ringing' || c.status === 'accepted')) candidates.push(c);
     }
 
     const unique = new Map<string, CallRow>();
@@ -557,6 +560,247 @@ router.get(
     );
 
     return res.json({ call: sorted[0] ?? null });
+  })
+);
+
+/* -------------------------------------------------------------------------- */
+/*  GET /active — ongoing call for a group (or any call I'm in)               */
+/* -------------------------------------------------------------------------- */
+router.get(
+  '/active',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const userId = req.userId!;
+    const groupId = req.query.group_id
+      ? z.string().uuid().parse(req.query.group_id)
+      : null;
+
+    let query = supabaseAdmin
+      .from('calls')
+      .select('*')
+      .in('status', ['ringing', 'accepted'])
+      .order('created_at', { ascending: false })
+      .limit(5);
+
+    if (groupId) {
+      query = query.eq('group_id', groupId).eq('scope', 'group');
+    }
+
+    const { data: calls, error } = await query;
+    if (error) return res.status(500).json({ error: error.message });
+
+    for (const call of (calls ?? []) as CallRow[]) {
+      const { count: joinedCount } = await supabaseAdmin
+        .from('call_participants')
+        .select('id', { count: 'exact', head: true })
+        .eq('call_id', call.id)
+        .eq('state', 'joined');
+
+      if (!joinedCount || joinedCount === 0) continue;
+
+      if (groupId) {
+        const member = await isGroupMember(userId, groupId);
+        if (member) {
+          const { data: part } = await supabaseAdmin
+            .from('call_participants')
+            .select('state')
+            .eq('call_id', call.id)
+            .eq('user_id', userId)
+            .maybeSingle();
+          return res.json({
+            call,
+            my_state: part?.state ?? null,
+            joined_count: joinedCount,
+          });
+        }
+      } else {
+        const { data: part } = await supabaseAdmin
+          .from('call_participants')
+          .select('state')
+          .eq('call_id', call.id)
+          .eq('user_id', userId)
+          .maybeSingle();
+        if (part && ['invited', 'joined'].includes(part.state)) {
+          return res.json({
+            call,
+            my_state: part.state,
+            joined_count: joinedCount,
+          });
+        }
+      }
+    }
+
+    return res.json({ call: null, my_state: null, joined_count: 0 });
+  })
+);
+
+/* -------------------------------------------------------------------------- */
+/*  POST /:id/invite — add participants mid-call (up to MAX_CALL_PARTICIPANTS)  */
+/* -------------------------------------------------------------------------- */
+const inviteSchema = z.object({
+  user_ids: z.array(z.string().uuid()).min(1).max(MAX_CALL_PARTICIPANTS),
+});
+
+router.post(
+  '/:id/invite',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const id = z.string().uuid().parse(req.params.id);
+    const userId = req.userId!;
+    const { user_ids } = inviteSchema.parse(req.body);
+
+    const { data: call, error } = await supabaseAdmin
+      .from('calls')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!call) return res.status(404).json({ error: 'Call not found' });
+
+    if (!['ringing', 'accepted'].includes(call.status)) {
+      return res.status(409).json({ error: 'Call is no longer active' });
+    }
+
+    const joined = await isJoinedParticipant(id, userId);
+    if (!joined && call.caller_id !== userId) {
+      return res.status(403).json({ error: 'Only active participants can invite others' });
+    }
+
+    const activeCount = await countActiveParticipants(id);
+    const uniqueNew = [...new Set(user_ids)].filter((uid) => uid !== userId);
+
+    const { data: existing } = await supabaseAdmin
+      .from('call_participants')
+      .select('user_id, state')
+      .eq('call_id', id);
+    const existingIds = new Set(
+      (existing ?? [])
+        .filter((p) => !['left', 'declined', 'missed'].includes(p.state as string))
+        .map((p) => p.user_id as string)
+    );
+
+    const toInvite = uniqueNew.filter((uid) => !existingIds.has(uid));
+    if (toInvite.length === 0) {
+      return res.json({ invited: [], message: 'All users already in the call' });
+    }
+
+    if (activeCount + toInvite.length > MAX_CALL_PARTICIPANTS) {
+      return res.status(400).json({
+        error: `Call supports up to ${MAX_CALL_PARTICIPANTS} participants (${activeCount} already active)`,
+      });
+    }
+
+    // Validate each invitee: friend of inviter, or same group member.
+    for (const uid of toInvite) {
+      if (call.scope === 'group' && call.group_id) {
+        const member = await isGroupMember(uid, call.group_id);
+        if (!member) {
+          return res.status(403).json({ error: 'User is not in this group' });
+        }
+      } else {
+        const friends = await areAuthUsersFriends(userId, uid);
+        if (!friends) {
+          return res.status(403).json({ error: 'You can only invite accepted friends' });
+        }
+      }
+    }
+
+    await supabaseAdmin.from('call_participants').insert(
+      toInvite.map((uid) => ({
+        call_id: id,
+        user_id: uid,
+        state: 'invited' as const,
+      }))
+    );
+
+    // Mark multi-party when more than 2 people are involved.
+    const newTotal = activeCount + toInvite.length;
+    if (newTotal > 2 && call.metadata?.multi_party !== true) {
+      await supabaseAdmin
+        .from('calls')
+        .update({
+          metadata: { ...(call.metadata as object), multi_party: true },
+        })
+        .eq('id', id);
+    }
+
+    const callerName = await resolveDisplayName(userId);
+    const title = call.call_type === 'video' ? '📹 Video call' : '📞 Voice call';
+    for (const uid of toInvite) {
+      sendPushToUserSafe(uid, {
+        title,
+        body: `${callerName} invited you to join a call`,
+        data: {
+          type: 'incoming_call',
+          call_id: id,
+          call_type: call.call_type,
+          scope: call.scope,
+          caller_id: call.caller_id,
+          room_name: call.room_name,
+        },
+      });
+    }
+
+    return res.json({ invited: toInvite });
+  })
+);
+
+/* -------------------------------------------------------------------------- */
+/*  GET /:id/participants — list call participants with profile info          */
+/* -------------------------------------------------------------------------- */
+router.get(
+  '/:id/participants',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const id = z.string().uuid().parse(req.params.id);
+    const userId = req.userId!;
+
+    const { data: call } = await supabaseAdmin
+      .from('calls')
+      .select('id, caller_id, callee_id, group_id, scope')
+      .eq('id', id)
+      .maybeSingle();
+    if (!call) return res.status(404).json({ error: 'Call not found' });
+
+    const { data: parts, error } = await supabaseAdmin
+      .from('call_participants')
+      .select('user_id, state, joined_at')
+      .eq('call_id', id)
+      .in('state', ['invited', 'joined']);
+    if (error) return res.status(500).json({ error: error.message });
+
+    const userIds = (parts ?? []).map((p) => p.user_id as string);
+    const allowed =
+      call.caller_id === userId ||
+      call.callee_id === userId ||
+      userIds.includes(userId) ||
+      (call.group_id && (await isGroupMember(userId, call.group_id)));
+    if (!allowed) return res.status(403).json({ error: 'Not allowed' });
+
+    const { data: profiles } = await supabaseAdmin
+      .from('profiles')
+      .select('user_id, display_name, email, avatar_url')
+      .in('user_id', userIds.length ? userIds : ['00000000-0000-0000-0000-000000000000']);
+
+    const profileByUser = new Map(
+      (profiles ?? []).map((p) => [p.user_id as string, p])
+    );
+
+    const participants = (parts ?? []).map((p) => {
+      const prof = profileByUser.get(p.user_id as string);
+      return {
+        user_id: p.user_id,
+        state: p.state,
+        joined_at: p.joined_at,
+        display_name:
+          prof?.display_name?.trim() ||
+          prof?.email?.split('@')[0] ||
+          'Unknown',
+        avatar_url: prof?.avatar_url ?? null,
+      };
+    });
+
+    return res.json({ participants });
   })
 );
 

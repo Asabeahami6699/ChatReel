@@ -43,7 +43,14 @@ export function useIncomingCall(): CallDTO | null {
         ring.caller_id !== myAuthId;
       const validGroup = ring.scope === 'group' && ring.caller_id !== myAuthId;
       const validTarget = validDirect || validGroup;
-      setIncoming(age < 35_000 && validTarget ? ring : null);
+      // Ringing calls: short window. Mid-call invites on accepted calls: always show.
+      const isActiveInvite =
+        ring.status === 'accepted' && ring.caller_id !== myAuthId;
+      setIncoming(
+        validTarget && (ring.status === 'ringing' ? age < 35_000 : isActiveInvite)
+          ? ring
+          : null
+      );
       return true;
     } catch {
       return false;
@@ -107,6 +114,7 @@ export function useIncomingCall(): CallDTO | null {
   }, [fetchIncoming]);
 
   useRealtimeTopic('calls', onRealtimeCalls);
+  useRealtimeTopic('callParticipants', onRealtimeCalls);
 
   return incoming;
 }

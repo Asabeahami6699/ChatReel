@@ -188,6 +188,7 @@ router.get(
 
     const enriched = messages.map((m) => ({
       ...m,
+      delivered: true,
       reactions: reactionMap[m.id] ?? [],
       ...(readStats[m.id] ?? {}),
       ...(isGroup && m.sender_id !== userId

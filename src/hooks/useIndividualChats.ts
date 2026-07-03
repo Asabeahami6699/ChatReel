@@ -6,7 +6,7 @@ import { api } from '../lib/api';
 import { useAuth } from './useAuth';
 import { useCurrentProfileId } from './useCurrentProfileId';
 import { useFriendshipsRealtime } from './useFriendshipsRealtime';
-import { useRealtimeTopic } from './useRealtimeTopic';
+import { subscribeToMessageRows } from '../lib/chatRealtime';
 
 export type IndividualChat = {
   id: string;
@@ -18,7 +18,6 @@ export type IndividualChat = {
   unread_count?: number;
 };
 
-// Storage keys
 const INDIVIDUAL_CHATS_STORAGE_KEY = '@individual_chats';
 const INDIVIDUAL_CHATS_TIMESTAMP_KEY = '@individual_chats_timestamp';
 
@@ -31,7 +30,6 @@ export const useIndividualChats = (searchQuery: string = '') => {
   const [isOnline, setIsOnline] = useState(true);
   const [isDataStale, setIsDataStale] = useState(false);
 
-  // Check network status
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener(state => {
       setIsOnline(state.isConnected || false);
@@ -39,7 +37,6 @@ export const useIndividualChats = (searchQuery: string = '') => {
     return () => unsubscribe();
   }, []);
 
-  // Save chats to storage
   const saveChatsToStorage = async (chatsData: IndividualChat[]) => {
     try {
       await AsyncStorage.setItem(INDIVIDUAL_CHATS_STORAGE_KEY, JSON.stringify(chatsData));
@@ -49,12 +46,10 @@ export const useIndividualChats = (searchQuery: string = '') => {
     }
   };
 
-  // Load chats from storage
   const loadChatsFromStorage = async (): Promise<IndividualChat[] | null> => {
     try {
       const storedChats = await AsyncStorage.getItem(INDIVIDUAL_CHATS_STORAGE_KEY);
       const timestamp = await AsyncStorage.getItem(INDIVIDUAL_CHATS_TIMESTAMP_KEY);
-      
       if (storedChats && timestamp) {
         const parsedChats = JSON.parse(storedChats);
         const fiveMinutesAgo = Date.now() - (5 * 60 * 1000);
@@ -76,43 +71,32 @@ export const useIndividualChats = (searchQuery: string = '') => {
     }
 
     try {
-      // Check network status
       const netInfo = await NetInfo.fetch();
       const online = netInfo.isConnected;
       setIsOnline(online || false);
 
-      // Load cached data first (unless forcing refresh)
       if (!forceRefresh) {
         const cachedChats = await loadChatsFromStorage();
         if (cachedChats) {
           setChats(cachedChats);
           setIsDataStale(false);
         }
-
-        // If offline, don't try to fetch from network
         if (!online) {
-          console.log('Offline mode - using cached individual chats');
           setLoading(false);
           return;
         }
       }
 
-      // Silent refreshes (realtime-driven) shouldn't flash the loading state.
       if (!silent) setLoading(true);
 
       const { chats: formatted } = await api.chats.individual();
-
       await saveChatsToStorage(formatted as IndividualChat[]);
       setChats(formatted as IndividualChat[]);
       setIsDataStale(false);
-
     } catch (err) {
       console.error('useIndividualChats error:', err);
-      // Try to load from cache if fetch failed
       const cachedChats = await loadChatsFromStorage();
-      if (cachedChats) {
-        setChats(cachedChats);
-      }
+      if (cachedChats) setChats(cachedChats);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -124,10 +108,81 @@ export const useIndividualChats = (searchQuery: string = '') => {
   }, [fetchChats]);
 
   useFriendshipsRealtime(profileId, () => fetchChats(true, true));
-  useRealtimeTopic('messages', () => fetchChats(true, true), isOnline);
 
-  // Filter chats by search query (client-side)
-  const filteredChats = searchQuery.trim() 
+  // ---------------------------------------------------------------------------
+  // Realtime: uses the global hub dispatch (subscribeToMessageRows) — the same
+  // proven channel that useChatRoomRealtime relies on as its backup source.
+  // Row-by-row state updates — never a full refetch, so no blink.
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (!user?.id) return;
+
+    console.log('[chatlist-individual] subscribeToMessageRows attached for', user.id);
+
+    return subscribeToMessageRows((row, event) => {
+      // Skip group messages — handled by useGroupList.
+      if (row.group_id) return;
+
+      const senderId = row.sender_id as string | undefined;
+      const receiverId = row.receiver_id as string | undefined;
+      if (!senderId || !receiverId) return;
+
+      const isIncoming = senderId !== user.id && receiverId === user.id;
+      const isOutgoing = senderId === user.id && receiverId !== user.id;
+      if (!isIncoming && !isOutgoing) return;
+
+      const partnerId = isIncoming ? senderId : receiverId;
+
+      console.log('[chatlist-individual] message event', event, {
+        partnerId,
+        direction: isIncoming ? 'incoming' : 'outgoing',
+        content: String(row.content ?? '').slice(0, 30),
+      });
+
+      if (event === 'INSERT') {
+        const content = String(row.content ?? '');
+        const createdAt = String(row.created_at ?? new Date().toISOString());
+
+        setChats((prev) => {
+          const idx = prev.findIndex((c) => c.user_id === partnerId);
+          if (idx < 0) {
+            console.log('[chatlist-individual] partner not in list, fetching…');
+            void fetchChats(true, true);
+            return prev;
+          }
+          const next = [...prev];
+          const updated = {
+            ...next[idx],
+            last_message: content,
+            last_message_at: createdAt,
+            unread_count: isIncoming
+              ? (next[idx].unread_count || 0) + 1
+              : next[idx].unread_count,
+          };
+          next.splice(idx, 1);
+          const reordered = [updated, ...next];
+          void saveChatsToStorage(reordered);
+          console.log('[chatlist-individual] updated chat for', next[0]?.name ?? partnerId);
+          return reordered;
+        });
+      } else if (event === 'UPDATE') {
+        const isRead = (row as Record<string, unknown>).is_read;
+        if (isRead && isIncoming) {
+          setChats((prev) => {
+            const idx = prev.findIndex((c) => c.user_id === partnerId);
+            if (idx < 0) return prev;
+            if (prev[idx].unread_count === 0) return prev;
+            const next = [...prev];
+            next[idx] = { ...next[idx], unread_count: 0 };
+            void saveChatsToStorage(next);
+            return next;
+          });
+        }
+      }
+    });
+  }, [user?.id, fetchChats]);
+
+  const filteredChats = searchQuery.trim()
     ? chats.filter(chat =>
         chat.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         chat.last_message?.toLowerCase().includes(searchQuery.toLowerCase())
@@ -135,20 +190,14 @@ export const useIndividualChats = (searchQuery: string = '') => {
     : chats;
 
   const refresh = useCallback(() => {
-    if (!isOnline) {
-      console.log('Cannot refresh while offline');
-      return;
-    }
+    if (!isOnline) return;
     setRefreshing(true);
     fetchChats(true);
   }, [fetchChats, isOnline]);
 
-  // Mark messages as read
   const markMessagesAsRead = async (partnerUserId: string) => {
     if (!user?.id) return;
-    
     try {
-      // If offline, update local state only
       if (!isOnline) {
         setChats(prev => prev.map(chat =>
           chat.user_id === partnerUserId ? { ...chat, unread_count: 0 } : chat
@@ -156,29 +205,24 @@ export const useIndividualChats = (searchQuery: string = '') => {
         return;
       }
 
-      // Online - update on server
       await api.messages.markRead({ partner_user_id: partnerUserId });
 
-      // Update local state
-      setChats(prev => prev.map(chat =>
-        chat.user_id === partnerUserId ? { ...chat, unread_count: 0 } : chat
-      ));
-
-      // Update storage
-      const updatedChats = chats.map(chat =>
-        chat.user_id === partnerUserId ? { ...chat, unread_count: 0 } : chat
-      );
-      await saveChatsToStorage(updatedChats);
-
+      setChats(prev => {
+        const next = prev.map(chat =>
+          chat.user_id === partnerUserId ? { ...chat, unread_count: 0 } : chat
+        );
+        void saveChatsToStorage(next);
+        return next;
+      });
     } catch (error) {
       console.error('Error marking messages as read:', error);
     }
   };
 
-  return { 
-    chats: filteredChats, 
-    loading, 
-    refreshing, 
+  return {
+    chats: filteredChats,
+    loading,
+    refreshing,
     refresh,
     isOnline,
     isDataStale,

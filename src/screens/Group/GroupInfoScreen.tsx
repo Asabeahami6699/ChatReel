@@ -101,6 +101,7 @@ export default function GroupInfoScreen() {
   const [showInviteOptions, setShowInviteOptions] = useState(false);
   const [generatingInvite, setGeneratingInvite] = useState(false);
   const [isPublic, setIsPublic] = useState(false);
+  const [notificationsMuted, setNotificationsMuted] = useState(false);
   const [editingDescription, setEditingDescription] = useState(false);
   const [description, setDescription] = useState('');
   const [selectedMember, setSelectedMember] = useState<GroupMember | null>(null);
@@ -561,6 +562,14 @@ useEffect(() => {
       setDescription((groupData.description as string) || '');
       setIsPublic(Boolean(groupData.is_public));
       setIsDataStale(false);
+
+      try {
+        const { preferences } = await api.chatSettings.get('group', groupId);
+        const mutedUntil = preferences.muted_until as string | null;
+        setNotificationsMuted(Boolean(mutedUntil && new Date(mutedUntil) > new Date()));
+      } catch {
+        /* optional */
+      }
       
     } catch (error: any) {
       if (groupInfo || members.length > 0 || invites.length > 0) {
@@ -785,6 +794,20 @@ useEffect(() => {
     }
   }
 };
+
+  const toggleGroupNotifications = async (muted: boolean) => {
+    setNotificationsMuted(muted);
+    try {
+      await api.chatSettings.update('group', groupId, {
+        muted_until: muted
+          ? new Date(Date.now() + 365 * 86400_000).toISOString()
+          : null,
+      });
+    } catch {
+      setNotificationsMuted(!muted);
+      Alert.alert('Error', 'Could not update notification settings');
+    }
+  };
   const updateMemberRole = async (memberId: string, newRole: 'admin' | 'member') => {
     try {
       const updatedMembers = members.map(member =>
@@ -1358,24 +1381,44 @@ useEffect(() => {
             </View>
           </TouchableOpacity>
           
-          {expandedSections.settings && isAdmin && (
-            <View style={styles.settingItem}>
-              <View style={styles.settingInfo}>
-                <Ionicons name="globe" size={24} color="#007AFF" />
-                <View style={styles.settingDetails}>
-                  <Text style={styles.settingTitle}>Public Group</Text>
-                  <Text style={styles.settingDescription}>
-                    Anyone can find and join this group
-                  </Text>
+          {expandedSections.settings && (
+            <>
+              <View style={styles.settingItem}>
+                <View style={styles.settingInfo}>
+                  <Ionicons name="notifications-off" size={24} color="#007AFF" />
+                  <View style={styles.settingDetails}>
+                    <Text style={styles.settingTitle}>Mute notifications</Text>
+                    <Text style={styles.settingDescription}>
+                      Stop alerts for new messages in this group
+                    </Text>
+                  </View>
                 </View>
+                <Switch
+                  value={notificationsMuted}
+                  onValueChange={toggleGroupNotifications}
+                  trackColor={{ false: '#ddd', true: '#007AFF' }}
+                />
               </View>
-              <Switch
-                value={isPublic}
-                onValueChange={updateGroupPrivacy}
-                trackColor={{ false: '#ddd', true: '#007AFF' }}
-                disabled={!isOnline}
-              />
-            </View>
+              {isAdmin && (
+                <View style={styles.settingItem}>
+                  <View style={styles.settingInfo}>
+                    <Ionicons name="globe" size={24} color="#007AFF" />
+                    <View style={styles.settingDetails}>
+                      <Text style={styles.settingTitle}>Public Group</Text>
+                      <Text style={styles.settingDescription}>
+                        Anyone can find and join this group
+                      </Text>
+                    </View>
+                  </View>
+                  <Switch
+                    value={isPublic}
+                    onValueChange={updateGroupPrivacy}
+                    trackColor={{ false: '#ddd', true: '#007AFF' }}
+                    disabled={!isOnline}
+                  />
+                </View>
+              )}
+            </>
           )}
         </View>
 

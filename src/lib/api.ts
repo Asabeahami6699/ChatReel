@@ -669,7 +669,36 @@ export const api = {
     history: (limit = 50) =>
       apiRequest<{ calls: CallHistoryItemDTO[] }>(`/api/calls/history?limit=${limit}`),
     incoming: () => apiRequest<{ call: CallDTO | null }>('/api/calls/incoming'),
+    active: (groupId?: string) =>
+      apiRequest<{ call: CallDTO | null; my_state: string | null; joined_count: number }>(
+        groupId ? `/api/calls/active?group_id=${groupId}` : '/api/calls/active'
+      ),
+    invite: (id: string, userIds: string[]) =>
+      apiRequest<{ invited: string[] }>(`/api/calls/${id}/invite`, {
+        method: 'POST',
+        body: { user_ids: userIds },
+      }),
+    participants: (id: string) =>
+      apiRequest<{
+        participants: Array<{
+          user_id: string;
+          state: string;
+          joined_at: string | null;
+          display_name: string;
+          avatar_url: string | null;
+        }>;
+      }>(`/api/calls/${id}/participants`),
     get: (id: string) => apiRequest<{ call: CallDTO }>(`/api/calls/${id}`),
+  },
+
+  linkPreview: {
+    get: (url: string) =>
+      apiRequest<{
+        title: string | null;
+        description: string | null;
+        image: string | null;
+        siteName: string | null;
+      }>(`/api/link-preview?url=${encodeURIComponent(url)}`),
   },
 
   notifications: {

@@ -136,3 +136,31 @@ export async function resolveDisplayName(authUserId: string): Promise<string> {
     'Someone'
   );
 }
+
+export const MAX_CALL_PARTICIPANTS = 10;
+
+/** Count participants still invited or in the call. */
+export async function countActiveParticipants(callId: string): Promise<number> {
+  const { count, error } = await supabaseAdmin
+    .from('call_participants')
+    .select('id', { count: 'exact', head: true })
+    .eq('call_id', callId)
+    .in('state', ['invited', 'joined']);
+  if (error) return 0;
+  return count ?? 0;
+}
+
+/** True if user is currently joined in the call. */
+export async function isJoinedParticipant(
+  callId: string,
+  userId: string
+): Promise<boolean> {
+  const { data } = await supabaseAdmin
+    .from('call_participants')
+    .select('id')
+    .eq('call_id', callId)
+    .eq('user_id', userId)
+    .eq('state', 'joined')
+    .maybeSingle();
+  return Boolean(data);
+}

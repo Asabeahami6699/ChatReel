@@ -17,6 +17,7 @@ import { useChatSettings } from '../../context/ChatSettingsContext';
 import type { ChatListMessage } from './chatListModel';
 import { getAudioPlaybackUri } from './chatRoomTypes';
 import { LinkText } from './LinkText';
+import { LinkPreviewCard } from '../../components/LinkPreviewCard';
 import { openFileUrl, formatGroupReadLabel } from './chatMessageUtils';
 
 const MessageStatus = ({
@@ -76,6 +77,23 @@ const MessageStatus = ({
   }
   return <MaterialIcons name="done" size={16} color={metaColor} />;
 };
+
+/**
+ * Produce a pseudo-random waveform from the audio duration.
+ * Uses a deterministic seed so bars are stable across re-renders.
+ */
+function generateWaveformBars(durationSeconds: number): number[] {
+  const count = Math.max(12, Math.min(Math.round(durationSeconds * 3), 40));
+  const bars: number[] = [];
+  let seed = Math.round(durationSeconds * 1000);
+  for (let i = 0; i < count; i++) {
+    seed = (seed * 16807 + 7) % 2147483647;
+    const t = (seed % 1000) / 1000;
+    const envelope = Math.sin((i / count) * Math.PI);
+    bars.push(Math.round(4 + t * 16 * envelope));
+  }
+  return bars;
+}
 
 const formatTime = (iso: string) =>
   new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -239,16 +257,22 @@ export function ChatMessageRow({
             />
           </TouchableOpacity>
           <View style={styles.waveform}>
-            {[6, 12, 18, 14, 8, 14, 6].map((h, i) => (
-              <View
-                key={i}
-                style={[
-                  styles.waveBar,
-                  { height: h },
-                  isOutgoing ? styles.waveBarOutgoing : null,
-                ]}
-              />
-            ))}
+            {generateWaveformBars(msg.audio_duration || 5).map((h, i, arr) => {
+              const progress = isPlayingAudio === msg.id ? 0.5 : 0;
+              const played = i / arr.length < progress;
+              return (
+                <View
+                  key={i}
+                  style={[
+                    styles.waveBar,
+                    { height: h },
+                    isOutgoing
+                      ? played ? styles.waveBarPlayed : styles.waveBarOutgoing
+                      : played ? styles.waveBarPlayedIn : null,
+                  ]}
+                />
+              );
+            })}
           </View>
           <Text style={[styles.audioDur, { color: textColor }]}>
             {formatDuration(msg.audio_duration || 0)}
@@ -389,6 +413,11 @@ export function ChatMessageRow({
       );
     }
 
+    const firstUrl = (msg.content ?? '').match(/(https?:\/\/[^\s]+|www\.[^\s]+)/i)?.[0] ?? null;
+    const previewUrl = firstUrl
+      ? firstUrl.startsWith('http') ? firstUrl : `https://${firstUrl}`
+      : null;
+
     return wrapPressable(
       <View style={[styles.bubble, { backgroundColor: bubbleBg }, corners]}>
         {replyQuote}
@@ -400,6 +429,13 @@ export function ChatMessageRow({
             void openFileUrl(url.startsWith('http') ? url : `https://${url}`);
           }}
         />
+        {previewUrl && (
+          <LinkPreviewCard
+            url={previewUrl}
+            isOutgoing={isOutgoing}
+            onPress={(u) => void openFileUrl(u)}
+          />
+        )}
         {meta}
       </View>
     );
@@ -548,7 +584,9 @@ const styles = StyleSheet.create({
     borderRadius: 1,
     opacity: 0.7,
   },
-  waveBarOutgoing: { backgroundColor: '#fff' },
+  waveBarOutgoing: { backgroundColor: 'rgba(255,255,255,0.5)' },
+  waveBarPlayed: { backgroundColor: '#fff' },
+  waveBarPlayedIn: { backgroundColor: chatTheme.primary },
   audioDur: { fontSize: 13, marginLeft: 8 },
   metaOverlay: { position: 'absolute', right: 10, bottom: 6 },
   mediaWrap: { overflow: 'hidden', maxWidth: 260 },

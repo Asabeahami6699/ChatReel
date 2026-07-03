@@ -5,6 +5,7 @@ import NetInfo from '@react-native-community/netinfo';
 import { api } from '../lib/api';
 import { useAuth } from './useAuth';
 import { useRealtimeTopic } from './useRealtimeTopic';
+import { subscribeToMessageRows } from '../lib/chatRealtime';
 
 export type Group = {
   id: string;
@@ -303,13 +304,59 @@ export const useGroupList = (searchQuery = '') => {
     };
   }, [user?.id]);
 
-  const refreshFromRealtime = useCallback(() => {
-    if (isOnline) fetchGroups(true, true);
-  }, [fetchGroups, isOnline]);
+  // Group metadata changes (name, avatar, members) — refetch once.
+  useRealtimeTopic('groups', () => { if (isOnline) fetchGroups(true, true); }, Boolean(user?.id));
+  useRealtimeTopic('groupMembers', () => { if (isOnline) fetchGroups(true, true); }, Boolean(user?.id));
 
-  useRealtimeTopic('messages', refreshFromRealtime, Boolean(user?.id && isOnline));
-  useRealtimeTopic('groups', refreshFromRealtime, Boolean(user?.id && isOnline));
-  useRealtimeTopic('groupMembers', refreshFromRealtime, Boolean(user?.id && isOnline));
+  // ---------------------------------------------------------------------------
+  // Realtime: uses the global hub dispatch (subscribeToMessageRows) — the same
+  // proven channel that useChatRoomRealtime relies on as its backup source.
+  // Row-by-row state updates — never a full refetch, so no blink.
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (!user?.id) return;
+
+    console.log('[chatlist-groups] subscribeToMessageRows attached for', user.id);
+
+    return subscribeToMessageRows((row, event) => {
+      if (event !== 'INSERT') return;
+      const groupId = row.group_id as string | undefined;
+      if (!groupId) return;
+      const senderId = row.sender_id as string | undefined;
+      if (!senderId) return;
+
+      const content = String(row.content ?? '');
+      const createdAt = String(row.created_at ?? new Date().toISOString());
+      const isIncoming = senderId !== user.id;
+
+      console.log('[chatlist-groups] message event INSERT', {
+        groupId,
+        direction: isIncoming ? 'incoming' : 'outgoing',
+        content: content.slice(0, 30),
+      });
+
+      setGroups((prev) => {
+        const idx = prev.findIndex((g) => g.id === groupId);
+        if (idx < 0) {
+          console.log('[chatlist-groups] group not in list, fetching…');
+          void fetchGroups(true, true);
+          return prev;
+        }
+        const next = [...prev];
+        const updated = {
+          ...next[idx],
+          last_message: content,
+          last_message_at: createdAt,
+          unread_count: isIncoming
+            ? (next[idx].unread_count || 0) + 1
+            : next[idx].unread_count,
+        };
+        next.splice(idx, 1);
+        console.log('[chatlist-groups] updated group', next[0]?.name ?? groupId);
+        return [updated, ...next];
+      });
+    });
+  }, [user?.id, fetchGroups]);
 
   // -----------------------
   // Search filter (client-side)

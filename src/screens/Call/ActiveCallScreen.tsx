@@ -23,6 +23,9 @@ import {
 } from './callVideoSignaling';
 import { useVideoCallNegotiation } from './useVideoCallNegotiation';
 import { VideoRequestOverlay } from './VideoRequestOverlay';
+import { AddCallParticipantModal } from '../../components/AddCallParticipantModal';
+import { CallParticipantGrid } from './CallParticipantGrid';
+import type { CallTileParticipant } from './callGridUtils';
 
 type Params = {
   call: CallDTO;
@@ -511,6 +514,12 @@ function CallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
   const [muted, setMuted] = useState(false);
   const [duration, setDuration] = useState(0);
   const [callEnded, setCallEnded] = useState(false);
+  const [showAddParticipant, setShowAddParticipant] = useState(false);
+  const [myAuthId, setMyAuthId] = useState<string | null>(null);
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setMyAuthId(data.user?.id ?? null));
+  }, []);
 
   useEffect(() => {
     const start = Date.now();
@@ -585,6 +594,12 @@ function CallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <StatusBar barStyle="light-content" backgroundColor="#000" />
+      <AddCallParticipantModal
+        visible={showAddParticipant}
+        call={call}
+        onClose={() => setShowAddParticipant(false)}
+        onInvited={() => undefined}
+      />
       <LiveKitRoom
         serverUrl={url}
         token={token}
@@ -598,6 +613,8 @@ function CallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
         }}
       >
         <RoomBody
+          call={call}
+          myAuthId={myAuthId}
           callType={call.call_type}
           peerName={peerName}
           peerAvatar={peerAvatar}
@@ -607,6 +624,7 @@ function CallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
             setMuted((m) => !m);
           }}
           onEnd={() => finishCall(true)}
+          onAddParticipant={() => setShowAddParticipant(true)}
           useTracks={useTracks}
           VideoTrack={VideoTrack}
           Track={Track}
@@ -619,6 +637,8 @@ function CallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
 }
 
 function RoomBody(props: {
+  call: CallDTO;
+  myAuthId: string | null;
   callType: 'voice' | 'video';
   peerName: string;
   peerAvatar: string | null;
@@ -626,6 +646,7 @@ function RoomBody(props: {
   muted: boolean;
   onToggleMute: () => Promise<void>;
   onEnd: () => void;
+  onAddParticipant: () => void;
   useTracks: (kinds?: unknown[]) => Array<{
     participant: { identity: string; isLocal: boolean };
     publication?: { trackSid?: string };
@@ -648,6 +669,33 @@ function RoomBody(props: {
   const room = useRoomContext();
   const startedAsVideo = props.callType === 'video';
   const handleSignalRef = React.useRef<(signal: CallVideoSignal) => void>(() => undefined);
+  const [participantProfiles, setParticipantProfiles] = useState<
+    Map<string, { display_name: string; avatar_url: string | null }>
+  >(new Map());
+
+  useEffect(() => {
+    if (!props.call.id) return;
+    let alive = true;
+    const load = async () => {
+      try {
+        const { participants } = await api.calls.participants(props.call.id);
+        if (!alive) return;
+        const map = new Map<string, { display_name: string; avatar_url: string | null }>();
+        participants.forEach((p) => {
+          map.set(p.user_id, { display_name: p.display_name, avatar_url: p.avatar_url });
+        });
+        setParticipantProfiles(map);
+      } catch {
+        /* ignore */
+      }
+    };
+    void load();
+    const t = setInterval(() => void load(), 5000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [props.call.id]);
 
   const publishSignal = React.useCallback(
     (signal: CallVideoSignal) => {
@@ -718,8 +766,61 @@ function RoomBody(props: {
   }, [room]);
 
   const cameraTracks = useTracks([Track.Source.Camera]);
-  const remoteVideo = cameraTracks.find((t) => !t.participant.isLocal);
+  const remoteTracks = cameraTracks.filter((t) => !t.participant.isLocal);
   const localVideo = cameraTracks.find((t) => t.participant.isLocal);
+  const remoteVideo = remoteTracks[0];
+
+  const joinedCount = Math.max(participantProfiles.size, remoteTracks.length + 1);
+  const isMultiParty =
+    props.call.scope === 'group' ||
+    Boolean((props.call.metadata as { multi_party?: boolean } | null)?.multi_party) ||
+    joinedCount > 2;
+
+  const gridParticipants: CallTileParticipant[] = React.useMemo(() => {
+    if (!isMultiParty) return [];
+    const tiles: CallTileParticipant[] = [];
+    const trackByIdentity = new Map(
+      cameraTracks.map((t) => [t.participant.identity, t])
+    );
+    for (const [uid, prof] of participantProfiles) {
+      if (uid === props.myAuthId) continue;
+      const track = trackByIdentity.get(uid);
+      tiles.push({
+        identity: uid,
+        name: prof.display_name,
+        avatarUrl: prof.avatar_url,
+        hasVideo: sharedVideo && !!track,
+      });
+    }
+    if (props.myAuthId && sharedVideo && videoEnabled) {
+      tiles.push({
+        identity: props.myAuthId,
+        name: 'You',
+        avatarUrl: null,
+        isLocal: true,
+        hasVideo: !!localVideo,
+      });
+    }
+    return tiles.length > 0 ? tiles : [
+      {
+        identity: 'peer',
+        name: props.peerName,
+        avatarUrl: props.peerAvatar,
+        hasVideo: sharedVideo && !!remoteVideo,
+      },
+    ];
+  }, [
+    isMultiParty,
+    participantProfiles,
+    cameraTracks,
+    props.myAuthId,
+    props.peerName,
+    props.peerAvatar,
+    sharedVideo,
+    videoEnabled,
+    localVideo,
+    remoteVideo,
+  ]);
 
   const toggleMute = async () => {
     await localParticipant.setMicrophoneEnabled(props.muted /* will become unmuted */);
@@ -748,7 +849,15 @@ function RoomBody(props: {
         onDecline={negotiation.declineIncomingVideo}
       />
       <View style={styles.remoteWrap}>
-        {sharedVideo && remoteVideo ? (
+        {isMultiParty ? (
+          <CallParticipantGrid
+            participants={gridParticipants}
+            renderVideo={(p, style) => {
+              const track = cameraTracks.find((t) => t.participant.identity === p.identity);
+              return track ? <VideoTrack trackRef={track} style={style} /> : null;
+            }}
+          />
+        ) : sharedVideo && remoteVideo ? (
           <VideoTrack trackRef={remoteVideo} style={styles.remoteVideo} />
         ) : (
           <View style={styles.audioOnly}>
@@ -763,7 +872,7 @@ function RoomBody(props: {
             )}
             <Text style={styles.peerCallName}>{props.peerName}</Text>
             <Text style={styles.statusText}>
-              {sharedVideo ? 'Connecting…' : 'On call'}
+              {sharedVideo ? 'Connecting…' : isMultiParty ? 'Group call' : 'On call'}
             </Text>
             {sharedVideo && !startedAsVideo && videoEnabled && (
               <Text style={styles.revertHint}>Tap camera to switch back to voice</Text>
@@ -771,7 +880,7 @@ function RoomBody(props: {
           </View>
         )}
 
-        {sharedVideo && localVideo && videoEnabled && (
+        {!isMultiParty && sharedVideo && localVideo && videoEnabled && (
           <View style={styles.pip}>
             <VideoTrack trackRef={localVideo} style={styles.pipVideo} />
           </View>
@@ -798,6 +907,9 @@ function RoomBody(props: {
             size={26}
             color="#fff"
           />
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.ctrlBtn} onPress={props.onAddParticipant}>
+          <Ionicons name="person-add" size={24} color="#fff" />
         </TouchableOpacity>
         <TouchableOpacity style={[styles.ctrlBtn, styles.endBtn]} onPress={hangup}>
           <Ionicons

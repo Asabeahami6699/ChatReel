@@ -42,7 +42,7 @@ export function unregisterBeforeChatNavigate() {
   beforeChatNavigate = null;
 }
 
-function isWebDesktopLayout(): boolean {
+export function isWebDesktopLayout(): boolean {
   return (
     Platform.OS === 'web' &&
     typeof window !== 'undefined' &&

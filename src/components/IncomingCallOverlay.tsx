@@ -19,13 +19,27 @@ export function IncomingCallOverlay() {
   } | null>(null);
 
   useEffect(() => {
-    if (!incoming || incoming.scope !== 'direct') {
+    if (!incoming) {
       setPeer(null);
       return;
     }
     let alive = true;
     supabase.auth.getUser().then(async ({ data: meRes }) => {
       const myAuth = meRes.user?.id;
+      if (incoming.scope === 'group' && incoming.group_id) {
+        try {
+          const { group } = await api.groups.get(incoming.group_id);
+          if (!alive) return;
+          const g = group as { name?: string; avatar_url?: string | null };
+          setPeer({
+            display_name: g.name?.trim() || 'Group call',
+            avatar_url: g.avatar_url ?? null,
+          });
+        } catch {
+          if (alive) setPeer({ display_name: 'Group call', avatar_url: null });
+        }
+        return;
+      }
       const otherAuth =
         incoming.caller_id === myAuth ? incoming.callee_id : incoming.caller_id;
       if (!otherAuth) return;
@@ -47,7 +61,7 @@ export function IncomingCallOverlay() {
     };
   }, [incoming]);
 
-  const visible = !!incoming && incoming.status === 'ringing';
+  const visible = !!incoming && (incoming.status === 'ringing' || incoming.status === 'accepted');
 
   return (
     <Modal

@@ -312,35 +312,37 @@ export default function CallsScreen() {
     });
   }, [myAuthId]);
 
-  const renderQuickContactHorizontal = (contact: QuickContact) => (
-    <View key={`h-${contact.key}`} style={styles.quickCardHorizontal}>
+  const renderQuickContactVertical = (contact: QuickContact) => (
+    <View key={`v-${contact.key}`} style={styles.quickCardVertical}>
       <Pressable
-        style={styles.quickAvatarWrap}
+        style={styles.quickAvatarWrapVertical}
         onPress={() => openChatForContact(contact)}
       >
         {contact.avatar ? (
-          <Image source={{ uri: contact.avatar }} style={styles.quickAvatar} />
+          <Image source={{ uri: contact.avatar }} style={styles.quickAvatarVertical} />
         ) : (
-          <View style={[styles.quickAvatar, styles.avatarFallback]}>
+          <View style={[styles.quickAvatarVertical, styles.avatarFallback]}>
             <Text style={styles.avatarFallbackText}>{contact.name.charAt(0).toUpperCase()}</Text>
           </View>
         )}
       </Pressable>
-      <Text style={styles.quickNameHorizontal} numberOfLines={1}>
+      <Text style={styles.quickNameVertical} numberOfLines={2}>
         {contact.name.split(' ')[0]}
       </Text>
-      <TouchableOpacity
-        style={styles.quickActionBtn}
-        onPress={() => void startCall(contact, 'voice')}
-      >
-        <Ionicons name="call" size={16} color="#1976d2" />
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={styles.quickActionBtn}
-        onPress={() => void startCall(contact, 'video')}
-      >
-        <Ionicons name="videocam" size={16} color="#34c759" />
-      </TouchableOpacity>
+      <View style={styles.quickActionsVertical}>
+        <TouchableOpacity
+          style={[styles.quickActionBtnVertical, styles.quickVoiceBtn]}
+          onPress={() => void startCall(contact, 'voice')}
+        >
+          <Ionicons name="call" size={18} color="#fff" />
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.quickActionBtnVertical, styles.quickVideoBtn]}
+          onPress={() => void startCall(contact, 'video')}
+        >
+          <Ionicons name="videocam" size={18} color="#fff" />
+        </TouchableOpacity>
+      </View>
     </View>
   );
 
@@ -456,11 +458,10 @@ export default function CallsScreen() {
             {calls.length > 0 ? 'Quick dial' : 'Call a friend'}
           </Text>
           <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.quickScroll}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.quickScrollVertical}
           >
-            {quickContacts.map(renderQuickContactHorizontal)}
+            {quickContacts.map(renderQuickContactVertical)}
           </ScrollView>
         </View>
       )}
@@ -632,6 +633,46 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     marginBottom: 10,
   },
+  quickScrollVertical: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: 16,
+    gap: 12,
+    paddingBottom: 8,
+  },
+  quickCardVertical: {
+    width: 88,
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  quickAvatarWrapVertical: { marginBottom: 6 },
+  quickAvatarVertical: { width: 52, height: 52, borderRadius: 26 },
+  quickNameVertical: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#111',
+    textAlign: 'center',
+    marginBottom: 8,
+    minHeight: 28,
+  },
+  quickActionsVertical: { gap: 6, alignItems: 'center' },
+  quickActionBtnVertical: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quickVoiceBtn: { backgroundColor: '#1976d2' },
+  quickVideoBtn: { backgroundColor: '#34c759' },
   quickScroll: {
     flexDirection: 'row',
     alignItems: 'center',

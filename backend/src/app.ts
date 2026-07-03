@@ -18,6 +18,7 @@ import reelsRoutes from './routes/reels.routes';
 import callsRoutes from './routes/calls.routes';
 import momentsRoutes from './routes/moments.routes';
 import chatSettingsRoutes from './routes/chat-settings.routes';
+import linkPreviewRoutes from './routes/linkpreview.routes';
 
 export function createApp() {
   const app = express();
@@ -51,6 +52,7 @@ export function createApp() {
   app.use('/api/calls', callsRoutes);
   app.use('/api/moments', momentsRoutes);
   app.use('/api/chat-settings', chatSettingsRoutes);
+  app.use('/api/link-preview', linkPreviewRoutes);
 
   app.use(errorHandler);
 

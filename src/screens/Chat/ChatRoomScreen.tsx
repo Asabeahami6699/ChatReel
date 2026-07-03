@@ -48,6 +48,8 @@ import { ensureSupabaseSession } from '../../lib/ensureSupabaseSession';
 import { useChatTyping } from '../../hooks/useChatTyping';
 import { usePartnerPresence } from '../../hooks/usePartnerPresence';
 import { setStringAsync } from '../../lib/clipboard';
+import { GroupCallBanner } from '../../components/GroupCallBanner';
+import { useActiveGroupCall } from '../../hooks/useActiveGroupCall';
 import { ChatSearchOverlay } from './ChatSearchOverlay';
 import { MessageActionSheet, type MessageAction } from './MessageActionSheet';
 import { ReplyPreviewBar } from './ReplyPreviewBar';
@@ -91,6 +93,10 @@ export default function ChatRoomScreen() {
   const avatarUrl = params.avatarUrl;
   const hasNetwork = useNetworkStatus();
   const isOnline = hasNetwork;
+  const activeGroupCall = useActiveGroupCall(
+    chatType === 'group' ? chatId : undefined,
+    chatType === 'group'
+  );
 
   const insets = useSafeAreaInsets();
   const { theme } = useChatSettings();
@@ -1683,6 +1689,26 @@ export default function ChatRoomScreen() {
     [chatId, chatType, navigation, user?.id]
   );
 
+  const joinGroupCall = useCallback(async () => {
+    const call = activeGroupCall.call;
+    if (!call) return;
+    try {
+      const { call: accepted, live_kit } = await api.calls.accept(call.id);
+      const { replaceWithActiveCall } = await import('../../navigation/rootNavigation');
+      replaceWithActiveCall({
+        call: accepted,
+        token: live_kit.token,
+        url: live_kit.url,
+      });
+    } catch (err) {
+      const message =
+        err && typeof err === 'object' && 'message' in err
+          ? (err as { message: string }).message
+          : 'Could not join call';
+      Alert.alert('Call', String(message));
+    }
+  }, [activeGroupCall.call]);
+
   const menuItems: MenuItem[] = useMemo(() => {
     const items = [
       {
@@ -1898,6 +1924,14 @@ export default function ChatRoomScreen() {
           <ChatMenuDropdown items={menuItems} />
         </View>
       </View>
+
+      {chatType === 'group' && activeGroupCall.canJoin && activeGroupCall.call && (
+        <GroupCallBanner
+          call={activeGroupCall.call}
+          joinedCount={activeGroupCall.joinedCount}
+          onJoin={() => void joinGroupCall()}
+        />
+      )}
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}

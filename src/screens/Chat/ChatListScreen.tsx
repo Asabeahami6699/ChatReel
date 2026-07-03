@@ -47,6 +47,7 @@ import {
   type ChatListEntryKind,
 } from '../../lib/chatListHidden'
 import { messageStorage } from '../../utils/messageStorage'
+import { useAppBadge } from '../../hooks/useAppBadge'
 
 type Props = { setSelectedChat?: (chat: any) => void }
 
@@ -220,6 +221,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
   )
 
   const totalUnreadCount = individualUnreadCount + groupUnreadCount
+  useAppBadge(totalUnreadCount)
 
   const getTabBadgeCount = useCallback(
     (tabKey: string) => {
@@ -444,20 +446,6 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
   }, [individualChats, groupChats])
 
   const handleTabPress = (newIndex: number) => {
-    const routeKey = routes[newIndex].key
-
-    if (routeKey === 'friends') {
-      setIndividualUnreadCount(0)
-    } else if (routeKey === 'group') {
-      setGroupUnreadCount(0)
-    } else if (routeKey === 'requests') {
-      setRequestsUnreadCount(0)
-    } else if (routeKey === 'all') {
-      setIndividualUnreadCount(0)
-      setGroupUnreadCount(0)
-      setRequestsUnreadCount(0)
-    }
-
     setIndex(newIndex)
   }
 

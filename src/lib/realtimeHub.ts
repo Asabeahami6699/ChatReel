@@ -258,6 +258,19 @@ function startAuxChannels(authUserId: string, profileId: string | null) {
     { event: '*', schema: 'public', table: 'moment_views' },
     () => realtimeTopics.momentViews.notify()
   );
+
+  // Group read receipts — refresh chat list unread badges when messages are marked read.
+  startAuxChannel(
+    'message-reads',
+    authUserId,
+    { event: '*', schema: 'public', table: 'message_reads' },
+    (payload) => {
+      const row = (payload.new ?? payload.old) as { user_id?: string } | undefined;
+      if (row?.user_id === authUserId) {
+        realtimeTopics.messages.notifyImmediate();
+      }
+    }
+  );
 }
 
 export function stopRealtimeHub() {
