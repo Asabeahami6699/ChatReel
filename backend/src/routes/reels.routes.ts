@@ -106,7 +106,9 @@ router.get(
       targetCount: 120,
     });
 
-    const ranked = await recommendReelsForUser(profileId, candidates, { limit: 20 });
+    const ranked = await recommendReelsForUser(profileId, candidates, {
+      limit: Math.min(limit * 2, 30),
+    });
     const page = ranked.slice(0, limit);
     const enriched = await enrichReels(page, profileId);
     const nextCursor = ranked.length > limit ? ranked[limit - 1].created_at : null;

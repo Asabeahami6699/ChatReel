@@ -617,37 +617,48 @@ export function applyDiversityRules(
 }
 
 function pickWithCreatorCap(pool: ScoredReel[], limit: number): ScoredReel[] {
+  const cap = Math.max(0, Math.min(limit, pool.length));
+  if (cap === 0) return [];
+
   const picked: ScoredReel[] = [];
   const deferred: ScoredReel[] = [];
   const consecutive = new Map<string, number>();
 
-  const canAdd = (authorId: string) => (consecutive.get(authorId) ?? 0) < MAX_CONSECUTIVE_SAME_CREATOR;
+  const canAdd = (authorId: string) =>
+    (consecutive.get(authorId) ?? 0) < MAX_CONSECUTIVE_SAME_CREATOR;
 
-  const flush = (item: ScoredReel) => {
+  const addPicked = (item: ScoredReel) => {
     const aid = item.reel.author_id;
-    if (!canAdd(aid)) {
-      deferred.push(item);
-      return false;
-    }
     picked.push(item);
     for (const key of consecutive.keys()) {
       if (key !== aid) consecutive.set(key, 0);
     }
     consecutive.set(aid, (consecutive.get(aid) ?? 0) + 1);
-    return true;
   };
 
   for (const item of pool) {
-    if (picked.length >= limit) break;
-    flush(item);
+    if (picked.length >= cap) break;
+    const aid = item.reel.author_id;
+    if (!canAdd(aid)) {
+      deferred.push(item);
+      continue;
+    }
+    addPicked(item);
   }
 
+  // Second pass: never re-queue deferred items (that caused unbounded growth / OOM).
   for (const item of deferred) {
-    if (picked.length >= limit) break;
-    if (!picked.some((p) => p.reel.id === item.reel.id)) flush(item);
+    if (picked.length >= cap) break;
+    if (picked.some((p) => p.reel.id === item.reel.id)) continue;
+    if (canAdd(item.reel.author_id)) {
+      addPicked(item);
+      continue;
+    }
+    // Relax creator cap slightly so small pools still fill the page.
+    addPicked(item);
   }
 
-  return picked.slice(0, limit);
+  return picked.slice(0, cap);
 }
 
 /** Main entry: rank candidates and return top N reel rows. */
