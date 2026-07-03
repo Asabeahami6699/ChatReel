@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
-import { env, getCorsOriginOption } from './config/env';
+import { env, getCorsMiddlewareOptions } from './config/env';
 import { errorHandler } from './middleware/errorHandler';
 import authRoutes from './routes/auth.routes';
 import profilesRoutes from './routes/profiles.routes';
@@ -22,11 +22,12 @@ import chatSettingsRoutes from './routes/chat-settings.routes';
 export function createApp() {
   const app = express();
 
-  app.use(helmet());
+  const corsOptions = getCorsMiddlewareOptions();
+  app.use(cors(corsOptions));
+  app.options('*', cors(corsOptions));
   app.use(
-    cors({
-      origin: getCorsOriginOption(),
-      credentials: true,
+    helmet({
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
     })
   );
   app.use(express.json({ limit: '25mb' }));

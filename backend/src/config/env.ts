@@ -35,12 +35,57 @@ export function isLiveKitConfigured(): boolean {
   return Boolean(env.liveKit.apiKey && env.liveKit.apiSecret && env.liveKit.url);
 }
 
-/** CORS origin option for the cors middleware (supports * or comma-separated list). */
+const DEFAULT_CORS_ORIGINS = [
+  'https://chat-reel.vercel.app',
+  'http://localhost:8081',
+  'http://localhost:19006',
+  'http://127.0.0.1:8081',
+  'http://127.0.0.1:19006',
+];
+
+function normalizeOrigin(origin: string): string {
+  return origin.trim().replace(/\/$/, '');
+}
+
+function buildAllowedOrigins(): Set<string> {
+  const set = new Set(DEFAULT_CORS_ORIGINS);
+  if (env.corsOrigin !== '*') {
+    for (const part of env.corsOrigin.split(',')) {
+      const o = normalizeOrigin(part);
+      if (o) set.add(o);
+    }
+  }
+  return set;
+}
+
+function isAllowedOrigin(origin: string | undefined, allowed: Set<string>): boolean {
+  if (!origin) return true;
+  const normalized = normalizeOrigin(origin);
+  if (allowed.has(normalized)) return true;
+  // Vercel preview deployments: https://chat-reel-<hash>.vercel.app
+  if (/^https:\/\/[\w-]+\.vercel\.app$/i.test(normalized)) return true;
+  return env.corsOrigin === '*';
+}
+
+/** CORS origin callback — supports *, comma-separated list, and Vercel previews. */
 export function getCorsOriginOption(): CorsOptions['origin'] {
-  if (env.corsOrigin === '*') return true;
-  const allowed = env.corsOrigin
-    .split(',')
-    .map((o) => o.trim().replace(/\/$/, ''))
-    .filter(Boolean);
-  return allowed.length === 1 ? allowed[0] : allowed;
+  const allowed = buildAllowedOrigins();
+  return (origin, callback) => {
+    if (isAllowedOrigin(origin, allowed)) {
+      callback(null, true);
+    } else {
+      console.warn('[CORS] Blocked origin:', origin);
+      callback(new Error(`CORS not allowed for origin: ${origin}`));
+    }
+  };
+}
+
+export function getCorsMiddlewareOptions(): CorsOptions {
+  return {
+    origin: getCorsOriginOption(),
+    credentials: true,
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+    optionsSuccessStatus: 204,
+  };
 }
