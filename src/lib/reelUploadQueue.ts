@@ -175,27 +175,27 @@ async function processOne(item: { id: string; draft: ReelUploadDraft }) {
 
   updateTask(id, { status: 'uploading', stage: 'Uploading video...', progress: 5 });
 
-  const videoUrl = await uploadReelVideo({
+  const videoPromise = uploadReelVideo({
     uri: video.uri,
     fileName: video.fileName,
     contentType: video.mime,
     onProgress: (loaded, total) => {
       if (total > 0) {
-        const pct = 5 + (loaded / total) * 75;
+        const pct = 5 + (loaded / total) * 70;
         setProgress(id, pct, 'Uploading video...');
       }
     },
   });
 
-  let thumbnailUrl: string | undefined;
-  if (thumbUri) {
-    setProgress(id, 82, 'Uploading thumbnail...');
-    try {
-      thumbnailUrl = await uploadReelThumbnail({ uri: thumbUri });
-    } catch {
-      thumbnailUrl = undefined;
-    }
-  }
+  const thumbPromise = thumbUri
+    ? uploadReelThumbnail({ uri: thumbUri })
+        .then((url) => url)
+        .catch(() => undefined)
+    : Promise.resolve<string | undefined>(undefined);
+
+  if (thumbUri) setProgress(id, 78, 'Uploading video & thumbnail...');
+
+  const [videoUrl, thumbnailUrl] = await Promise.all([videoPromise, thumbPromise]);
 
   setProgress(id, 90, 'Publishing reel...');
   updateTask(id, { status: 'publishing' });

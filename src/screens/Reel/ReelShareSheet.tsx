@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import {
   Alert,
+  Image,
   Linking,
   Platform,
+  ScrollView,
   Share,
   StyleSheet,
   Text,
@@ -14,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { api, ApiError, type ReelDTO } from '../../lib/api';
 import { downloadReelVideo } from '../../lib/downloadReel';
 import { config } from '../../lib/config';
+import { getReelGridThumbnail } from '../../lib/reelThumbnails';
 import ShareReelToChatSheet from './ShareReelToChatSheet';
 import {
   CaptionChoiceModal,
@@ -43,6 +46,7 @@ export default function ReelShareSheet({ reel, onClose }: Props) {
   const [postingMoment, setPostingMoment] = useState(false);
   const [captionModalOpen, setCaptionModalOpen] = useState(false);
   const link = buildShareUrl(reel.id);
+  const thumb = getReelGridThumbnail(reel);
   const shareMessage = reel.caption
     ? `${reel.caption}\n${link}`
     : `Check out this reel ${link}`;
@@ -134,23 +138,43 @@ export default function ReelShareSheet({ reel, onClose }: Props) {
     <View style={styles.container}>
       <View style={styles.handle} />
       <View style={styles.header}>
-        <Text style={styles.title}>Share</Text>
+        <Text style={styles.title}>Share reel</Text>
         <TouchableOpacity onPress={onClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
           <Ionicons name="close" size={24} color="#fff" />
         </TouchableOpacity>
       </View>
 
-      <View style={styles.linkRow}>
-        <Text style={styles.linkText} numberOfLines={1}>
-          {link}
-        </Text>
-        <TouchableOpacity onPress={copyLink} style={styles.copyButton}>
-          <Ionicons name={copied ? 'checkmark' : 'copy-outline'} size={18} color="#fff" />
-          <Text style={styles.copyText}>{copied ? 'Copied' : 'Copy'}</Text>
-        </TouchableOpacity>
-      </View>
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        <View style={styles.previewCard}>
+          {thumb ? (
+            <Image source={{ uri: thumb }} style={styles.previewImage} />
+          ) : (
+            <View style={[styles.previewImage, styles.previewPlaceholder]}>
+              <Ionicons name="film-outline" size={32} color="#666" />
+            </View>
+          )}
+          <View style={styles.previewBody}>
+            <Text style={styles.previewTitle} numberOfLines={2}>
+              {reel.caption?.trim() || 'Watch this reel on ChatReel'}
+            </Text>
+            <Text style={styles.previewSub} numberOfLines={1}>
+              {link}
+            </Text>
+          </View>
+        </View>
 
-      <View style={styles.grid}>
+        <View style={styles.linkRow}>
+          <Text style={styles.linkText} numberOfLines={1}>
+            {link}
+          </Text>
+          <TouchableOpacity onPress={copyLink} style={styles.copyButton}>
+            <Ionicons name={copied ? 'checkmark' : 'copy-outline'} size={18} color="#fff" />
+            <Text style={styles.copyText}>{copied ? 'Copied' : 'Copy'}</Text>
+          </TouchableOpacity>
+        </View>
+
+        <Text style={styles.sectionLabel}>Share to</Text>
+        <View style={styles.grid}>
         <TouchableOpacity style={styles.shareButton} onPress={() => setChatOpen(true)}>
           <View style={[styles.iconCircle, { backgroundColor: '#0ea5e9' }]}>
             <Ionicons name="chatbubble-outline" size={28} color="#fff" />
@@ -226,7 +250,8 @@ export default function ReelShareSheet({ reel, onClose }: Props) {
           </View>
           <Text style={styles.label}>{downloading ? 'Saving…' : 'Download'}</Text>
         </TouchableOpacity>
-      </View>
+        </View>
+      </ScrollView>
 
       <CaptionChoiceModal
         visible={captionModalOpen}
@@ -241,6 +266,32 @@ export default function ReelShareSheet({ reel, onClose }: Props) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#111' },
+  scrollContent: { paddingBottom: 24 },
+  previewCard: {
+    flexDirection: 'row',
+    marginHorizontal: 16,
+    marginTop: 12,
+    backgroundColor: '#1a1a1a',
+    borderRadius: 14,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#2a2a2a',
+  },
+  previewImage: { width: 88, height: 110, backgroundColor: '#222' },
+  previewPlaceholder: { alignItems: 'center', justifyContent: 'center' },
+  previewBody: { flex: 1, padding: 12, justifyContent: 'center' },
+  previewTitle: { color: '#fff', fontWeight: '700', fontSize: 14, lineHeight: 20 },
+  previewSub: { color: '#888', fontSize: 11, marginTop: 6 },
+  sectionLabel: {
+    color: '#888',
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginHorizontal: 20,
+    marginTop: 8,
+    marginBottom: 4,
+  },
   handle: {
     width: 40,
     height: 4,
@@ -278,7 +329,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   copyText: { color: '#fff', fontWeight: '600', marginLeft: 4 },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', padding: 20, justifyContent: 'space-around' },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 20, paddingTop: 8, justifyContent: 'space-around' },
   shareButton: { alignItems: 'center', width: '25%', marginBottom: 20 },
   iconCircle: {
     width: 60,

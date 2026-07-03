@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { api, ApiError, type ReelAuthorDTO, type ReelDTO } from '../../lib/api';
+import { getReelGridThumbnail, splitCaptionHighlight } from '../../lib/reelThumbnails';
 import type { ReelsStackParamList } from '../../navigation/reelsNavigation';
 import { reelTabBarOffset } from './ReelsTabBar';
 
@@ -80,8 +81,12 @@ export default function ReelSearchScreen() {
   const videoRows = showVideos ? reels : [];
   const userRows = showUsers ? profiles : [];
 
-  const openReel = (reel: ReelDTO) => {
-    navigation.navigate('ReelDetail', { reelId: reel.id });
+  const openReel = (reel: ReelDTO, index: number) => {
+    navigation.navigate('ReelDetail', {
+      reelId: reel.id,
+      contextReels: reels,
+      initialIndex: index,
+    });
   };
 
   const openCreator = (p: ProfileRow) => {
@@ -142,7 +147,7 @@ export default function ReelSearchScreen() {
       ) : (
         <FlatList
           data={[
-            ...videoRows.map((r) => ({ kind: 'video' as const, key: `v-${r.id}`, reel: r })),
+            ...videoRows.map((r, i) => ({ kind: 'video' as const, key: `v-${r.id}`, reel: r, videoIndex: i })),
             ...userRows.map((p) => ({ kind: 'user' as const, key: `u-${p.id}`, profile: p })),
           ]}
           keyExtractor={(item) => item.key}
@@ -162,10 +167,16 @@ export default function ReelSearchScreen() {
           renderItem={({ item }) => {
             if (item.kind === 'video') {
               const reel = item.reel;
-              const thumb = reel.thumbnail_url;
+              const thumb = getReelGridThumbnail(reel);
               const author = reel.author;
+              const caption = reel.caption?.trim() || 'Reel video';
+              const parts = splitCaptionHighlight(caption, query.trim());
               return (
-                <TouchableOpacity style={styles.videoRow} onPress={() => openReel(reel)} activeOpacity={0.85}>
+                <TouchableOpacity
+                  style={styles.videoRow}
+                  onPress={() => openReel(reel, item.videoIndex)}
+                  activeOpacity={0.85}
+                >
                   {thumb ? (
                     <Image source={{ uri: thumb }} style={styles.videoThumb} />
                   ) : (
@@ -175,7 +186,11 @@ export default function ReelSearchScreen() {
                   )}
                   <View style={styles.videoBody}>
                     <Text style={styles.videoCaption} numberOfLines={2}>
-                      {reel.caption?.trim() || 'Reel video'}
+                      {parts.map((p, i) => (
+                        <Text key={i} style={p.match ? styles.captionMatch : undefined}>
+                          {p.text}
+                        </Text>
+                      ))}
                     </Text>
                     <Text style={styles.videoMeta}>
                       @{author?.display_name?.trim() || author?.email?.split('@')[0] || 'creator'}
@@ -271,6 +286,7 @@ const styles = StyleSheet.create({
   thumbPlaceholder: { alignItems: 'center', justifyContent: 'center' },
   videoBody: { flex: 1 },
   videoCaption: { color: '#fff', fontSize: 14, fontWeight: '600' },
+  captionMatch: { backgroundColor: 'rgba(30,144,255,0.35)', fontWeight: '800' },
   videoMeta: { color: '#888', fontSize: 12, marginTop: 4 },
   userRow: {
     flexDirection: 'row',

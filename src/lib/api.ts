@@ -53,9 +53,11 @@ export type ReelCommentDTO = {
   id: string;
   reel_id: string;
   user_id: string;
+  parent_id?: string | null;
   content: string;
   created_at: string;
   author: ReelAuthorDTO | null;
+  reply_count?: number;
 };
 
 export type ReelInboxItemDTO = {
@@ -547,10 +549,10 @@ export const api = {
         `/api/reels/${id}/comments${qs ? `?${qs}` : ''}`
       );
     },
-    postComment: (id: string, content: string) =>
+    postComment: (id: string, content: string, parentId?: string) =>
       apiRequest<{ comment: ReelCommentDTO }>(`/api/reels/${id}/comments`, {
         method: 'POST',
-        body: { content },
+        body: { content, ...(parentId ? { parent_id: parentId } : {}) },
       }),
     deleteComment: (commentId: string) =>
       apiRequest<{ success: boolean }>(`/api/reels/comments/${commentId}`, {

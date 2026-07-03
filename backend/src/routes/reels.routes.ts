@@ -319,8 +319,25 @@ router.get(
     if (reelsRes.error) return res.status(500).json({ error: reelsRes.error.message });
     if (profilesRes.error) return res.status(500).json({ error: profilesRes.error.message });
 
+    const profileIds = (profilesRes.data ?? []).map((p) => p.id as string);
+    let authorReels: ReelRow[] = [];
+    if (profileIds.length) {
+      const { data: byAuthor, error: authorErr } = await supabaseAdmin
+        .from('reels')
+        .select('*')
+        .in('author_id', profileIds)
+        .order('created_at', { ascending: false })
+        .limit(24);
+      if (authorErr) return res.status(500).json({ error: authorErr.message });
+      authorReels = (byAuthor ?? []) as ReelRow[];
+    }
+
+    const mergedById = new Map<string, ReelRow>();
+    for (const row of [...((reelsRes.data ?? []) as ReelRow[]), ...authorReels]) {
+      mergedById.set(row.id, row);
+    }
     const visible = await filterVisibleReels(
-      (reelsRes.data ?? []) as ReelRow[],
+      Array.from(mergedById.values()),
       profileId,
       friendSet,
       req.userId!
@@ -703,7 +720,7 @@ router.get(
     let query = supabaseAdmin
       .from('reel_comments')
       .select(
-        `id, reel_id, user_id, content, created_at,
+        `id, reel_id, user_id, parent_id, content, created_at,
          author:profiles!reel_comments_user_id_fkey(id, user_id, display_name, email, avatar_url)`
       )
       .eq('reel_id', reelId)
@@ -726,7 +743,12 @@ router.post(
   requireAuth,
   asyncHandler(async (req: AuthedRequest, res) => {
     const reelId = z.string().uuid().parse(req.params.id);
-    const body = z.object({ content: z.string().min(1).max(1000) }).parse(req.body);
+    const body = z
+      .object({
+        content: z.string().min(1).max(1000),
+        parent_id: z.string().uuid().optional(),
+      })
+      .parse(req.body);
     const profileId = await getProfileIdByUserId(req.userId!);
     if (!profileId) return res.status(404).json({ error: 'Profile not found' });
 
@@ -741,11 +763,27 @@ router.post(
       return res.status(403).json({ error: 'Not allowed' });
     }
 
+    if (body.parent_id) {
+      const { data: parent } = await supabaseAdmin
+        .from('reel_comments')
+        .select('id, reel_id')
+        .eq('id', body.parent_id)
+        .maybeSingle();
+      if (!parent || parent.reel_id !== reelId) {
+        return res.status(400).json({ error: 'Invalid reply target' });
+      }
+    }
+
     const { data, error } = await supabaseAdmin
       .from('reel_comments')
-      .insert({ reel_id: reelId, user_id: profileId, content: body.content })
+      .insert({
+        reel_id: reelId,
+        user_id: profileId,
+        content: body.content,
+        parent_id: body.parent_id ?? null,
+      })
       .select(
-        `id, reel_id, user_id, content, created_at,
+        `id, reel_id, user_id, parent_id, content, created_at,
          author:profiles!reel_comments_user_id_fkey(id, user_id, display_name, email, avatar_url)`
       )
       .single();

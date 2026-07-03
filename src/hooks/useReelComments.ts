@@ -77,14 +77,16 @@ export function useReelComments(reelId: string | null) {
   }, [reelId, state.cursor]);
 
   const post = useCallback(
-    async (content: string) => {
+    async (content: string, parentId?: string) => {
       if (!reelId || !content.trim()) return null;
       setState((s) => ({ ...s, posting: true }));
       try {
-        const { comment } = await api.reels.postComment(reelId, content.trim());
+        const { comment } = await api.reels.postComment(reelId, content.trim(), parentId);
         setState((s) => ({
           ...s,
-          comments: [comment, ...s.comments.filter((c) => c.id !== comment.id)],
+          comments: parentId
+            ? [...s.comments, comment]
+            : [comment, ...s.comments.filter((c) => c.id !== comment.id)],
           posting: false,
         }));
         return comment;

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Platform, StyleSheet, View } from 'react-native';
-import { Portal, Snackbar, Text, ProgressBar } from 'react-native-paper';
+import { Animated, Platform, StyleSheet, View } from 'react-native';
+import { Portal, Snackbar, Text } from 'react-native-paper';
+import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { subscribeReelUploadQueue, type ReelUploadTask } from '../lib/reelUploadQueue';
 
@@ -13,9 +14,36 @@ function aggregateProgress(tasks: ReelUploadTask[]): number {
   return Math.round(sum / active.length);
 }
 
+function CircularProgress({ progress, size = 44 }: { progress: number; size?: number }) {
+  const pct = Math.max(0, Math.min(100, progress));
+  return (
+    <View style={[styles.circleOuter, { width: size, height: size, borderRadius: size / 2 }]}>
+      <View
+        style={[
+          styles.circleFill,
+          {
+            width: size,
+            height: size,
+            borderRadius: size / 2,
+            borderColor: '#1e90ff',
+            borderTopColor: pct >= 25 ? '#1e90ff' : 'transparent',
+            borderRightColor: pct >= 50 ? '#1e90ff' : 'transparent',
+            borderBottomColor: pct >= 75 ? '#1e90ff' : 'transparent',
+            borderLeftColor: pct >= 100 ? '#1e90ff' : 'transparent',
+          },
+        ]}
+      />
+      <Text style={styles.circleText}>{pct}%</Text>
+    </View>
+  );
+}
+
 export function ReelUploadToast() {
   const insets = useSafeAreaInsets();
   const [tasks, setTasks] = useState<ReelUploadTask[]>([]);
+  const [visible, setVisible] = useState(false);
+  const fade = useRef(new Animated.Value(0)).current;
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [snackbar, setSnackbar] = useState<{ visible: boolean; message: string; isError?: boolean }>({
     visible: false,
     message: '',
@@ -28,7 +56,7 @@ export function ReelUploadToast() {
         const prev = prevStatusRef.current.get(task.id);
         if (prev !== task.status) {
           if (task.status === 'done') {
-            setSnackbar({ visible: true, message: 'Reel posted successfully!', isError: false });
+            setSnackbar({ visible: true, message: 'Reel posted!', isError: false });
           } else if (task.status === 'error') {
             setSnackbar({
               visible: true,
@@ -47,37 +75,58 @@ export function ReelUploadToast() {
     (t) => t.status === 'queued' || t.status === 'uploading' || t.status === 'publishing'
   );
   const progress = aggregateProgress(tasks);
-  const stage = activeTasks[0]?.stage ?? 'Uploading...';
-  const showBanner = activeTasks.length > 0;
+  const stage = activeTasks[0]?.stage ?? 'Uploading…';
+
+  useEffect(() => {
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    if (activeTasks.length > 0) {
+      setVisible(true);
+      Animated.timing(fade, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+      return;
+    }
+    if (visible) {
+      hideTimer.current = setTimeout(() => {
+        Animated.timing(fade, { toValue: 0, duration: 350, useNativeDriver: true }).start(() =>
+          setVisible(false)
+        );
+      }, 1200);
+    }
+    return () => {
+      if (hideTimer.current) clearTimeout(hideTimer.current);
+    };
+  }, [activeTasks.length, fade, visible]);
+
+  const showIndicator = visible && activeTasks.length > 0;
 
   return (
     <Portal>
-      {showBanner && (
-        <View
+      {showIndicator && (
+        <Animated.View
           style={[
-            styles.banner,
-            { bottom: Platform.OS === 'web' ? 16 : insets.bottom + 8 },
+            styles.floatingChip,
+            {
+              bottom: Platform.OS === 'web' ? 24 : insets.bottom + 72,
+              opacity: fade,
+            },
           ]}
           pointerEvents="none"
         >
-          <Text style={styles.bannerText} numberOfLines={1}>
-            {stage}
-            {activeTasks.length > 1 ? ` · ${activeTasks.length} uploads` : ''}
-          </Text>
-          <ProgressBar progress={progress / 100} color="#1e90ff" style={styles.progressBar} />
-          <Text style={styles.percentText}>{progress}%</Text>
-        </View>
+          <CircularProgress progress={progress} />
+          <View style={styles.chipTextWrap}>
+            <Ionicons name="cloud-upload-outline" size={14} color="#1e90ff" />
+            <Text style={styles.chipText} numberOfLines={1}>
+              {stage}
+              {activeTasks.length > 1 ? ` · ${activeTasks.length}` : ''}
+            </Text>
+          </View>
+        </Animated.View>
       )}
 
       <Snackbar
         visible={snackbar.visible}
         onDismiss={() => setSnackbar((s) => ({ ...s, visible: false }))}
-        duration={4000}
+        duration={3000}
         style={snackbar.isError ? styles.snackbarError : styles.snackbarOk}
-        action={{
-          label: 'OK',
-          onPress: () => setSnackbar((s) => ({ ...s, visible: false })),
-        }}
       >
         {snackbar.message}
       </Snackbar>
@@ -86,22 +135,34 @@ export function ReelUploadToast() {
 }
 
 const styles = StyleSheet.create({
-  banner: {
+  floatingChip: {
     position: 'absolute',
-    left: 16,
     right: 16,
-    backgroundColor: 'rgba(20,20,20,0.95)',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: 'rgba(18,18,18,0.94)',
+    borderRadius: 28,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: '#333',
     zIndex: 9999,
     elevation: 8,
+    maxWidth: 220,
   },
-  bannerText: { color: '#fff', fontSize: 13, fontWeight: '600', marginBottom: 6 },
-  progressBar: { height: 4, borderRadius: 2, backgroundColor: '#333' },
-  percentText: { color: '#9eb4c7', fontSize: 11, marginTop: 4, textAlign: 'right' },
+  chipTextWrap: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 },
+  chipText: { color: '#fff', fontSize: 12, fontWeight: '600', flexShrink: 1 },
+  circleOuter: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#222',
+  },
+  circleFill: {
+    position: 'absolute',
+    borderWidth: 3,
+  },
+  circleText: { color: '#fff', fontSize: 10, fontWeight: '700' },
   snackbarOk: { backgroundColor: '#1a472a' },
   snackbarError: { backgroundColor: '#4a1a1a' },
 });

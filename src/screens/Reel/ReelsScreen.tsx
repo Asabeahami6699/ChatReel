@@ -470,14 +470,13 @@ export default function ReelsScreen() {
   );
 
   const seekToProgress = useCallback((ratio: number) => {
-    const reelId = activeReelIdRef.current;
-    const player = reelId ? videos.current[reelId] : null;
+    const player = getActivePlayer(activeReelIdRef.current);
     if (!player) return;
     const duration = durationMillisRef.current || 1;
     const clamped = Math.max(0, Math.min(1, ratio));
     void player.setPositionAsync(clamped * duration);
     setProgress(clamped);
-  }, []);
+  }, [getActivePlayer]);
 
   const progressPan = useMemo(
     () =>
@@ -486,7 +485,7 @@ export default function ReelsScreen() {
         onMoveShouldSetPanResponder: () => true,
         onPanResponderGrant: (_, gesture) => {
           isScrubbingRef.current = true;
-          const v = activeReelIdRef.current ? videos.current[activeReelIdRef.current] : null;
+          const v = getActivePlayer(activeReelIdRef.current);
           void v?.pauseAsync();
           setIsPlaying(false);
           seekToProgress(gesture.x0 / reelWidth);
@@ -496,7 +495,7 @@ export default function ReelsScreen() {
         },
         onPanResponderRelease: () => {
           isScrubbingRef.current = false;
-          const v = activeReelIdRef.current ? videos.current[activeReelIdRef.current] : null;
+          const v = getActivePlayer(activeReelIdRef.current);
           void v?.playAsync();
           setIsPlaying(true);
         },
@@ -504,7 +503,7 @@ export default function ReelsScreen() {
           isScrubbingRef.current = false;
         },
       }),
-    [reelWidth, seekToProgress]
+    [reelWidth, seekToProgress, getActivePlayer]
   );
 
   const handleDelete = useCallback(
@@ -1182,11 +1181,11 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 0,
     right: 0,
-    height: 20,
+    height: 28,
     zIndex: 17,
     elevation: 17,
-    justifyContent: 'center',
-    paddingHorizontal: 12,
+    justifyContent: 'flex-end',
+    paddingHorizontal: 0,
   },
   scrubArea: {
     position: 'absolute',

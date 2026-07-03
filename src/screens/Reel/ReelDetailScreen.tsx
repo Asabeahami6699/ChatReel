@@ -7,32 +7,36 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ReelMediaViewer } from './ReelMediaViewer';
 import { api, ApiError, type ReelDTO } from '../../lib/api';
 import type { ReelsStackParamList } from '../../navigation/reelsNavigation';
-import ReelCommentSheet from './ReelCommentSheet';
+import { ReelImmersiveViewer } from './ReelImmersiveViewer';
 
 export default function ReelDetailScreen() {
   const route = useRoute<RouteProp<ReelsStackParamList, 'ReelDetail'>>();
   const navigation = useNavigation<NativeStackNavigationProp<ReelsStackParamList>>();
-  const insets = useSafeAreaInsets();
 
-  const [reel, setReel] = useState<ReelDTO | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [reels, setReels] = useState<ReelDTO[]>(route.params.contextReels ?? []);
+  const [loading, setLoading] = useState(!route.params.contextReels?.length);
   const [error, setError] = useState<string | null>(null);
-  const [openComments, setOpenComments] = useState(false);
+
+  const initialIndex =
+    route.params.initialIndex ??
+    Math.max(0, reels.findIndex((r) => r.id === route.params.reelId));
 
   useEffect(() => {
+    if (route.params.contextReels?.length) {
+      setReels(route.params.contextReels);
+      setLoading(false);
+      return;
+    }
     let alive = true;
     api.reels
       .get(route.params.reelId)
       .then((res) => {
         if (alive) {
-          setReel(res.reel);
+          setReels([res.reel]);
           setError(null);
         }
       })
@@ -47,7 +51,7 @@ export default function ReelDetailScreen() {
     return () => {
       alive = false;
     };
-  }, [route.params.reelId]);
+  }, [route.params.contextReels, route.params.reelId]);
 
   if (loading) {
     return (
@@ -58,7 +62,7 @@ export default function ReelDetailScreen() {
     );
   }
 
-  if (error || !reel) {
+  if (error || reels.length === 0) {
     return (
       <View style={styles.center}>
         <StatusBar barStyle="light-content" />
@@ -70,82 +74,18 @@ export default function ReelDetailScreen() {
     );
   }
 
-  const author =
-    reel.author?.display_name?.trim() ||
-    reel.author?.email?.split('@')[0] ||
-    'unknown';
-
   return (
-    <View style={styles.container}>
-      <StatusBar barStyle="light-content" />
-      <View style={styles.videoShell}>
-        <ReelMediaViewer reel={reel} shouldPlay />
-      </View>
-
-      <TouchableOpacity
-        style={[styles.closeBtn, { top: insets.top + 8 }]}
-        onPress={() => navigation.goBack()}
-      >
-        <Ionicons name="close" size={26} color="#fff" />
-      </TouchableOpacity>
-
-      <View style={[styles.footer, { paddingBottom: insets.bottom + 16 }]}>
-        <Text style={styles.caption} numberOfLines={2}>
-          {reel.caption || `@${author}`}
-        </Text>
-        <TouchableOpacity style={styles.commentBtn} onPress={() => setOpenComments(true)}>
-          <Ionicons name="chatbubble-ellipses-outline" size={22} color="#fff" />
-          <Text style={styles.commentBtnText}>{reel.comment_count} comments</Text>
-        </TouchableOpacity>
-      </View>
-
-      {openComments && (
-        <View style={styles.commentSheet}>
-          <ReelCommentSheet
-            reelId={reel.id}
-            onClose={() => setOpenComments(false)}
-            onCommentAdded={() =>
-              setReel((r) => (r ? { ...r, comment_count: r.comment_count + 1 } : r))
-            }
-          />
-        </View>
-      )}
-    </View>
+    <ReelImmersiveViewer
+      reels={reels}
+      initialIndex={initialIndex >= 0 ? initialIndex : 0}
+      onClose={() => navigation.goBack()}
+      onReelsChange={setReels}
+    />
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000' },
   center: { flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
-  videoShell: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  videoFrame: { backgroundColor: '#000' },
-  closeBtn: {
-    position: 'absolute',
-    left: 16,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  footer: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    backgroundColor: 'rgba(0,0,0,0.65)',
-  },
-  caption: { color: '#fff', fontSize: 15, fontWeight: '600', marginBottom: 10 },
-  commentBtn: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  commentBtnText: { color: '#fff', fontWeight: '600' },
-  commentSheet: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    justifyContent: 'flex-end',
-  },
   error: { color: '#f87171', marginBottom: 12 },
   backLink: { padding: 12 },
   backLinkText: { color: '#93c5fd', fontWeight: '600' },

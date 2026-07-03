@@ -13,19 +13,17 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import * as VideoThumbnails from 'expo-video-thumbnails';
-import { ReelMediaViewer } from './ReelMediaViewer';
+import { ReelImmersiveViewer } from './ReelImmersiveViewer';
 import { api, ApiError, type ReelDTO } from '../../lib/api';
-import { isImageReelUrl } from '../../lib/reelPlayback';
-import ReelCommentSheet from './ReelCommentSheet';
-import ReelShareSheet from './ReelShareSheet';
+import { getReelGridThumbnail } from '../../lib/reelThumbnails';
+import { generateReelGridThumbnails } from '../../lib/generateReelGridThumbnails';
 
 const GRID_COLS = 3;
 const GRID_GAP = 4;
 const GRID_PAD = 6;
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 const TILE_WIDTH = Math.floor((SCREEN_W - GRID_PAD * 2 - GRID_GAP * (GRID_COLS - 1)) / GRID_COLS);
-const TILE_HEIGHT = Math.round(TILE_WIDTH * (16 / 9));
+const TILE_HEIGHT = Math.round(TILE_WIDTH * 1.15);
 
 interface Props {
   reel: ReelDTO;
@@ -42,9 +40,7 @@ export default function ReelProfileSheet({ reel, onClose, onFollowStateChange }:
   const [friendshipId, setFriendshipId] = useState<string | null>(null);
   const [followBusy, setFollowBusy] = useState(false);
   const [generatedThumbs, setGeneratedThumbs] = useState<Record<string, string>>({});
-  const [activeReel, setActiveReel] = useState<ReelDTO | null>(null);
-  const [openComments, setOpenComments] = useState(false);
-  const [openShare, setOpenShare] = useState(false);
+  const [immersiveIndex, setImmersiveIndex] = useState<number | null>(null);
   const [followerCount, setFollowerCount] = useState(0);
   const [followersLoading, setFollowersLoading] = useState(true);
 
@@ -100,32 +96,13 @@ export default function ReelProfileSheet({ reel, onClose, onFollowStateChange }:
 
   useEffect(() => {
     let cancelled = false;
-    const run = async () => {
-      const missing = posts.filter((p) => !p.thumbnail_url && p.video_url).slice(0, 24);
-      for (const p of missing) {
-        if (cancelled || generatedThumbs[p.id]) continue;
-        if (isImageReelUrl(p.video_url)) {
-          if (!cancelled) setGeneratedThumbs((prev) => ({ ...prev, [p.id]: p.video_url }));
-          continue;
-        }
-        try {
-          const { uri } = await VideoThumbnails.getThumbnailAsync(p.video_url, {
-            time: 500,
-            quality: 0.6,
-          });
-          if (!cancelled) {
-            setGeneratedThumbs((prev) => ({ ...prev, [p.id]: uri }));
-          }
-        } catch {
-          // keep placeholder when generation fails
-        }
-      }
-    };
-    void run();
+    void generateReelGridThumbnails(posts, generatedThumbs, (id, uri) => {
+      if (!cancelled) setGeneratedThumbs((prev) => ({ ...prev, [id]: uri }));
+    });
     return () => {
       cancelled = true;
     };
-  }, [posts, generatedThumbs]);
+  }, [posts]);
 
   useEffect(() => {
     let alive = true;
@@ -265,13 +242,13 @@ export default function ReelProfileSheet({ reel, onClose, onFollowStateChange }:
           contentContainerStyle={styles.gridContainer}
           columnWrapperStyle={styles.gridRow}
           showsVerticalScrollIndicator={false}
-          renderItem={({ item }) => {
-            const thumb = item.thumbnail_url ?? generatedThumbs[item.id];
+          renderItem={({ item, index }) => {
+            const thumb = getReelGridThumbnail(item, generatedThumbs);
             return (
               <TouchableOpacity
                 style={styles.gridItem}
                 activeOpacity={0.85}
-                onPress={() => setActiveReel(item)}
+                onPress={() => setImmersiveIndex(index)}
               >
                 {thumb ? (
                   <Image source={{ uri: thumb }} style={styles.gridImage} resizeMode="cover" />
@@ -304,110 +281,15 @@ export default function ReelProfileSheet({ reel, onClose, onFollowStateChange }:
         />
       )}
 
-      <Modal visible={!!activeReel} animationType="slide" transparent={false} onRequestClose={() => setActiveReel(null)}>
-        {activeReel && (
-          <View style={styles.viewerContainer}>
-            <StatusBar barStyle="light-content" />
-            <View style={styles.viewerVideoShell}>
-              <ReelMediaViewer reel={activeReel} shouldPlay />
-            </View>
-            <TouchableOpacity style={styles.viewerClose} onPress={() => setActiveReel(null)}>
-              <Ionicons name="close" size={26} color="#fff" />
-            </TouchableOpacity>
-            <View style={styles.viewerActions}>
-              <TouchableOpacity
-                style={styles.viewerActionBtn}
-                onPress={async () => {
-                  const liked = activeReel.liked_by_me;
-                  const next = !liked;
-                  setActiveReel({
-                    ...activeReel,
-                    liked_by_me: next,
-                    like_count: Math.max(0, activeReel.like_count + (next ? 1 : -1)),
-                  });
-                  setPosts((prev) =>
-                    prev.map((p) =>
-                      p.id === activeReel.id
-                        ? {
-                            ...p,
-                            liked_by_me: next,
-                            like_count: Math.max(0, p.like_count + (next ? 1 : -1)),
-                          }
-                        : p
-                    )
-                  );
-                  try {
-                    if (next) await api.reels.like(activeReel.id);
-                    else await api.reels.unlike(activeReel.id);
-                  } catch {
-                    /* ignore */
-                  }
-                }}
-              >
-                <Ionicons
-                  name={activeReel.liked_by_me ? 'heart' : 'heart-outline'}
-                  size={28}
-                  color={activeReel.liked_by_me ? '#ff3b30' : '#fff'}
-                />
-                <Text style={styles.viewerActionText}>{compact(activeReel.like_count)}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.viewerActionBtn} onPress={() => setOpenComments(true)}>
-                <Ionicons name="chatbubble-outline" size={28} color="#fff" />
-                <Text style={styles.viewerActionText}>{compact(activeReel.comment_count)}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.viewerActionBtn} onPress={() => setOpenShare(true)}>
-                <Ionicons name="paper-plane-outline" size={28} color="#fff" />
-                <Text style={styles.viewerActionText}>Share</Text>
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.viewerCaption}>{activeReel.caption ?? ''}</Text>
-          </View>
+      <Modal visible={immersiveIndex != null} animationType="slide" onRequestClose={() => setImmersiveIndex(null)}>
+        {immersiveIndex != null && (
+          <ReelImmersiveViewer
+            reels={posts}
+            initialIndex={immersiveIndex}
+            onClose={() => setImmersiveIndex(null)}
+            onReelsChange={setPosts}
+          />
         )}
-      </Modal>
-
-      <Modal visible={openComments && !!activeReel} animationType="slide" transparent onRequestClose={() => setOpenComments(false)}>
-        <View style={styles.subModalBackdrop}>
-          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setOpenComments(false)} />
-          <View style={styles.subModalSheet}>
-            {activeReel && (
-              <ReelCommentSheet
-                reelId={activeReel.id}
-                onClose={() => setOpenComments(false)}
-                onCommentAdded={() => {
-                  setActiveReel((r) => (r ? { ...r, comment_count: r.comment_count + 1 } : r));
-                  setPosts((prev) =>
-                    prev.map((p) =>
-                      activeReel && p.id === activeReel.id
-                        ? { ...p, comment_count: p.comment_count + 1 }
-                        : p
-                    )
-                  );
-                }}
-                onCommentRemoved={() => {
-                  setActiveReel((r) =>
-                    r ? { ...r, comment_count: Math.max(0, r.comment_count - 1) } : r
-                  );
-                  setPosts((prev) =>
-                    prev.map((p) =>
-                      activeReel && p.id === activeReel.id
-                        ? { ...p, comment_count: Math.max(0, p.comment_count - 1) }
-                        : p
-                    )
-                  );
-                }}
-              />
-            )}
-          </View>
-        </View>
-      </Modal>
-
-      <Modal visible={openShare && !!activeReel} animationType="slide" transparent onRequestClose={() => setOpenShare(false)}>
-        <View style={styles.subModalBackdrop}>
-          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setOpenShare(false)} />
-          <View style={styles.subModalSheet}>
-            {activeReel && <ReelShareSheet reel={activeReel} onClose={() => setOpenShare(false)} />}
-          </View>
-        </View>
       </Modal>
     </View>
   );

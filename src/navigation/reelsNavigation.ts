@@ -8,5 +8,5 @@ export type ReelsTabParamList = {
 export type ReelsStackParamList = {
   ReelTabs: undefined;
   ReelCreatorProfile: { profileId: string; displayName?: string };
-  ReelDetail: { reelId: string };
+  ReelDetail: { reelId: string; contextReels?: import('../lib/api').ReelDTO[]; initialIndex?: number };
 };

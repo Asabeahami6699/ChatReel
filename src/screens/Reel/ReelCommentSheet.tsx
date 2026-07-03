@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -38,12 +38,12 @@ function timeAgo(iso: string): string {
 }
 
 function authorName(c: ReelCommentDTO): string {
-  return (
-    c.author?.display_name?.trim() ||
-    c.author?.email?.split('@')[0] ||
-    'unknown'
-  );
+  return c.author?.display_name?.trim() || c.author?.email?.split('@')[0] || 'unknown';
 }
+
+type CommentRow =
+  | { kind: 'comment'; comment: ReelCommentDTO }
+  | { kind: 'reply'; comment: ReelCommentDTO; parent: ReelCommentDTO };
 
 export default function ReelCommentSheet({
   reelId,
@@ -63,12 +63,33 @@ export default function ReelCommentSheet({
     loadMore,
   } = useReelComments(reelId);
   const [text, setText] = useState('');
+  const [replyTo, setReplyTo] = useState<ReelCommentDTO | null>(null);
+
+  const rows = useMemo(() => {
+    const byId = new Map(comments.map((c) => [c.id, c]));
+    const topLevel = comments.filter((c) => !c.parent_id);
+    const result: CommentRow[] = [];
+    for (const parent of topLevel) {
+      result.push({ kind: 'comment', comment: parent });
+      const replies = comments
+        .filter((c) => c.parent_id === parent.id)
+        .sort((a, b) => a.created_at.localeCompare(b.created_at));
+      for (const reply of replies) {
+        result.push({ kind: 'reply', comment: reply, parent });
+      }
+    }
+    for (const orphan of comments.filter((c) => c.parent_id && !byId.has(c.parent_id))) {
+      result.push({ kind: 'comment', comment: orphan });
+    }
+    return result;
+  }, [comments]);
 
   const send = async () => {
     if (!text.trim()) return;
-    const result = await post(text);
+    const result = await post(text, replyTo?.id);
     if (result) {
       setText('');
+      setReplyTo(null);
       onCommentAdded?.();
     }
   };
@@ -87,25 +108,36 @@ export default function ReelCommentSheet({
     ]);
   };
 
-  const renderComment = ({ item }: { item: ReelCommentDTO }) => {
-    const avatar = item.author?.avatar_url;
-    const name = authorName(item);
+  const renderRow = ({ item }: { item: CommentRow }) => {
+    const c = item.comment;
+    const avatar = c.author?.avatar_url;
+    const name = authorName(c);
+    const isReply = item.kind === 'reply';
+
     return (
-      <TouchableOpacity onLongPress={() => askDelete(item.id)} delayLongPress={500} activeOpacity={0.85}>
-        <View style={styles.commentItem}>
+      <TouchableOpacity onLongPress={() => askDelete(c.id)} delayLongPress={500} activeOpacity={0.85}>
+        <View style={[styles.commentItem, isReply && styles.replyItem]}>
           {avatar ? (
-            <Image source={{ uri: avatar }} style={styles.commentAvatar} />
+            <Image source={{ uri: avatar }} style={[styles.commentAvatar, isReply && styles.replyAvatar]} />
           ) : (
-            <View style={[styles.commentAvatar, styles.avatarFallback]}>
+            <View style={[styles.commentAvatar, styles.avatarFallback, isReply && styles.replyAvatar]}>
               <Text style={styles.avatarFallbackText}>{name.charAt(0).toUpperCase()}</Text>
             </View>
           )}
           <View style={styles.commentContent}>
             <View style={styles.commentHeader}>
               <Text style={styles.commentUser}>@{name}</Text>
-              <Text style={styles.commentTime}>{timeAgo(item.created_at)}</Text>
+              <Text style={styles.commentTime}>{timeAgo(c.created_at)}</Text>
             </View>
-            <Text style={styles.commentText}>{item.content}</Text>
+            {isReply && (
+              <Text style={styles.replyTo}>Replying to @{authorName(item.parent)}</Text>
+            )}
+            <Text style={styles.commentText}>{c.content}</Text>
+            {!isReply && (
+              <TouchableOpacity onPress={() => setReplyTo(c)} style={styles.replyBtn}>
+                <Text style={styles.replyBtnText}>Reply</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </TouchableOpacity>
@@ -135,16 +167,16 @@ export default function ReelCommentSheet({
         <View style={styles.center}>
           <Text style={styles.errorText}>{error}</Text>
         </View>
-      ) : comments.length === 0 ? (
+      ) : rows.length === 0 ? (
         <View style={styles.center}>
           <Ionicons name="chatbubble-ellipses-outline" size={40} color="#666" />
           <Text style={styles.emptyText}>Be the first to comment</Text>
         </View>
       ) : (
         <FlatList
-          data={comments}
-          keyExtractor={(c) => c.id}
-          renderItem={renderComment}
+          data={rows}
+          keyExtractor={(row) => row.comment.id}
+          renderItem={renderRow}
           style={styles.commentList}
           contentContainerStyle={{ paddingBottom: 16 }}
           showsVerticalScrollIndicator={false}
@@ -162,10 +194,21 @@ export default function ReelCommentSheet({
         />
       )}
 
+      {replyTo && (
+        <View style={styles.replyBanner}>
+          <Text style={styles.replyBannerText} numberOfLines={1}>
+            Replying to @{authorName(replyTo)}
+          </Text>
+          <TouchableOpacity onPress={() => setReplyTo(null)}>
+            <Ionicons name="close" size={18} color="#aaa" />
+          </TouchableOpacity>
+        </View>
+      )}
+
       <View style={styles.inputContainer}>
         <TextInput
           style={styles.input}
-          placeholder="Add a comment..."
+          placeholder={replyTo ? 'Write a reply…' : 'Add a comment…'}
           placeholderTextColor="#888"
           value={text}
           onChangeText={setText}
@@ -204,14 +247,30 @@ const styles = StyleSheet.create({
   title: { color: '#fff', fontSize: 18, fontWeight: '600' },
   commentList: { flex: 1, paddingHorizontal: 16 },
   commentItem: { flexDirection: 'row', marginVertical: 12 },
+  replyItem: { marginLeft: 28, marginVertical: 6 },
   commentAvatar: { width: 36, height: 36, borderRadius: 18, marginRight: 12 },
+  replyAvatar: { width: 28, height: 28, borderRadius: 14 },
   avatarFallback: { backgroundColor: '#1976d2', justifyContent: 'center', alignItems: 'center' },
-  avatarFallbackText: { color: '#fff', fontWeight: '700' },
+  avatarFallbackText: { color: '#fff', fontWeight: '700', fontSize: 12 },
   commentContent: { flex: 1 },
   commentHeader: { flexDirection: 'row', alignItems: 'center' },
   commentUser: { color: '#fff', fontWeight: '600', fontSize: 14 },
   commentTime: { color: '#888', fontSize: 12, marginLeft: 8 },
+  replyTo: { color: '#888', fontSize: 11, marginTop: 2 },
   commentText: { color: '#fff', marginTop: 4, lineHeight: 18 },
+  replyBtn: { marginTop: 6 },
+  replyBtnText: { color: '#9eb4c7', fontSize: 12, fontWeight: '600' },
+  replyBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: '#1a1a1a',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderColor: '#333',
+  },
+  replyBannerText: { color: '#aaa', flex: 1, marginRight: 8, fontSize: 13 },
   inputContainer: {
     flexDirection: 'row',
     paddingHorizontal: 16,
