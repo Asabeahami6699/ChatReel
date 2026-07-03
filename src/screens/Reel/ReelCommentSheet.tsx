@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -59,12 +59,19 @@ export default function ReelCommentSheet({
     error,
     postError,
     posting,
+    draft,
+    replyToId,
     post,
     remove,
     loadMore,
+    setDraft,
+    setReplyTo,
   } = useReelComments(reelId);
-  const [text, setText] = useState('');
-  const [replyTo, setReplyTo] = useState<ReelCommentDTO | null>(null);
+
+  const replyTo = useMemo(
+    () => comments.find((c) => c.id === replyToId) ?? null,
+    [comments, replyToId]
+  );
 
   const rows = useMemo(() => {
     const byId = new Map(comments.map((c) => [c.id, c]));
@@ -86,11 +93,9 @@ export default function ReelCommentSheet({
   }, [comments]);
 
   const send = async () => {
-    if (!text.trim()) return;
-    const { comment, error: postErr } = await post(text, replyTo?.id);
+    if (!draft.trim()) return;
+    const { comment, error: postErr } = await post(draft, replyTo?.id);
     if (comment) {
-      setText('');
-      setReplyTo(null);
       onCommentAdded?.();
     } else {
       Alert.alert(
@@ -141,7 +146,7 @@ export default function ReelCommentSheet({
             )}
             <Text style={styles.commentText}>{c.content}</Text>
             {!isReply && (
-              <TouchableOpacity onPress={() => setReplyTo(c)} style={styles.replyBtn}>
+              <TouchableOpacity onPress={() => setReplyTo(c.id)} style={styles.replyBtn}>
                 <Text style={styles.replyBtnText}>Reply</Text>
               </TouchableOpacity>
             )}
@@ -221,14 +226,14 @@ export default function ReelCommentSheet({
           style={styles.input}
           placeholder={replyTo ? 'Write a reply…' : 'Add a comment…'}
           placeholderTextColor="#888"
-          value={text}
-          onChangeText={setText}
+          value={draft}
+          onChangeText={setDraft}
           editable={!posting}
           maxLength={1000}
           multiline
         />
-        <TouchableOpacity onPress={send} disabled={!text.trim() || posting}>
-          <Text style={[styles.sendText, (!text.trim() || posting) && styles.sendTextDisabled]}>
+        <TouchableOpacity onPress={send} disabled={!draft.trim() || posting}>
+          <Text style={[styles.sendText, (!draft.trim() || posting) && styles.sendTextDisabled]}>
             {posting ? '...' : 'Post'}
           </Text>
         </TouchableOpacity>
