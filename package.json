@@ -4,6 +4,7 @@
   "main": "index.ts",
   "scripts": {
     "start": "expo start --dev-client --lan",
+    "web": "expo start --web --port 8081",
     "start:emu": "node scripts/adb-reverse.js && expo start --dev-client --lan --clear",
     "reset:dev": "node scripts/reset-dev-cache.js",
     "android": "expo run:android",
