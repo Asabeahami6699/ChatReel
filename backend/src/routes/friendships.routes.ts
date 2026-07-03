@@ -244,18 +244,65 @@ router.get(
 );
 
 router.delete(
+  '/with/:friendProfileId',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const profileId = await getProfileIdByUserId(req.userId!);
+    if (!profileId) return res.status(404).json({ error: 'Profile not found' });
+
+    const friendProfileId = z.string().uuid().parse(req.params.friendProfileId);
+    if (friendProfileId === profileId) {
+      return res.status(400).json({ error: 'Invalid friend' });
+    }
+
+    const { data: rows, error: fetchError } = await supabaseAdmin
+      .from('friendships')
+      .select('id')
+      .or(
+        `and(user_id.eq.${profileId},friend_id.eq.${friendProfileId}),and(user_id.eq.${friendProfileId},friend_id.eq.${profileId})`
+      );
+
+    if (fetchError) return res.status(500).json({ error: fetchError.message });
+    const ids = (rows ?? []).map((r) => r.id as string);
+    if (!ids.length) return res.json({ success: true });
+
+    const { error } = await supabaseAdmin.from('friendships').delete().in('id', ids);
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json({ success: true });
+  })
+);
+
+router.delete(
   '/:id',
   requireAuth,
   asyncHandler(async (req: AuthedRequest, res) => {
     const profileId = await getProfileIdByUserId(req.userId!);
     if (!profileId) return res.status(404).json({ error: 'Profile not found' });
 
-    const { error } = await supabaseAdmin
+    const { data: friendship, error: fetchError } = await supabaseAdmin
       .from('friendships')
-      .delete()
+      .select('id, user_id, friend_id, status')
       .eq('id', req.params.id)
-      .or(`user_id.eq.${profileId},friend_id.eq.${profileId}`);
+      .or(`user_id.eq.${profileId},friend_id.eq.${profileId}`)
+      .maybeSingle();
 
+    if (fetchError) return res.status(500).json({ error: fetchError.message });
+    if (!friendship) return res.status(404).json({ error: 'Friendship not found' });
+
+    const idsToDelete = [friendship.id as string];
+
+    if (friendship.status === 'accepted') {
+      const { data: reciprocal } = await supabaseAdmin
+        .from('friendships')
+        .select('id')
+        .eq('user_id', friendship.friend_id)
+        .eq('friend_id', friendship.user_id)
+        .eq('status', 'accepted')
+        .maybeSingle();
+      if (reciprocal?.id) idsToDelete.push(reciprocal.id as string);
+    }
+
+    const { error } = await supabaseAdmin.from('friendships').delete().in('id', idsToDelete);
     if (error) return res.status(500).json({ error: error.message });
     return res.json({ success: true });
   })

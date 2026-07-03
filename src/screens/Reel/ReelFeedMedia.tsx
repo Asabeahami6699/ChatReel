@@ -5,7 +5,6 @@ import {
   NativeSyntheticEvent,
   StyleSheet,
   View,
-  useWindowDimensions,
 } from 'react-native';
 import type { ReelDTO } from '../../lib/api';
 import { getReelMediaItems } from '../../lib/reelPlayback';
@@ -17,6 +16,8 @@ type Props = {
   reelIndex: number;
   currentReelIndex: number;
   videoUri: string;
+  frameWidth: number;
+  frameHeight: number;
   isFocused: boolean;
   isPlaying: boolean;
   isMuted: boolean;
@@ -32,6 +33,8 @@ export function ReelFeedMedia({
   reelIndex,
   currentReelIndex,
   videoUri,
+  frameWidth,
+  frameHeight,
   isFocused,
   isPlaying,
   isMuted,
@@ -41,7 +44,6 @@ export function ReelFeedMedia({
   onRef,
   onMediaIndexChange,
 }: Props) {
-  const { width: frameWidth, height: frameHeight } = useWindowDimensions();
   const mediaItems = getReelMediaItems(reel);
   const isCurrentReel = reelIndex === currentReelIndex;
   const [mediaIndex, setMediaIndex] = useState(0);

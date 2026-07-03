@@ -11,8 +11,6 @@ import {
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
-  AppState,
-  AppStateStatus,
   Animated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -141,8 +139,6 @@ const ProfileScreen = ({ navigation }: { navigation: any }) => {
   const [currentAppStatus, setCurrentAppStatus] = useState<'Online' | 'Offline'>('Offline');
   const [avatarUrl, setAvatarUrl] = useState<string>('');
 
-  const appStateRef = useRef(AppState.currentState);
-
   const {
     control,
     handleSubmit,
@@ -183,7 +179,7 @@ const ProfileScreen = ({ navigation }: { navigation: any }) => {
 
       reset(formData);
       setAvatarUrl(formData.avatar_url);
-      setCurrentAppStatus(AppState.currentState === 'active' ? 'Online' : 'Offline');
+      setCurrentAppStatus(profile.status === 'Online' ? 'Online' : 'Offline');
     } catch (err: any) {
       Alert.alert('Error', err.message);
     } finally {
@@ -197,41 +193,7 @@ const ProfileScreen = ({ navigation }: { navigation: any }) => {
 
   useRealtimeTopic(user?.id ? 'profiles' : null, loadProfile);
 
-  // === Auto Status Sync ===
-  useEffect(() => {
-    if (!userId) return;
-
-    let timeout: NodeJS.Timeout;
-
-    const updateStatus = async (isActive: boolean) => {
-      clearTimeout(timeout);
-      timeout = setTimeout(async () => {
-        const newStatus: 'Online' | 'Offline' = isActive ? 'Online' : 'Offline';
-        setCurrentAppStatus(newStatus);
-
-        await api.profiles.updateMe({ status: newStatus });
-      }, 1000);
-    };
-
-    const handleAppStateChange = (nextState: AppStateStatus) => {
-      if (appStateRef.current.match(/inactive|background/) && nextState === 'active') {
-        updateStatus(true);
-      } else if (nextState.match(/inactive|background/)) {
-        updateStatus(false);
-      }
-      appStateRef.current = nextState;
-    };
-
-    updateStatus(AppState.currentState === 'active');
-    const sub = AppState.addEventListener('change', handleAppStateChange);
-
-    return () => {
-      sub.remove();
-      clearTimeout(timeout);
-    };
-  }, [userId]);
-
-  // === Save Profile ===
+  // Presence is synced globally via PresenceSyncRegistrar in App.tsx.
   const onSubmit = async (data: ProfileFormData) => {
     if (!userId) return;
     setSaving(true);

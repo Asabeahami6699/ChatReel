@@ -15,6 +15,7 @@ import {
   Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Portal, Snackbar } from 'react-native-paper';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -91,6 +92,7 @@ const NewGroupScreen = ({ navigation }: Props) => {
   const [creating, setCreating] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteLink, setInviteLink] = useState('');
+  const [successToast, setSuccessToast] = useState<string | null>(null);
 
   const filteredFriends = useMemo(() => {
     if (!searchQuery) return friends;
@@ -185,13 +187,9 @@ const NewGroupScreen = ({ navigation }: Props) => {
       const link = invite
         ? `chatapp://invite/${(invite as Record<string, unknown>).token}`
         : `chatapp://group/${groupId}`;
-      console.log('Created At:', verifyGroup?.created_at);
-
-      if (!verifyGroup) {
-        throw new Error('Failed to verify group creation');
-      }
 
       setInviteLink(link);
+      setSuccessToast(`Group "${groupName.trim()}" created!`);
       setShowInviteModal(true);
       
       console.log('🎉 GROUP CREATION COMPLETED SUCCESSFULLY!');
@@ -364,6 +362,16 @@ const NewGroupScreen = ({ navigation }: Props) => {
           </View>
         </View>
       </Modal>
+
+      <Portal>
+        <Snackbar
+          visible={Boolean(successToast)}
+          onDismiss={() => setSuccessToast(null)}
+          duration={3500}
+        >
+          {successToast}
+        </Snackbar>
+      </Portal>
     </SafeAreaView>
   );
 };

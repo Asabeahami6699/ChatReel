@@ -12,6 +12,7 @@ import { Provider as PaperProvider } from 'react-native-paper';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { ReelUploadToast } from './src/components/ReelUploadToast';
 import { MomentUploadToast } from './src/components/MomentUploadToast';
+import { PresenceSyncRegistrar } from './src/components/PresenceSyncRegistrar';
 import { useWebIconFonts } from './src/lib/loadWebIconFonts';
 
 import 'react-native-get-random-values';
@@ -32,6 +33,7 @@ export default function App() {
           <AuthProvider>
             <RealtimeProvider>
               <PushNotificationRegistrar />
+              <PresenceSyncRegistrar />
               <RootNavigator />
               <ReelUploadToast />
               <MomentUploadToast />

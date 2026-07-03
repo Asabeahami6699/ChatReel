@@ -14,12 +14,13 @@ import {
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useNavigation, useRoute } from '@react-navigation/native'
-import { api } from '../../lib/api'
+import { api, ApiError } from '../../lib/api'
 import { useAuth } from '../../hooks/useAuth'
 import { useCurrentProfileId } from '../../hooks/useCurrentProfileId'
 import { useFriendshipsRealtime } from '../../hooks/useFriendshipsRealtime'
-import { FAB, IconButton, Button } from 'react-native-paper'
+import { FAB, IconButton, Button, Portal, Snackbar } from 'react-native-paper'
 import { Ionicons } from '@expo/vector-icons'
+import { FloatingActionMenu } from '../../components/FloatingActionMenu'
 
 type Friend = {
   id: string
@@ -48,6 +49,12 @@ export default function FriendsListScreen({ setSelectedChat }: Props) {
   const [loading, setLoading] = useState(true)
   const currentProfilesId = useCurrentProfileId()
   const [addingToGroup, setAddingToGroup] = useState(false)
+  const [friendMenu, setFriendMenu] = useState<{
+    x: number
+    y: number
+    friend: Friend
+  } | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
 
   const fetchFriendsList = async () => {
     if (!currentProfilesId) return
@@ -167,6 +174,18 @@ export default function FriendsListScreen({ setSelectedChat }: Props) {
     }
   }
 
+  const handleUnfriend = async (friend: Friend) => {
+    try {
+      await api.friendships.cancel(friend.id)
+      setFriendsList((prev) => prev.filter((f) => f.user_id !== friend.user_id))
+      setFilteredFriends((prev) => prev.filter((f) => f.user_id !== friend.user_id))
+      setToast(`${friend.name} removed. They can send a new friend request.`)
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : 'Could not unfriend'
+      Alert.alert('Friends', message)
+    }
+  }
+
   const renderFriend = ({ item }: { item: Friend }) => {
     const isSelected = selectedFriends.includes(item.user_id)
     const isAlreadyMember = isFriendAlreadyMember(item.user_id)
@@ -180,6 +199,11 @@ export default function FriendsListScreen({ setSelectedChat }: Props) {
           isDisabled && styles.friendItemDisabled,
         ]}
         onPress={() => handleOpenChat(item)}
+        onLongPress={(e) => {
+          if (isSelectionMode || isDisabled) return
+          setFriendMenu({ x: e.nativeEvent.pageX, y: e.nativeEvent.pageY, friend: item })
+        }}
+        delayLongPress={400}
         disabled={isDisabled}
       >
         <View style={styles.friendContent}>
@@ -286,6 +310,31 @@ export default function FriendsListScreen({ setSelectedChat }: Props) {
           color="#fff"
         />
       )}
+
+      <FloatingActionMenu
+        visible={Boolean(friendMenu)}
+        x={friendMenu?.x ?? 0}
+        y={friendMenu?.y ?? 0}
+        onClose={() => setFriendMenu(null)}
+        actions={
+          friendMenu
+            ? [
+                {
+                  key: 'unfriend',
+                  label: 'Unfriend',
+                  destructive: true,
+                  onPress: () => void handleUnfriend(friendMenu.friend),
+                },
+              ]
+            : []
+        }
+      />
+
+      <Portal>
+        <Snackbar visible={Boolean(toast)} onDismiss={() => setToast(null)} duration={3000}>
+          {toast}
+        </Snackbar>
+      </Portal>
     </SafeAreaView>
   )
 }

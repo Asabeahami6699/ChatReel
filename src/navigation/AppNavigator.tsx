@@ -37,6 +37,8 @@ import InviteScreen from '../screens/Group/InviteScreen';
 import GroupInfoScreen from '../screens/Group/GroupInfoScreen';
 import JoinGroupScreen from '../screens/Group/JoinGroupScreen';
 import { IncomingCallOverlay } from '../components/IncomingCallOverlay';
+import { useChatSettings } from '../context/ChatSettingsContext';
+import { ReelsMainTabFocusContext } from '../context/ReelsMainTabFocusContext';
 
 // === NAVIGATORS ===
 const Tab = createMaterialTopTabNavigator();
@@ -121,7 +123,11 @@ const ReelsWrapper = ({ navigation }: { navigation: any }) => {
     );
   }
 
-  return <ReelsNavigator key="mobile-reels" />;
+  return (
+    <ReelsMainTabFocusContext.Provider value={isFocused}>
+      <ReelsNavigator key="mobile-reels" />
+    </ReelsMainTabFocusContext.Provider>
+  );
 };
 
 /* ------------------------------------------------------------------
@@ -129,13 +135,16 @@ const ReelsWrapper = ({ navigation }: { navigation: any }) => {
  * ------------------------------------------------------------------ */
 const MainTabNavigator = () => {
   const insets = useSafeAreaInsets();
+  const { theme } = useChatSettings();
   const tabBarBase = useMemo(
     () => ({
       ...styles.tabBarMobile,
       height: 56 + insets.bottom,
       paddingBottom: Math.max(insets.bottom, Platform.OS === 'android' ? 8 : 0),
+      backgroundColor: theme.listCardBg,
+      borderTopColor: theme.listBorder,
     }),
-    [insets.bottom]
+    [insets.bottom, theme.listCardBg, theme.listBorder]
   );
 
   return (
@@ -144,8 +153,8 @@ const MainTabNavigator = () => {
       tabBarPosition="bottom"
       screenOptions={{
         tabBarShowLabel: true,
-        tabBarActiveTintColor: '#1e73ceff',
-        tabBarInactiveTintColor: '#000000ff',
+        tabBarActiveTintColor: theme.tabActive,
+        tabBarInactiveTintColor: theme.tabInactive,
         tabBarStyle: tabBarBase,
         tabBarLabelStyle: { fontSize: 12, fontWeight: '700' },
         tabBarItemStyle: { paddingVertical: 4 },

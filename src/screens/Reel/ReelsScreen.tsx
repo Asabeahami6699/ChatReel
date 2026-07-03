@@ -22,7 +22,7 @@ import { ReelPlayer, type ReelPlaybackStatus, type ReelPlayerHandle } from '../.
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useIsFocused, useNavigation } from '@react-navigation/native';
+import { useIsFocused, useFocusEffect, useNavigation } from '@react-navigation/native';
 import { USE_NATIVE_DRIVER } from '../../lib/animation';
 import { api, ApiError, type ReelDTO } from '../../lib/api';
 import { useReelsFeed } from '../../hooks/useReelsFeed';
@@ -40,6 +40,7 @@ import { SCREEN_HEIGHT, SCREEN_WIDTH, REEL_ACTION_RAIL_WIDTH, REEL_BOTTOM_INSET,
 import { useReelVideoPrefetch } from './useReelVideoPrefetch';
 import { ReelFeedMedia } from './ReelFeedMedia';
 import { reelTabBarOffset } from './ReelsTabBar';
+import { useReelsMainTabFocused } from '../../context/ReelsMainTabFocusContext';
 
 const WINDOW_HEIGHT = SCREEN_HEIGHT;
 
@@ -82,15 +83,16 @@ function avatarFor(reel: ReelDTO): string | null {
 export default function ReelsScreen() {
   const insets = useSafeAreaInsets();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
-  const { frameWidth: reelWidth, frameHeight: reelHeight, usePhoneFrame } = useMemo(
+  const { frameWidth: reelWidth, usePhoneFrame } = useMemo(
     () => getReelFrameDimensions(windowWidth, windowHeight),
     [windowWidth, windowHeight]
   );
   const navigation = useNavigation<any>();
   const isReelTabFocused = useIsFocused();
-  const [isMainAppTabFocused, setIsMainAppTabFocused] = useState(true);
+  const isMainAppTabFocused = useReelsMainTabFocused();
   const isFocused = isReelTabFocused && isMainAppTabFocused;
   const bottomNavOffset = reelTabBarOffset(insets.bottom);
+  const reelHeight = Math.max(320, windowHeight - bottomNavOffset);
 
   const [feedMode, setFeedMode] = useState<'forYou' | 'following'>('forYou');
   const feedSource = feedMode === 'forYou' ? 'feed' : 'following';
@@ -140,30 +142,34 @@ export default function ReelsScreen() {
   const [followedAuthorIds, setFollowedAuthorIds] = useState<Set<string>>(new Set());
   const [followBusyAuthorIds, setFollowBusyAuthorIds] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
-    const parent = navigation.getParent();
-    if (!parent) return;
-    const onFocus = () => setIsMainAppTabFocused(true);
-    const onBlur = () => {
-      setIsMainAppTabFocused(false);
-      void Promise.all(Object.values(videos.current).map((v) => v?.pauseAsync()));
-      setIsPlaying(false);
-    };
-    const unsubFocus = parent.addListener('focus', onFocus);
-    const unsubBlur = parent.addListener('blur', onBlur);
-    return () => {
-      unsubFocus();
-      unsubBlur();
-    };
-  }, [navigation]);
+  const pauseAllVideos = useCallback(async () => {
+    await Promise.all(
+      Object.values(videos.current).map(async (player) => {
+        if (!player) return;
+        try {
+          await player.pauseAsync();
+        } catch {
+          /* ignore */
+        }
+      })
+    );
+    setIsPlaying(false);
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      return () => {
+        void pauseAllVideos();
+      };
+    }, [pauseAllVideos])
+  );
 
   useEffect(() => {
     registerBeforeChatNavigate(() => {
-      void Promise.all(Object.values(videos.current).map((v) => v?.pauseAsync()));
-      setIsPlaying(false);
+      void pauseAllVideos();
     });
     return () => unregisterBeforeChatNavigate();
-  }, []);
+  }, [pauseAllVideos]);
 
   const activePlayerKey = useCallback((reelId: string | null) => {
     if (!reelId) return null;
@@ -400,13 +406,12 @@ export default function ReelsScreen() {
   // Pause every video when screen blurs.
   useEffect(() => {
     if (!isFocused) {
-      void Promise.all(Object.values(videos.current).map((v) => v?.pauseAsync()));
-      setIsPlaying(false);
+      void pauseAllVideos();
     } else if (activeReelIdRef.current) {
       void playActiveReel(activeReelIdRef.current);
       setIsPlaying(true);
     }
-  }, [isFocused, playActiveReel]);
+  }, [isFocused, pauseAllVideos, playActiveReel]);
 
   // Keep playback in sync when play state toggles.
   useEffect(() => {
@@ -594,6 +599,8 @@ export default function ReelsScreen() {
               reelIndex={index}
               currentReelIndex={currentIndex}
               videoUri={videoUri}
+              frameWidth={reelWidth}
+              frameHeight={reelHeight}
               isFocused={isFocused}
               isPlaying={isPlaying}
               isMuted={isMuted}
@@ -839,27 +846,9 @@ export default function ReelsScreen() {
             </TouchableOpacity>
           </View>
 
-          <TouchableOpacity
-            style={styles.topIconBtn}
-            onPress={() => void handlePullRefresh()}
-            disabled={refreshing}
-            accessibilityLabel="Refresh reels"
-          >
-            {refreshing ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Ionicons name="refresh" size={22} color="#fff" />
-            )}
-          </TouchableOpacity>
+          <View style={styles.topIconBtnSpacer} />
         </View>
       </LinearGradient>
-
-      {refreshing && (
-        <View style={[styles.refreshBanner, { top: insets.top + 52 }]} pointerEvents="none">
-          <ActivityIndicator size="small" color="#fff" />
-          <Text style={styles.refreshBannerText}>Refreshing feed…</Text>
-        </View>
-      )}
 
       {(activeCount > 0 || summary.error > 0) && (
         <TouchableOpacity
@@ -891,8 +880,10 @@ export default function ReelsScreen() {
         onViewableItemsChanged={onViewableItemsChanged}
         viewabilityConfig={viewabilityConfig}
         getItemLayout={getItemLayout}
+        pagingEnabled
         snapToInterval={reelHeight}
         snapToAlignment="start"
+        disableIntervalMomentum
         decelerationRate="fast"
         bounces
         alwaysBounceVertical

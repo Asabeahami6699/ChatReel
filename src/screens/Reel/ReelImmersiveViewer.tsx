@@ -311,6 +311,8 @@ export function ReelImmersiveViewer({
               reelIndex={index}
               currentReelIndex={currentIndex}
               videoUri={resolveUri(item)}
+              frameWidth={reelWidth}
+              frameHeight={reelHeight}
               isFocused
               isPlaying={isPlaying}
               isMuted={isMuted}

@@ -78,6 +78,7 @@ import {
 import { useChatRoomScroll } from './useChatRoomScroll';
 import { useChatRoomRealtime } from './useChatRoomRealtime';
 import { useRealtimeTopic } from '../../hooks/useRealtimeTopic';
+import { useChatSettings } from '../../context/ChatSettingsContext';
 
 export default function ChatRoomScreen() {
   const { user } = useAuth();
@@ -92,6 +93,7 @@ export default function ChatRoomScreen() {
   const isOnline = hasNetwork;
 
   const insets = useSafeAreaInsets();
+  const { theme } = useChatSettings();
 
   // Header (70) + status bar height — keeps the FlatList aligned when keyboard slides in.
   const keyboardVerticalOffset =
@@ -172,7 +174,7 @@ export default function ChatRoomScreen() {
   const listTailId = visibleMessages[visibleMessages.length - 1]?.id ?? '';
 
   const chatBgColor =
-    WALLPAPER_OPTIONS.find((w) => w.id === wallpaper)?.color ?? chatTheme.chatBg;
+    WALLPAPER_OPTIONS.find((w) => w.id === wallpaper)?.color ?? theme.chatBg;
 
   const pendingRetryRef = useRef<boolean>(false);
   const syncInProgressRef = useRef<boolean>(false);
@@ -1846,15 +1848,15 @@ export default function ChatRoomScreen() {
   /* ------------------------------------------------------------------ */
   return (
     <SafeAreaView
-      style={styles.container}
+      style={[styles.container, { backgroundColor: chatBgColor }]}
       edges={['left', 'right']}
     >
-      <View style={styles.header}>
+      <View style={[styles.header, { backgroundColor: theme.headerBg }]}>
         <View style={styles.headerLeft}>
           <IconButton 
             icon="arrow-left" 
             size={24} 
-            iconColor="#fff" 
+            iconColor={theme.headerText} 
             onPress={() => navigation.goBack()} 
           />
           <TouchableOpacity style={styles.headerInfo} onPress={handleInfoPress}>
@@ -1863,10 +1865,10 @@ export default function ChatRoomScreen() {
               style={styles.headerAvatar} 
             />
             <View style={styles.headerText}>
-              <Text style={styles.headerName} numberOfLines={1}>
+              <Text style={[styles.headerName, { color: theme.headerText }]} numberOfLines={1}>
                 {chatName}
               </Text>
-              <Text style={styles.headerStatus} numberOfLines={1}>
+              <Text style={[styles.headerStatus, { color: theme.headerStatus }]} numberOfLines={1}>
                 {!hasNetwork
                   ? 'Waiting for network'
                   : typingLabel
@@ -1884,13 +1886,13 @@ export default function ChatRoomScreen() {
           <IconButton
             icon="video"
             size={24}
-            iconColor="#fff"
+            iconColor={theme.headerText}
             onPress={() => startChatCall('video')}
           />
           <IconButton
             icon="phone"
             size={24}
-            iconColor="#fff"
+            iconColor={theme.headerText}
             onPress={() => startChatCall('voice')}
           />
           <ChatMenuDropdown items={menuItems} />

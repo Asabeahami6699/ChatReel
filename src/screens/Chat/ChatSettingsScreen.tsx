@@ -11,17 +11,21 @@ function SettingRow({
   subtitle,
   value,
   onValueChange,
+  textColor,
+  subColor,
 }: {
   label: string;
   subtitle?: string;
   value: boolean;
   onValueChange: (v: boolean) => void;
+  textColor: string;
+  subColor: string;
 }) {
   return (
     <View style={styles.row}>
       <View style={styles.rowText}>
-        <Text style={styles.rowLabel}>{label}</Text>
-        {subtitle ? <Text style={styles.rowSub}>{subtitle}</Text> : null}
+        <Text style={[styles.rowLabel, { color: textColor }]}>{label}</Text>
+        {subtitle ? <Text style={[styles.rowSub, { color: subColor }]}>{subtitle}</Text> : null}
       </View>
       <Switch value={value} onValueChange={onValueChange} />
     </View>
@@ -46,8 +50,8 @@ export default function ChatSettingsScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
-        <Text style={styles.section}>Theme</Text>
-        <View style={styles.card}>
+        <Text style={[styles.section, { color: theme.sectionLabel }]}>Theme</Text>
+        <View style={[styles.card, { backgroundColor: theme.listCardBg, borderColor: theme.listBorder }]}>
           {themeIds.map((id) => {
             const preset = chatThemePresets[id];
             const active = settings.themeId === id;
@@ -58,61 +62,75 @@ export default function ChatSettingsScreen() {
                 onPress={() => void updateSettings({ themeId: id })}
               >
                 <View style={[styles.themeSwatch, { backgroundColor: preset.headerBg }]} />
-                <Text style={styles.themeLabel}>{preset.label}</Text>
+                <Text style={[styles.themeLabel, { color: theme.listPrimaryText }]}>{preset.label}</Text>
                 {active ? <Ionicons name="checkmark-circle" size={20} color={preset.primary} /> : null}
               </TouchableOpacity>
             );
           })}
         </View>
 
-        <Text style={styles.section}>Notifications</Text>
-        <View style={styles.card}>
+        <Text style={[styles.section, { color: theme.sectionLabel }]}>Notifications</Text>
+        <View style={[styles.card, { backgroundColor: theme.listCardBg, borderColor: theme.listBorder }]}>
           <SettingRow
             label="Push notifications"
             subtitle="New messages and friend requests"
             value={settings.pushNotifications}
             onValueChange={(v) => void updateSettings({ pushNotifications: v })}
+            textColor={theme.listPrimaryText}
+            subColor={theme.listSecondaryText}
           />
           <SettingRow
             label="Message sounds"
             value={settings.messageSounds}
             onValueChange={(v) => void updateSettings({ messageSounds: v })}
+            textColor={theme.listPrimaryText}
+            subColor={theme.listSecondaryText}
           />
         </View>
 
-        <Text style={styles.section}>Privacy</Text>
-        <View style={styles.card}>
+        <Text style={[styles.section, { color: theme.sectionLabel }]}>Privacy</Text>
+        <View style={[styles.card, { backgroundColor: theme.listCardBg, borderColor: theme.listBorder }]}>
           <SettingRow
             label="Read receipts"
             subtitle="Let others see when you've read messages"
             value={settings.readReceipts}
             onValueChange={(v) => void updateSettings({ readReceipts: v })}
+            textColor={theme.listPrimaryText}
+            subColor={theme.listSecondaryText}
           />
           <SettingRow
             label="Show last seen"
             value={settings.showLastSeen}
             onValueChange={(v) => void updateSettings({ showLastSeen: v })}
+            textColor={theme.listPrimaryText}
+            subColor={theme.listSecondaryText}
           />
         </View>
 
-        <Text style={styles.section}>Chats</Text>
-        <View style={styles.card}>
+        <Text style={[styles.section, { color: theme.sectionLabel }]}>Chats</Text>
+        <View style={[styles.card, { backgroundColor: theme.listCardBg, borderColor: theme.listBorder }]}>
           <SettingRow
             label="Media auto-download"
             subtitle="Download photos and videos on Wi-Fi"
             value={settings.mediaAutoDownload}
             onValueChange={(v) => void updateSettings({ mediaAutoDownload: v })}
+            textColor={theme.listPrimaryText}
+            subColor={theme.listSecondaryText}
           />
           <SettingRow
             label="Enter to send"
             subtitle="Press Enter to send (web)"
             value={settings.enterToSend}
             onValueChange={(v) => void updateSettings({ enterToSend: v })}
+            textColor={theme.listPrimaryText}
+            subColor={theme.listSecondaryText}
           />
           <SettingRow
             label="Compact chat list"
             value={settings.compactChatList}
             onValueChange={(v) => void updateSettings({ compactChatList: v })}
+            textColor={theme.listPrimaryText}
+            subColor={theme.listSecondaryText}
           />
         </View>
       </ScrollView>

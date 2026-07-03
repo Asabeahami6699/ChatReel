@@ -292,6 +292,9 @@ export const api = {
     accept: (id: string) => apiRequest(`/api/friendships/${id}/accept`, { method: 'PATCH' }),
     reject: (id: string) => apiRequest(`/api/friendships/${id}/reject`, { method: 'PATCH' }),
     cancel: (id: string) => apiRequest(`/api/friendships/${id}`, { method: 'DELETE' }),
+    /** Removes both accepted friendship rows between you and a profile. */
+    unfriend: (friendProfileId: string) =>
+      apiRequest(`/api/friendships/with/${friendProfileId}`, { method: 'DELETE' }),
     block: (user_id: string) =>
       apiRequest('/api/friendships/block', { method: 'POST', body: { user_id } }),
     followerCount: (profileId: string) =>

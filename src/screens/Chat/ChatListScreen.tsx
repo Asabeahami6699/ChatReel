@@ -38,6 +38,15 @@ import {
   registerMobileChatOpener,
   unregisterMobileChatOpener,
 } from '../../navigation/chatNavigationBridge'
+import { FloatingActionMenu } from '../../components/FloatingActionMenu'
+import {
+  chatListKey,
+  hideChatFromList,
+  loadHiddenChatKeys,
+  unhideChatFromList,
+  type ChatListEntryKind,
+} from '../../lib/chatListHidden'
+import { messageStorage } from '../../utils/messageStorage'
 
 type Props = { setSelectedChat?: (chat: any) => void }
 
@@ -112,6 +121,14 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchHistory, setSearchHistory] = useState<string[]>([])
   const [friends, setFriends] = useState<FriendSearchRow[]>([])
+  const [hiddenChatKeys, setHiddenChatKeys] = useState<Set<string>>(new Set())
+  const [chatMenu, setChatMenu] = useState<{
+    x: number
+    y: number
+    kind: ChatListEntryKind
+    id: string
+    name: string
+  } | null>(null)
   const [incomingRequests, setIncomingRequests] = useState<IncomingRequestRow[]>([])
   const [requestsLoading, setRequestsLoading] = useState(false)
   const searchInputRef = useRef<React.ComponentRef<typeof TextInput>>(null)
@@ -237,6 +254,26 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
     markGroupMessagesAsRead
   } = useGroupList(searchQuery)
 
+  const reloadHiddenChats = useCallback(async () => {
+    setHiddenChatKeys(await loadHiddenChatKeys())
+  }, [])
+
+  useFocusEffect(
+    useCallback(() => {
+      void reloadHiddenChats()
+    }, [reloadHiddenChats])
+  )
+
+  const visibleIndividualChats = useMemo(
+    () => individualChats.filter((c) => !hiddenChatKeys.has(chatListKey('individual', c.user_id))),
+    [individualChats, hiddenChatKeys]
+  )
+
+  const visibleGroupChats = useMemo(
+    () => groupChats.filter((g) => !hiddenChatKeys.has(chatListKey('group', g.id))),
+    [groupChats, hiddenChatKeys]
+  )
+
   const fetchFriends = useCallback(async () => {
     if (!myProfileId) return
     try {
@@ -358,13 +395,13 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
 
   const allFeedItems = useMemo(() => {
     const items: AllFeedItem[] = [
-      ...individualChats.map((chat) => ({
+      ...visibleIndividualChats.map((chat) => ({
         kind: 'chat' as const,
         key: `chat-${chat.user_id}`,
         sortAt: chat.last_message_at ?? '',
         item: chat,
       })),
-      ...groupChats.map((group) => ({
+      ...visibleGroupChats.map((group) => ({
         kind: 'group' as const,
         key: `group-${group.id}`,
         sortAt: group.last_message_at ?? '',
@@ -378,7 +415,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
       })),
     ]
     return items.sort((a, b) => b.sortAt.localeCompare(a.sortAt))
-  }, [filteredIncomingRequests, groupChats, individualChats])
+  }, [visibleIndividualChats, visibleGroupChats, filteredIncomingRequests])
 
   const hasSearchSuggestions = Boolean(
     searchSuggestions &&
@@ -550,6 +587,12 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
   }
 
   const handleChatPress = async (item: any, isGroup = false) => {
+    const kind: ChatListEntryKind = isGroup ? 'group' : 'individual'
+    const chatId = isGroup ? item.id : item.user_id
+    if (hiddenChatKeys.has(chatListKey(kind, chatId))) {
+      setHiddenChatKeys(await unhideChatFromList(kind, chatId))
+    }
+
     if (!isGroup && item.unread_count > 0) {
       await markMessagesAsRead(item.user_id)
       // Update local state immediately for better UX
@@ -575,6 +618,41 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
 
     navigation.navigate('ChatRoom', params)
   }
+
+  const handleHideChat = useCallback(
+    async (kind: ChatListEntryKind, id: string) => {
+      setHiddenChatKeys(await hideChatFromList(kind, id))
+    },
+    []
+  )
+
+  const handleDeleteChat = useCallback(
+    async (kind: ChatListEntryKind, id: string) => {
+      setHiddenChatKeys(await hideChatFromList(kind, id))
+      try {
+        await api.chatSettings.update(kind, id, { cleared_at: new Date().toISOString() })
+        await messageStorage.clearMessages(id)
+      } catch {
+        /* still hidden locally */
+      }
+    },
+    []
+  )
+
+  const openChatMenu = useCallback(
+    (e: { nativeEvent: { pageX: number; pageY: number } }, item: any, isGroup: boolean) => {
+      const kind: ChatListEntryKind = isGroup ? 'group' : 'individual'
+      const id = isGroup ? item.id : item.user_id
+      setChatMenu({
+        x: e.nativeEvent.pageX,
+        y: e.nativeEvent.pageY,
+        kind,
+        id,
+        name: item.name ?? 'Chat',
+      })
+    },
+    []
+  )
 
   const selectSearchSuggestion = useCallback(
     (item: SearchSuggestion) => {
@@ -677,8 +755,10 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
   const renderChatItem = ({ item, isGroup = false }: { item: any; isGroup?: boolean }) => {
     return (
       <TouchableOpacity 
-        style={styles.chatItem} 
+        style={[styles.chatItem, { backgroundColor: theme.listBg }]} 
         onPress={() => handleChatPress(item, isGroup)}
+        onLongPress={(e) => openChatMenu(e, item, isGroup)}
+        delayLongPress={400}
       >
         <View style={styles.avatarContainer}>
           <AvatarComponent uri={item.avatar_url} name={item.name} />
@@ -697,19 +777,28 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
 
         <View style={styles.chatInfo}>
           <View style={styles.chatHeader}>
-            <Text style={styles.chatName} numberOfLines={1}>
+            <Text style={[styles.chatName, { color: theme.listPrimaryText }]} numberOfLines={1}>
               {item.name}
               {isGroup && item.member_count > 0 && (
-                <Text style={styles.memberCountText}> • {item.member_count}</Text>
+                <Text style={[styles.memberCountText, { color: theme.listSecondaryText }]}> • {item.member_count}</Text>
               )}
             </Text>
             <View style={styles.timeContainer}>
-              {item.last_message_at && <Text style={styles.time}>{formatTime(item.last_message_at)}</Text>}
+              {item.last_message_at && (
+                <Text style={[styles.time, { color: theme.listSecondaryText }]}>{formatTime(item.last_message_at)}</Text>
+              )}
             </View>
           </View>
 
           <View style={styles.messageContainer}>
-            <Text style={[styles.lastMessage, item.unread_count > 0 && styles.unreadMessage]} numberOfLines={1}>
+            <Text
+              style={[
+                styles.lastMessage,
+                { color: theme.listSecondaryText },
+                item.unread_count > 0 && [styles.unreadMessage, { color: theme.listPrimaryText }],
+              ]}
+              numberOfLines={1}
+            >
               {formatLastMessage(item, isGroup)}
             </Text>
             <View style={styles.rightContainer}>
@@ -805,7 +894,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
       }
       ListEmptyComponent={
         individualLoading || groupsLoading || requestsLoading ? (
-          <ActivityIndicator size="large" color="#007AFF" style={styles.loader} />
+          <ActivityIndicator size="large" color={theme.primary} style={styles.loader} />
         ) : (
           <EmptyState
             title="Nothing here yet"
@@ -836,7 +925,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
 
   const FriendsRoute = () => (
     <FlatList
-      data={individualChats}
+      data={visibleIndividualChats}
       renderItem={({ item }) => renderChatItem({ item })}
       keyExtractor={item => item.user_id}
       refreshControl={
@@ -848,7 +937,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
       }
       ListEmptyComponent={
         individualLoading ? (
-          <ActivityIndicator size="large" color="#007AFF" style={styles.loader} />
+          <ActivityIndicator size="large" color={theme.primary} style={styles.loader} />
         ) : (
           <EmptyState
             title="No conversations yet"
@@ -875,7 +964,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
 
   const GroupRoute = () => (
     <FlatList
-      data={groupChats}
+      data={visibleGroupChats}
       renderItem={({ item }) => renderChatItem({ item, isGroup: true })}
       keyExtractor={item => item.id}
       refreshControl={
@@ -887,7 +976,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
       }
       ListEmptyComponent={
         groupsLoading ? (
-          <ActivityIndicator size="large" color="#007AFF" style={styles.loader} />
+          <ActivityIndicator size="large" color={theme.primary} style={styles.loader} />
         ) : (
           <EmptyState
             title="No groups yet"
@@ -924,7 +1013,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
   })
 
   const renderTabBar = () => (
-    <View style={styles.tabStripContainer}>
+    <View style={[styles.tabStripContainer, { backgroundColor: theme.listBg, borderBottomColor: theme.listBorder }]}>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -936,11 +1025,11 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
           return (
             <TouchableOpacity
               key={route.key}
-              style={[styles.tabStripItem, focused && styles.tabStripItemActive]}
+              style={[styles.tabStripItem, focused && { borderBottomColor: theme.primary }]}
               onPress={() => handleTabPress(routeIndex)}
               activeOpacity={0.85}
             >
-              <Text style={[styles.tabStripLabel, focused && styles.tabStripLabelActive]}>
+              <Text style={[styles.tabStripLabel, { color: theme.listSecondaryText }, focused && { color: theme.primary, fontWeight: '700' }]}>
                 {route.title}
               </Text>
               {badge > 0 ? (
@@ -964,12 +1053,12 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
         style={[
           styles.navbar,
           isNarrow && styles.navbarNarrow,
-          { backgroundColor: theme.headerBg, borderBottomColor: `${theme.accent}33` },
+          { backgroundColor: theme.listHeaderBg, borderBottomColor: theme.listBorder },
         ]}
       >
         <View style={styles.brandRow}>
           <Image source={APP_LOGO} style={styles.appLogo} resizeMode="contain" />
-          <Text style={[styles.appName, { color: theme.headerText }]}>{APP_NAME}</Text>
+          <Text style={[styles.appName, { color: theme.listHeaderText }]}>{APP_NAME}</Text>
         </View>
 
         <View style={styles.navbarSpacer} />
@@ -986,7 +1075,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
           <Ionicons
             name={searchOpen ? 'close' : 'search'}
             size={22}
-            color={searchOpen || searchQuery.length > 0 ? theme.primary : theme.headerText}
+            color={searchOpen || searchQuery.length > 0 ? theme.primary : theme.listHeaderText}
           />
         </TouchableOpacity>
 
@@ -1007,14 +1096,16 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
               top: insets.top + 54,
               right: 12,
               width: Math.min(360, width - 24),
+              backgroundColor: theme.listCardBg,
             },
           ]}
         >
           <LinearGradient colors={[theme.accent, theme.primary]} style={styles.gradientBorder}>
-            <View style={styles.searchWrapper}>
+            <View style={[styles.searchWrapper, { backgroundColor: theme.searchBg }]}>
               <TextInput
                 ref={searchInputRef}
                 placeholder="Search chats, groups & friends"
+                placeholderTextColor={theme.searchPlaceholder}
                 value={searchQuery}
                 onChangeText={setSearchQuery}
                 onSubmitEditing={() => {
@@ -1023,13 +1114,13 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
                 }}
                 returnKeyType="search"
                 mode="flat"
-                style={styles.searchBar}
+                style={[styles.searchBar, { color: theme.searchText }]}
                 underlineColor="transparent"
-                theme={{ colors: { text: '#000', background: 'transparent' } }}
-                left={<TextInput.Icon icon="magnify" color="#666" />}
+                theme={{ colors: { text: theme.searchText, background: 'transparent' } }}
+                left={<TextInput.Icon icon="magnify" color={theme.searchPlaceholder} />}
                 right={
                   searchQuery.length > 0 ? (
-                    <TextInput.Icon icon="close" color="#666" onPress={clearActiveSearch} />
+                    <TextInput.Icon icon="close" color={theme.searchPlaceholder} onPress={clearActiveSearch} />
                   ) : undefined
                 }
               />
@@ -1193,6 +1284,30 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
           onPress={() => isOnline && navigation.navigate('AddFriend')}
         />
       )}
+
+      <FloatingActionMenu
+        visible={Boolean(chatMenu)}
+        x={chatMenu?.x ?? 0}
+        y={chatMenu?.y ?? 0}
+        onClose={() => setChatMenu(null)}
+        actions={
+          chatMenu
+            ? [
+                {
+                  key: 'hide',
+                  label: 'Hide',
+                  onPress: () => void handleHideChat(chatMenu.kind, chatMenu.id),
+                },
+                {
+                  key: 'delete',
+                  label: 'Delete chat',
+                  destructive: true,
+                  onPress: () => void handleDeleteChat(chatMenu.kind, chatMenu.id),
+                },
+              ]
+            : []
+        }
+      />
     </SafeAreaView>
   )
 }

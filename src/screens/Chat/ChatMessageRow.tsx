@@ -13,6 +13,7 @@ import { Swipeable } from 'react-native-gesture-handler';
 import { MaterialIcons, Feather, Ionicons } from '@expo/vector-icons';
 import { ChatVideoThumb } from '../../components/ChatVideoThumb';
 import { chatTheme, bubbleCorners, type ClusterPosition } from './chatTheme';
+import { useChatSettings } from '../../context/ChatSettingsContext';
 import type { ChatListMessage } from './chatListModel';
 import { getAudioPlaybackUri } from './chatRoomTypes';
 import { LinkText } from './LinkText';
@@ -39,7 +40,8 @@ const MessageStatus = ({
   onRetry?: () => void;
   onReadReceiptPress?: () => void;
 }) => {
-  const metaColor = isOutgoing ? chatTheme.outgoingMeta : chatTheme.incomingMeta;
+  const { theme } = useChatSettings();
+  const metaColor = isOutgoing ? theme.outgoingMeta : theme.incomingMeta;
   if (status === 'sending') {
     return <ActivityIndicator size={10} color={metaColor} />;
   }
@@ -61,13 +63,13 @@ const MessageStatus = ({
         <MaterialIcons
           name="done-all"
           size={16}
-          color={allRead ? chatTheme.readReceipt : metaColor}
+          color={allRead ? theme.readReceipt : metaColor}
         />
       </TouchableOpacity>
     );
   }
   if (isRead) {
-    return <MaterialIcons name="done-all" size={16} color={chatTheme.readReceipt} />;
+    return <MaterialIcons name="done-all" size={16} color={theme.readReceipt} />;
   }
   if (delivered) {
     return <MaterialIcons name="done-all" size={16} color={metaColor} />;
@@ -136,11 +138,12 @@ export function ChatMessageRow({
   onReadReceiptPress,
   onReply,
 }: Props) {
+  const { theme } = useChatSettings();
   const swipeRef = useRef<Swipeable>(null);
   const corners = bubbleCorners(isOutgoing, clusterPosition);
-  const bubbleBg = isOutgoing ? chatTheme.outgoingBubble : chatTheme.incomingBubble;
-  const textColor = isOutgoing ? chatTheme.outgoingText : chatTheme.incomingText;
-  const metaColor = isOutgoing ? chatTheme.outgoingMeta : chatTheme.incomingMeta;
+  const bubbleBg = isOutgoing ? theme.outgoingBubble : theme.incomingBubble;
+  const textColor = isOutgoing ? theme.outgoingText : theme.incomingText;
+  const metaColor = isOutgoing ? theme.outgoingMeta : theme.incomingMeta;
   const profile = msg.profiles;
   const imageUri = getImageUri(msg);
   const audioUri = getAudioPlaybackUri(msg);
@@ -184,7 +187,7 @@ export function ChatMessageRow({
 
   const replyQuote = replyTo ? (
     <View style={[styles.replyQuote, isOutgoing ? styles.replyQuoteOut : styles.replyQuoteIn]}>
-      <Text style={[styles.replyName, { color: isOutgoing ? '#fff' : chatTheme.primary }]} numberOfLines={1}>
+      <Text style={[styles.replyName, { color: isOutgoing ? textColor : theme.primary }]} numberOfLines={1}>
         {replyTo.profiles?.display_name || 'Message'}
       </Text>
       <Text
@@ -232,7 +235,7 @@ export function ChatMessageRow({
             <MaterialIcons
               name={isPlayingAudio === msg.id ? 'pause' : 'play-arrow'}
               size={22}
-              color={isOutgoing ? '#fff' : chatTheme.primary}
+              color={isOutgoing ? textColor : theme.primary}
             />
           </TouchableOpacity>
           <View style={styles.waveform}>
@@ -315,9 +318,9 @@ export function ChatMessageRow({
           <View style={[styles.mediaWrap, corners, { backgroundColor: bubbleBg }]}>
             {replyQuote}
             <View style={styles.momentQuoteBar}>
-              <Ionicons name="albums-outline" size={14} color={isOutgoing ? '#fff' : chatTheme.primary} />
+              <Ionicons name="albums-outline" size={14} color={isOutgoing ? textColor : theme.primary} />
               <Text
-                style={[styles.momentQuoteLabel, { color: isOutgoing ? 'rgba(255,255,255,0.9)' : chatTheme.primary }]}
+                style={[styles.momentQuoteLabel, { color: isOutgoing ? textColor : theme.primary }]}
                 numberOfLines={1}
               >
                 Moment
@@ -376,7 +379,7 @@ export function ChatMessageRow({
         >
           <View style={[styles.bubble, { backgroundColor: bubbleBg }, corners, styles.fileRow]}>
             {replyQuote}
-            <Feather name="file" size={20} color={isOutgoing ? '#fff' : chatTheme.primary} />
+            <Feather name="file" size={20} color={isOutgoing ? textColor : theme.primary} />
             <Text style={[styles.fileName, { color: textColor }]} numberOfLines={2}>
               {msg.file_name || 'Document'}
             </Text>
@@ -392,7 +395,7 @@ export function ChatMessageRow({
         <LinkText
           text={msg.content ?? ''}
           color={textColor}
-          linkColor={isOutgoing ? '#fff' : chatTheme.link}
+          linkColor={isOutgoing ? textColor : theme.link}
           onLinkPress={(url) => {
             void openFileUrl(url.startsWith('http') ? url : `https://${url}`);
           }}
@@ -408,7 +411,7 @@ export function ChatMessageRow({
   const renderReplyAction = () => (
     <View style={styles.swipeReplyAction}>
       <View style={styles.swipeReplyIcon}>
-        <Ionicons name="arrow-undo" size={18} color={chatTheme.primary} />
+        <Ionicons name="arrow-undo" size={18} color={theme.primary} />
       </View>
     </View>
   );
