@@ -1,5 +1,5 @@
 import type { RealtimeChannel } from '@supabase/supabase-js';
-import { api } from './api';
+import { ensureProfileId } from '../stores/profileStore';
 import { ensureSupabaseSession } from './ensureSupabaseSession';
 import { supabase } from './supabase';
 import { dispatchMessageRow } from './chatRealtime';
@@ -62,8 +62,7 @@ export async function startRealtimeHub(
 
   let profileId: string | null = null;
   try {
-    const { profile } = await api.profiles.me();
-    profileId = (profile?.id as string) ?? null;
+    profileId = await ensureProfileId(authUserId);
   } catch {
     console.warn('[realtimeHub] could not load profile id');
   }

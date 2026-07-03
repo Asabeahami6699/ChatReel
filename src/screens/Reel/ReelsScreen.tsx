@@ -221,15 +221,11 @@ export default function ReelsScreen() {
   );
 
   const refreshFollowedAuthors = useCallback(async () => {
+    if (!myProfileId) return;
     try {
-      const [{ profile }, { friendships }] = await Promise.all([
-        api.profiles.me() as Promise<{ profile: { id?: string } }>,
-        api.friendships.list('accepted') as Promise<{
-          friendships: Array<{ user_id?: string; friend_id?: string }>;
-        }>,
-      ]);
-      const myProfileId = profile?.id;
-      if (!myProfileId) return;
+      const { friendships } = (await api.friendships.list('accepted')) as {
+        friendships: Array<{ user_id?: string; friend_id?: string }>;
+      };
       const set = new Set<string>();
       for (const f of friendships ?? []) {
         if (f.user_id === myProfileId && f.friend_id) set.add(f.friend_id);
@@ -239,7 +235,7 @@ export default function ReelsScreen() {
     } catch {
       /* ignore */
     }
-  }, []);
+  }, [myProfileId]);
 
 
   const resetFeedScroll = useCallback(() => {

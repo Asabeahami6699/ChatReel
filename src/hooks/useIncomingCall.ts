@@ -4,25 +4,32 @@ import { api, type CallDTO } from '../lib/api';
 import { useAuth } from './useAuth';
 import { useRealtimeTopic } from './useRealtimeTopic';
 
-const POLL_MS = 1000;
-const MAX_BACKOFF_MS = 30_000;
+/** Poll interval when healthy — incoming calls rarely need sub-second checks. */
+const POLL_MS = 5_000;
+const MIN_GAP_MS = 2_500;
+const MAX_BACKOFF_MS = 60_000;
 
 /**
  * Returns the currently-ringing incoming call addressed to me, if any.
- * Polls `/api/calls/incoming` (works even when realtime is down).
- * Backs off on network/CORS failures and pauses when the app tab is hidden.
+ * Polls `/api/calls/incoming` with backoff and pauses when the tab is hidden.
  */
 export function useIncomingCall(): CallDTO | null {
   const { user } = useAuth();
   const myAuthId = user?.id ?? null;
   const [incoming, setIncoming] = useState<CallDTO | null>(null);
   const backoffRef = useRef(POLL_MS);
+  const lastPollAtRef = useRef(0);
 
-  const refresh = useCallback(async (): Promise<boolean> => {
+  const fetchIncoming = useCallback(async (): Promise<boolean> => {
     if (!myAuthId) {
       setIncoming(null);
       return true;
     }
+
+    const now = Date.now();
+    if (now - lastPollAtRef.current < MIN_GAP_MS) return true;
+    lastPollAtRef.current = now;
+
     try {
       const { call: ring } = await api.calls.incoming();
       if (!ring) {
@@ -63,11 +70,11 @@ export function useIncomingCall(): CallDTO | null {
       const inactive = AppState.currentState !== 'active';
 
       if (hiddenOnWeb || inactive) {
-        schedule(3000);
+        schedule(10_000);
         return;
       }
 
-      const ok = await refresh();
+      const ok = await fetchIncoming();
       if (ok) {
         backoffRef.current = POLL_MS;
         schedule(POLL_MS);
@@ -93,9 +100,13 @@ export function useIncomingCall(): CallDTO | null {
       clearTimeout(timer);
       sub.remove();
     };
-  }, [myAuthId, refresh]);
+  }, [myAuthId, fetchIncoming]);
 
-  useRealtimeTopic('calls', refresh);
+  const onRealtimeCalls = useCallback(() => {
+    void fetchIncoming();
+  }, [fetchIncoming]);
+
+  useRealtimeTopic('calls', onRealtimeCalls);
 
   return incoming;
 }

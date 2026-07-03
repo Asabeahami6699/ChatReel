@@ -148,8 +148,7 @@ export function useReelsFeed(source: FeedSource = 'feed') {
   }, [fetchPage]);
 
   /**
-   * Realtime counts sync for all currently loaded reels (likes/comments/views),
-   * so users see updates instantly without manual refresh.
+   * Realtime counts sync for visible reels only (debounced, capped batch size).
    */
   const syncLoadedReels = useCallback(async () => {
     if (syncingRef.current) return;
@@ -157,7 +156,7 @@ export function useReelsFeed(source: FeedSource = 'feed') {
     if (current.length === 0) return;
     syncingRef.current = true;
     try {
-      const ids = current.slice(0, 40).map((r) => r.id);
+      const ids = current.slice(0, 8).map((r) => r.id);
       const settled = await Promise.allSettled(ids.map((id) => api.reels.get(id)));
       const freshById = new Map<string, ReelDTO>();
       for (const r of settled) {
@@ -176,6 +175,15 @@ export function useReelsFeed(source: FeedSource = 'feed') {
       syncingRef.current = false;
     }
   }, []);
+
+  const debouncedSyncRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleSyncLoadedReels = useCallback(() => {
+    if (debouncedSyncRef.current) clearTimeout(debouncedSyncRef.current);
+    debouncedSyncRef.current = setTimeout(() => {
+      debouncedSyncRef.current = null;
+      void syncLoadedReels();
+    }, 2000);
+  }, [syncLoadedReels]);
 
   // Local optimistic helpers (used by ReelsScreen to update like state instantly)
   const applyLocalLikeChange = useCallback((reelId: string, liked: boolean) => {
@@ -215,8 +223,8 @@ export function useReelsFeed(source: FeedSource = 'feed') {
   // New/deleted reels: reconcile ordering with first page.
   useRealtimeTopic('reels', reconcileFirstPage);
   // Likes/comments: sync already-loaded reels in place (no pull-to-refresh needed).
-  useRealtimeTopic('reelLikes', syncLoadedReels);
-  useRealtimeTopic('reelComments', syncLoadedReels);
+  useRealtimeTopic('reelLikes', scheduleSyncLoadedReels);
+  useRealtimeTopic('reelComments', scheduleSyncLoadedReels);
 
   return {
     ...state,

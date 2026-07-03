@@ -103,7 +103,7 @@ router.get(
       friendIds,
       viewerAuthUserId: req.userId!,
       cursor,
-      targetCount: 500,
+      targetCount: 120,
     });
 
     const ranked = await recommendReelsForUser(profileId, candidates, { limit: 20 });

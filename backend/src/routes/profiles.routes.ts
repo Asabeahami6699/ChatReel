@@ -1,6 +1,11 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { supabaseAdmin } from '../lib/supabaseAdmin';
+import {
+  getCachedProfileMe,
+  invalidateProfileMe,
+  setCachedProfileMe,
+} from '../lib/profileMeCache';
 import { asyncHandler, AuthedRequest, requireAuth } from '../middleware/auth';
 import { getProfileSuggestions } from '../services/suggestions.service';
 
@@ -40,13 +45,22 @@ router.get(
   '/me',
   requireAuth,
   asyncHandler(async (req: AuthedRequest, res) => {
+    const userId = req.userId!;
+    const cached = getCachedProfileMe(userId);
+    if (cached) {
+      res.set('Cache-Control', 'private, max-age=15');
+      return res.json({ profile: cached });
+    }
+
     const { data, error } = await supabaseAdmin
       .from('profiles')
       .select('*')
-      .eq('user_id', req.userId!)
+      .eq('user_id', userId)
       .maybeSingle();
 
     if (error) return res.status(500).json({ error: error.message });
+    if (data) setCachedProfileMe(userId, data);
+    res.set('Cache-Control', 'private, max-age=15');
     return res.json({ profile: data });
   })
 );
@@ -115,6 +129,7 @@ router.patch(
       .single();
 
     if (error) return res.status(500).json({ error: error.message });
+    invalidateProfileMe(req.userId!);
     return res.json({ profile: data });
   })
 );
