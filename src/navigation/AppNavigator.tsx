@@ -231,9 +231,14 @@ const MainTabNavigator = () => {
  *  Web desktop: sidebar + chat panel (no call screens here — those live
  *  on the root stack so navigation works from nested chat trees).
  * ------------------------------------------------------------------ */
+const SIDEBAR_FULL = 320;
+const SIDEBAR_COLLAPSED = 64;
+
 const WebDesktopMain = () => {
   const [selectedChat, setSelectedChat] = useState<any>(null);
   const [activeTab, setActiveTab] = useState('Chats');
+  const isReels = activeTab === 'Reels';
+  const sidebarWidth = isReels ? SIDEBAR_COLLAPSED : SIDEBAR_FULL;
 
   const openDesktopChat = useCallback((params: OpenChatParams) => {
     setActiveTab('Chats');
@@ -247,7 +252,7 @@ const WebDesktopMain = () => {
 
   return (
     <View style={styles.webContainer}>
-      <View style={styles.sidebar}>
+      <View style={[styles.sidebar, { width: sidebarWidth }, isReels && styles.sidebarReels]}>
         <Tab.Navigator
           initialRouteName="Chats"
           tabBarPosition="bottom"
@@ -260,25 +265,61 @@ const WebDesktopMain = () => {
             },
           }}
           screenOptions={{
-            tabBarShowLabel: true,
-            tabBarActiveTintColor: '#007AFF',
-            tabBarInactiveTintColor: '#999',
-            tabBarStyle: styles.webTabBar,
+            tabBarShowIcon: true,
+            tabBarShowLabel: !isReels,
+            tabBarActiveTintColor: isReels ? '#fff' : '#007AFF',
+            tabBarInactiveTintColor: isReels ? 'rgba(255,255,255,0.45)' : '#999',
+            tabBarStyle: isReels ? styles.webTabBarCollapsed : styles.webTabBar,
             tabBarLabelStyle: { fontSize: 13, fontWeight: '600' },
+            tabBarItemStyle: isReels ? styles.webTabBarItemCollapsed : undefined,
+            tabBarIndicatorStyle: isReels ? { display: 'none' } : undefined,
+            tabBarPressColor: 'transparent',
             lazy: true,
             lazyPreloadDistance: 0,
           }}
         >
-          <Tab.Screen name="Chats" listeners={{ focus: () => setSelectedChat(null) }}>
+          <Tab.Screen
+            name="Chats"
+            listeners={{ focus: () => setSelectedChat(null) }}
+            options={{
+              tabBarIcon: ({ color }) => (
+                <Ionicons name="chatbubble-outline" size={22} color={color} />
+              ),
+            }}
+          >
             {() => <ChatStack setSelectedChat={setSelectedChat} />}
           </Tab.Screen>
-          <Tab.Screen name="Explore" component={ExploreNavigator} />
-          <Tab.Screen name="Calls" component={CallsScreen} />
-          <Tab.Screen name="Reels" component={WebReelsSidebarPlaceholder} />
+          <Tab.Screen
+            name="Explore"
+            component={ExploreNavigator}
+            options={{
+              tabBarIcon: ({ color }) => (
+                <Ionicons name="compass-outline" size={22} color={color} />
+              ),
+            }}
+          />
+          <Tab.Screen
+            name="Calls"
+            component={CallsScreen}
+            options={{
+              tabBarIcon: ({ color }) => (
+                <Ionicons name="call-outline" size={22} color={color} />
+              ),
+            }}
+          />
+          <Tab.Screen
+            name="Reels"
+            component={WebReelsSidebarPlaceholder}
+            options={{
+              tabBarIcon: ({ color }) => (
+                <Ionicons name="play-circle-outline" size={22} color={color} />
+              ),
+            }}
+          />
         </Tab.Navigator>
       </View>
       <View style={styles.mainPanel}>
-        {activeTab === 'Reels' ? (
+        {isReels ? (
           <ReelsNavigator key="web-desktop-reels" />
         ) : (
           <WebChatPanel selectedChat={selectedChat} />
@@ -410,11 +451,25 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 4,
   },
+  sidebarReels: {
+    backgroundColor: '#000',
+    borderColor: '#222',
+  },
   webTabBar: {
     backgroundColor: '#fff',
     borderTopWidth: 0.5,
     borderColor: '#eee',
     height: 60,
+  },
+  webTabBarCollapsed: {
+    backgroundColor: '#111',
+    borderTopWidth: 0.5,
+    borderColor: '#333',
+    height: 60,
+  },
+  webTabBarItemCollapsed: {
+    paddingVertical: 6,
+    minWidth: 0,
   },
   mainPanel: { 
     flex: 1, 

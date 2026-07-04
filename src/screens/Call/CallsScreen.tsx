@@ -346,6 +346,37 @@ export default function CallsScreen() {
     </View>
   );
 
+  const renderQuickContactHorizontal = (contact: QuickContact) => (
+    <View key={`h-${contact.key}`} style={styles.quickCardHorizontal}>
+      <Pressable style={styles.quickAvatarWrap} onPress={() => openChatForContact(contact)}>
+        {contact.avatar ? (
+          <Image source={{ uri: contact.avatar }} style={styles.quickAvatar} />
+        ) : (
+          <View style={[styles.quickAvatar, styles.avatarFallback]}>
+            <Text style={styles.avatarFallbackText}>{contact.name.charAt(0).toUpperCase()}</Text>
+          </View>
+        )}
+      </Pressable>
+      <Text style={styles.quickNameHorizontal} numberOfLines={1}>
+        {contact.name.split(' ')[0]}
+      </Text>
+      <View style={styles.quickActions}>
+        <TouchableOpacity
+          style={[styles.quickActionBtn, styles.quickVoiceBtn]}
+          onPress={() => void startCall(contact, 'voice')}
+        >
+          <Ionicons name="call" size={16} color="#fff" />
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.quickActionBtn, styles.quickVideoBtn]}
+          onPress={() => void startCall(contact, 'video')}
+        >
+          <Ionicons name="videocam" size={16} color="#fff" />
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
   const renderCallItem = (item: CallHistoryItemDTO) => {
     const missed = isMissedFor(item);
     const incoming = item.direction === 'incoming';

@@ -11,7 +11,9 @@ export function getReelFrameDimensions(windowWidth: number, windowHeight: number
     Platform.OS === 'web' && windowWidth > REEL_PHONE_MAX_WIDTH + 64;
   const frameWidth = usePhoneFrame ? REEL_PHONE_MAX_WIDTH : windowWidth;
   const frameHeight = windowHeight;
-  return { frameWidth, frameHeight, usePhoneFrame };
+  /** On desktop, action buttons sit outside the video to the right (YouTube Shorts style). */
+  const desktopActionOffset = usePhoneFrame ? REEL_ACTION_RAIL_WIDTH + 12 : 0;
+  return { frameWidth, frameHeight, usePhoneFrame, desktopActionOffset };
 }
 
 /** Space to keep captions from sitting under the right engagement column. */

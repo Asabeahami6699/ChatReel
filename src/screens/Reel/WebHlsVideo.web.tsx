@@ -7,6 +7,7 @@ type Props = {
   uri: string;
   style?: StyleProp<ViewStyle>;
   muted: boolean;
+  volume?: number;
   shouldPlay: boolean;
   onReady?: () => void;
   onPlaybackStatusUpdate?: (status: ReelPlaybackStatus) => void;
@@ -31,6 +32,7 @@ export function WebHlsVideo({
   uri,
   style,
   muted,
+  volume,
   shouldPlay,
   onReady,
   onPlaybackStatusUpdate,
@@ -61,8 +63,12 @@ export function WebHlsVideo({
     });
   };
 
+  const volumeRef = useRef(volume);
+  volumeRef.current = volume;
+
   const applyPlayback = (video: HTMLVideoElement) => {
     video.muted = mutedRef.current;
+    if (volumeRef.current !== undefined) video.volume = volumeRef.current;
     if (!shouldPlayRef.current) {
       video.pause();
       emitStatus(video);
@@ -147,7 +153,7 @@ export function WebHlsVideo({
     const video = videoRef.current;
     if (!video) return;
     applyPlayback(video);
-  }, [muted, shouldPlay]);
+  }, [muted, shouldPlay, volume]);
 
   return (
     <View style={style}>

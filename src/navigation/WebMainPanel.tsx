@@ -55,24 +55,12 @@ export function WebMainPanel({ selectedChat }: Props) {
 
 /** Placeholder in the narrow sidebar when Reels tab is selected. */
 export function WebReelsSidebarPlaceholder() {
-  return (
-    <View style={styles.reelsSidebarHint}>
-      <Text style={styles.reelsSidebarHintText}>Reels open in the main panel →</Text>
-    </View>
-  );
+  return <View style={styles.reelsSidebarHint} />;
 }
 
 const styles = StyleSheet.create({
   reelsSidebarHint: {
     flex: 1,
-    backgroundColor: '#111',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 16,
-  },
-  reelsSidebarHintText: {
-    color: '#888',
-    fontSize: 12,
-    textAlign: 'center',
+    backgroundColor: '#000',
   },
 });

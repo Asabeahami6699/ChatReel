@@ -9,16 +9,27 @@ import ReelAccountScreen from '../screens/Reel/ReelAccountScreen';
 import ReelCreatorProfileScreen from '../screens/Reel/ReelCreatorProfileScreen';
 import ReelDetailScreen from '../screens/Reel/ReelDetailScreen';
 import ReelsTabBar from '../screens/Reel/ReelsTabBar';
+import { ReelFeedModeProvider, useReelFeedMode } from '../screens/Reel/ReelFeedModeContext';
 import type { ReelsStackParamList, ReelsTabParamList } from './reelsNavigation';
 
 const Tab = createBottomTabNavigator<ReelsTabParamList>();
 const Stack = createNativeStackNavigator<ReelsStackParamList>();
 
-function ReelTabs() {
+function ReelTabsInner() {
+  const { feedMode, setFeedMode, sidebarCollapsed, toggleSidebar } = useReelFeedMode();
+
   return (
     <Tab.Navigator
       initialRouteName="ReelHome"
-      tabBar={(props) => <ReelsTabBar {...props} />}
+      tabBar={(props) => (
+        <ReelsTabBar
+          {...props}
+          feedMode={feedMode}
+          onFeedModeChange={setFeedMode}
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={toggleSidebar}
+        />
+      )}
       screenOptions={{
         headerShown: false,
         lazy: true,
@@ -29,6 +40,14 @@ function ReelTabs() {
       <Tab.Screen name="ReelInbox" component={ReelInboxScreen} />
       <Tab.Screen name="ReelAccount" component={ReelAccountScreen} />
     </Tab.Navigator>
+  );
+}
+
+function ReelTabs() {
+  return (
+    <ReelFeedModeProvider>
+      <ReelTabsInner />
+    </ReelFeedModeProvider>
   );
 }
 

@@ -26,6 +26,7 @@ type Props = {
   style?: StyleProp<ViewStyle>;
   shouldPlay?: boolean;
   isMuted?: boolean;
+  volume?: number;
   isLooping?: boolean;
   contentFit?: 'contain' | 'cover' | 'fill';
   /** Show OS playback controls (preview / chat). */
@@ -41,6 +42,7 @@ export const ReelPlayer = forwardRef<ReelPlayerHandle, Props>(function ReelPlaye
     style,
     shouldPlay = false,
     isMuted = false,
+    volume,
     isLooping = true,
     contentFit = 'contain',
     nativeControls = false,
@@ -59,6 +61,7 @@ export const ReelPlayer = forwardRef<ReelPlayerHandle, Props>(function ReelPlaye
   const player = useVideoPlayer(source, (p) => {
     p.loop = isLooping;
     p.muted = isMuted;
+    if (volume !== undefined) p.volume = volume;
     p.timeUpdateEventInterval = progressUpdateIntervalMillis / 1000;
   });
 
@@ -98,6 +101,10 @@ export const ReelPlayer = forwardRef<ReelPlayerHandle, Props>(function ReelPlaye
   useEffect(() => {
     player.muted = isMuted;
   }, [isMuted, player]);
+
+  useEffect(() => {
+    if (volume !== undefined) player.volume = volume;
+  }, [volume, player]);
 
   useEffect(() => {
     player.timeUpdateEventInterval = progressUpdateIntervalMillis / 1000;

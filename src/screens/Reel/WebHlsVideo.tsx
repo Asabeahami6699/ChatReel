@@ -5,6 +5,7 @@ type Props = {
   uri: string;
   style?: object;
   muted: boolean;
+  volume?: number;
   shouldPlay: boolean;
   onReady?: () => void;
   onPlaybackStatusUpdate?: (status: ReelPlaybackStatus) => void;

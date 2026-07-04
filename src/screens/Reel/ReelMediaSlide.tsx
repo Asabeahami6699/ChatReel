@@ -15,6 +15,7 @@ type Props = {
   isFocused: boolean;
   isPlaying: boolean;
   isMuted: boolean;
+  volume?: number;
   isReady: boolean;
   videoUri?: string;
   onReady: (key: string) => void;
@@ -32,6 +33,7 @@ export function ReelMediaSlide({
   isFocused,
   isPlaying,
   isMuted,
+  volume,
   isReady,
   videoUri,
   onReady,
@@ -82,6 +84,7 @@ export function ReelMediaSlide({
           uri={playbackUri}
           style={styles.media}
           muted={isMuted}
+          volume={volume}
           shouldPlay={isActiveSlide && isPlaying && isFocused}
           onReady={() => onReady(slideKey)}
           onPlaybackStatusUpdate={(status) => onPlaybackStatus(slideKey, status, isActiveSlide)}
@@ -94,6 +97,7 @@ export function ReelMediaSlide({
           contentFit="contain"
           shouldPlay={isActiveSlide && isPlaying && isFocused}
           isMuted={isMuted}
+          volume={volume}
           isLooping
           progressUpdateIntervalMillis={isActiveSlide ? 250 : 1000}
           onReadyForDisplay={() => onReady(slideKey)}
