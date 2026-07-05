@@ -95,13 +95,16 @@ const ReelsWrapper = ({ navigation }: { navigation: any }) => {
   const [isInitialized, setIsInitialized] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
 
-  // Handle focus events to initialize only when tab is focused
+  // Mount reels navigator in the background after idle so feed + video are warm before first tap.
+  React.useEffect(() => {
+    const idleTimer = setTimeout(() => setIsInitialized(true), 2200);
+    return () => clearTimeout(idleTimer);
+  }, []);
+
   React.useEffect(() => {
     const unsubscribeFocus = navigation.addListener('focus', () => {
       setIsFocused(true);
-      if (!isInitialized) {
-        setIsInitialized(true);
-      }
+      setIsInitialized(true);
     });
 
     const unsubscribeBlur = navigation.addListener('blur', () => {
@@ -112,15 +115,10 @@ const ReelsWrapper = ({ navigation }: { navigation: any }) => {
       unsubscribeFocus();
       unsubscribeBlur();
     };
-  }, [navigation, isInitialized]);
+  }, [navigation]);
 
-  // Keep navigator mounted once initialized (avoids duplicate registration on tab blur).
   if (!isInitialized) {
-    return (
-      <View style={styles.reelsPlaceholder}>
-        {/* Loading placeholder */}
-      </View>
-    );
+    return <View style={styles.reelsPlaceholder} />;
   }
 
   return (

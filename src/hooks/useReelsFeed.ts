@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError, api, type ReelDTO } from '../lib/api';
+import {
+  getReelsFeedCache,
+  upsertReelsFeedCache,
+  type ReelsFeedCacheKey,
+} from '../lib/reelsFeedPrefetch';
 import { useRealtimeTopic } from './useRealtimeTopic';
 
 type FeedSource = 'feed' | 'following' | 'me' | { user: string };
@@ -16,6 +21,37 @@ type State = {
 
 const PAGE_SIZE = 15;
 
+function cacheKeyForSource(source: FeedSource): ReelsFeedCacheKey | null {
+  if (source === 'feed') return 'feed';
+  if (source === 'following') return 'following';
+  return null;
+}
+
+function initialStateForSource(source: FeedSource): State {
+  const key = cacheKeyForSource(source);
+  const cached = key ? getReelsFeedCache(key) : null;
+  if (cached && cached.reels.length > 0) {
+    return {
+      reels: cached.reels,
+      loading: false,
+      refreshing: false,
+      loadingMore: false,
+      cursor: cached.next_cursor,
+      hasMore: Boolean(cached.next_cursor),
+      error: null,
+    };
+  }
+  return {
+    reels: [],
+    loading: true,
+    refreshing: false,
+    loadingMore: false,
+    cursor: null,
+    hasMore: true,
+    error: null,
+  };
+}
+
 /**
  * Backing source for the vertical reels feed. Handles initial load,
  * pull-to-refresh, infinite scroll, and live updates via the realtime hub.
@@ -25,15 +61,8 @@ const PAGE_SIZE = 15;
  * scroll position isn't lost. Likes/comments fired from outside still reflect.
  */
 export function useReelsFeed(source: FeedSource = 'feed') {
-  const [state, setState] = useState<State>({
-    reels: [],
-    loading: true,
-    refreshing: false,
-    loadingMore: false,
-    cursor: null,
-    hasMore: true,
-    error: null,
-  });
+  const sourceKey = typeof source === 'object' ? source.user : source;
+  const [state, setState] = useState<State>(() => initialStateForSource(source));
 
   const reelsRef = useRef<ReelDTO[]>([]);
   reelsRef.current = state.reels;
@@ -54,12 +83,14 @@ export function useReelsFeed(source: FeedSource = 'feed') {
       const { reels } = await api.reels.byUser(source.user, PAGE_SIZE);
       return { reels, next_cursor: null };
     },
-    // serialise object-form source for stable identity
-    [typeof source === 'object' ? source.user : source]
+    [sourceKey]
   );
 
   const loadInitial = useCallback(async () => {
-    setState((s) => ({ ...s, loading: true, error: null }));
+    setState((s) => {
+      if (s.reels.length > 0) return s;
+      return { ...s, loading: true, error: null };
+    });
     try {
       const { reels, next_cursor } = await fetchPage(null);
       setState({
@@ -71,12 +102,20 @@ export function useReelsFeed(source: FeedSource = 'feed') {
         hasMore: Boolean(next_cursor),
         error: null,
       });
+      const key = cacheKeyForSource(source);
+      if (key && reels.length > 0) {
+        upsertReelsFeedCache(key, reels, next_cursor ?? null);
+      }
     } catch (err) {
       const message =
         err instanceof ApiError ? err.message : (err as Error).message ?? 'Failed to load reels';
-      setState((s) => ({ ...s, loading: false, error: message }));
+      setState((s) => ({
+        ...s,
+        loading: false,
+        error: s.reels.length > 0 ? s.error : message,
+      }));
     }
-  }, [fetchPage]);
+  }, [fetchPage, source]);
 
   const refresh = useCallback(async () => {
     setState((s) => ({ ...s, refreshing: true, error: null }));
@@ -91,12 +130,16 @@ export function useReelsFeed(source: FeedSource = 'feed') {
         hasMore: Boolean(next_cursor),
         error: null,
       });
+      const key = cacheKeyForSource(source);
+      if (key && reels.length > 0) {
+        upsertReelsFeedCache(key, reels, next_cursor ?? null);
+      }
     } catch (err) {
       const message =
         err instanceof ApiError ? err.message : (err as Error).message ?? 'Failed to refresh';
       setState((s) => ({ ...s, refreshing: false, error: message }));
     }
-  }, [fetchPage]);
+  }, [fetchPage, source]);
 
   const loadMore = useCallback(async () => {
     setState((current) => {
@@ -217,8 +260,11 @@ export function useReelsFeed(source: FeedSource = 'feed') {
   }, []);
 
   useEffect(() => {
+    const next = initialStateForSource(source);
+    reelsRef.current = next.reels;
+    setState(next);
     void loadInitial();
-  }, [loadInitial]);
+  }, [sourceKey, loadInitial, source]);
 
   // New/deleted reels: reconcile ordering with first page.
   useRealtimeTopic('reels', reconcileFirstPage);

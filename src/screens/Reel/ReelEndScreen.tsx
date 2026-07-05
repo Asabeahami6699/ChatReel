@@ -1,55 +1,54 @@
 import React, { useEffect, useRef } from 'react';
-import { Animated, Easing, Image, StyleSheet, Text } from 'react-native';
+import { Animated, Easing, Image, Platform, StyleSheet, Text, View } from 'react-native';
 import { USE_NATIVE_DRIVER } from '../../lib/animation';
 import { APP_NAME, REEL_END_SCREEN_MS } from './reelTheme';
 
-const APP_LOGO = require('../../../assets/favIconChat.png');
+const END_GIF = require('../../../assets/reel-end.gif');
 
-const ENTER_MS = 550;
-const EXIT_MS = 550;
+const FADE_MS = 450;
 
 type Props = {
   ownerName?: string;
   durationMs?: number;
 };
 
-/** Shown when a reel finishes — animates in, holds, then animates out. */
+/** Branded looping GIF + creator tag when a reel finishes. */
 export function ReelEndScreen({ ownerName, durationMs = REEL_END_SCREEN_MS }: Props) {
   const overlayOpacity = useRef(new Animated.Value(0)).current;
   const cardOpacity = useRef(new Animated.Value(0)).current;
-  const scale = useRef(new Animated.Value(0.78)).current;
-  const slideY = useRef(new Animated.Value(28)).current;
+  const cardScale = useRef(new Animated.Value(0.88)).current;
+  const cardSlideY = useRef(new Animated.Value(20)).current;
 
   useEffect(() => {
     overlayOpacity.setValue(0);
     cardOpacity.setValue(0);
-    scale.setValue(0.78);
-    slideY.setValue(28);
+    cardScale.setValue(0.88);
+    cardSlideY.setValue(20);
 
-    const holdMs = Math.max(0, durationMs - ENTER_MS - EXIT_MS);
+    const holdMs = Math.max(0, durationMs - FADE_MS * 2);
 
     const enter = Animated.parallel([
       Animated.timing(overlayOpacity, {
         toValue: 1,
-        duration: ENTER_MS,
+        duration: FADE_MS,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: USE_NATIVE_DRIVER,
       }),
       Animated.timing(cardOpacity, {
         toValue: 1,
-        duration: ENTER_MS,
+        duration: FADE_MS,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: USE_NATIVE_DRIVER,
       }),
-      Animated.spring(scale, {
+      Animated.spring(cardScale, {
         toValue: 1,
         friction: 7,
-        tension: 88,
+        tension: 90,
         useNativeDriver: USE_NATIVE_DRIVER,
       }),
-      Animated.timing(slideY, {
+      Animated.timing(cardSlideY, {
         toValue: 0,
-        duration: ENTER_MS,
+        duration: FADE_MS,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: USE_NATIVE_DRIVER,
       }),
@@ -58,25 +57,25 @@ export function ReelEndScreen({ ownerName, durationMs = REEL_END_SCREEN_MS }: Pr
     const exit = Animated.parallel([
       Animated.timing(overlayOpacity, {
         toValue: 0,
-        duration: EXIT_MS,
+        duration: FADE_MS,
         easing: Easing.in(Easing.cubic),
         useNativeDriver: USE_NATIVE_DRIVER,
       }),
       Animated.timing(cardOpacity, {
         toValue: 0,
-        duration: EXIT_MS,
+        duration: FADE_MS,
         easing: Easing.in(Easing.cubic),
         useNativeDriver: USE_NATIVE_DRIVER,
       }),
-      Animated.timing(scale, {
-        toValue: 0.88,
-        duration: EXIT_MS,
+      Animated.timing(cardScale, {
+        toValue: 0.92,
+        duration: FADE_MS,
         easing: Easing.in(Easing.cubic),
         useNativeDriver: USE_NATIVE_DRIVER,
       }),
-      Animated.timing(slideY, {
-        toValue: -18,
-        duration: EXIT_MS,
+      Animated.timing(cardSlideY, {
+        toValue: -12,
+        duration: FADE_MS,
         easing: Easing.in(Easing.cubic),
         useNativeDriver: USE_NATIVE_DRIVER,
       }),
@@ -85,7 +84,7 @@ export function ReelEndScreen({ ownerName, durationMs = REEL_END_SCREEN_MS }: Pr
     const seq = Animated.sequence([enter, Animated.delay(holdMs), exit]);
     seq.start();
     return () => seq.stop();
-  }, [cardOpacity, durationMs, overlayOpacity, ownerName, scale, slideY]);
+  }, [cardOpacity, cardScale, cardSlideY, durationMs, overlayOpacity, ownerName]);
 
   return (
     <Animated.View style={[styles.overlay, { opacity: overlayOpacity }]} pointerEvents="none">
@@ -94,16 +93,23 @@ export function ReelEndScreen({ ownerName, durationMs = REEL_END_SCREEN_MS }: Pr
           styles.card,
           {
             opacity: cardOpacity,
-            transform: [{ scale }, { translateY: slideY }],
+            transform: [{ scale: cardScale }, { translateY: cardSlideY }],
           },
         ]}
       >
-        <Image source={APP_LOGO} style={styles.logo} />
+        <Image
+          source={END_GIF}
+          style={styles.gif}
+          resizeMode="contain"
+          {...(Platform.OS === 'web' ? ({ accessibilityLabel: 'Thanks for watching' } as object) : {})}
+        />
         <Text style={styles.appName}>{APP_NAME}</Text>
         {ownerName ? (
-          <Text style={styles.owner} numberOfLines={1}>
-            @{ownerName}
-          </Text>
+          <View style={styles.ownerTag}>
+            <Text style={styles.owner} numberOfLines={1}>
+              @{ownerName}
+            </Text>
+          </View>
         ) : null}
         <Text style={styles.hint}>Thanks for watching</Text>
       </Animated.View>
@@ -121,31 +127,41 @@ const styles = StyleSheet.create({
   },
   card: {
     alignItems: 'center',
-    paddingHorizontal: 28,
-    paddingVertical: 24,
+    paddingHorizontal: 24,
+    paddingVertical: 20,
     borderRadius: 16,
     backgroundColor: 'rgba(255,255,255,0.08)',
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(255,255,255,0.2)',
-    maxWidth: '80%',
+    maxWidth: '82%',
   },
-  logo: {
-    width: 56,
-    height: 56,
-    borderRadius: 14,
-    marginBottom: 12,
+  gif: {
+    width: 160,
+    height: 160,
+    marginBottom: 4,
   },
   appName: {
     color: '#fff',
     fontSize: 22,
     fontWeight: '800',
     letterSpacing: 0.3,
+    marginTop: 4,
+  },
+  ownerTag: {
+    marginTop: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0,122,255,0.35)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(0,122,255,0.55)',
+    maxWidth: '100%',
   },
   owner: {
-    color: 'rgba(255,255,255,0.85)',
+    color: '#fff',
     fontSize: 14,
-    fontWeight: '600',
-    marginTop: 6,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
   hint: {
     color: 'rgba(255,255,255,0.55)',

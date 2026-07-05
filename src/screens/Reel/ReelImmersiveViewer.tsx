@@ -414,7 +414,12 @@ export function ReelImmersiveViewer({
                 <Text style={styles.username}>@{authorLabel(item)}</Text>
               </View>
               {!!item.caption && (
-                <ExpandableCaption text={item.caption} style={styles.caption} maxLines={3} />
+                <ExpandableCaption
+                  text={item.caption}
+                  style={styles.caption}
+                  maxLines={3}
+                  maxWidth={Math.round(reelWidth * 0.7)}
+                />
               )}
               <View style={styles.musicContainer}>
                 <Ionicons name="musical-notes" size={14} color="rgba(255,255,255,0.85)" />

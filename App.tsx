@@ -11,6 +11,7 @@ import { PushNotificationRegistrar } from './src/components/PushNotificationRegi
 import { Provider as PaperProvider } from 'react-native-paper';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { ReelUploadToast } from './src/components/ReelUploadToast';
+import { ReelsPrefetchRegistrar } from './src/components/ReelsPrefetchRegistrar';
 import { MomentUploadToast } from './src/components/MomentUploadToast';
 import { PresenceSyncRegistrar } from './src/components/PresenceSyncRegistrar';
 import { useWebIconFonts } from './src/lib/loadWebIconFonts';
@@ -34,6 +35,7 @@ export default function App() {
             <RealtimeProvider>
               <PushNotificationRegistrar />
               <PresenceSyncRegistrar />
+              <ReelsPrefetchRegistrar />
               <RootNavigator />
               <ReelUploadToast />
               <MomentUploadToast />

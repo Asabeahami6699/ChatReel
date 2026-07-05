@@ -809,7 +809,11 @@ export default function ReelsScreen() {
                 )}
               </View>
               {!!item.caption && (
-                <ExpandableCaption text={item.caption} style={styles.caption} />
+              <ExpandableCaption
+                text={item.caption}
+                style={styles.caption}
+                maxWidth={Math.round(reelWidth * 0.7)}
+              />
               )}
               <View style={styles.musicContainer}>
                 <Ionicons name="musical-notes" size={14} color="rgba(255,255,255,0.85)" />

@@ -1,27 +1,32 @@
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 type Props = {
   text: string;
   style?: object;
   maxLines?: number;
+  /** Caption area width in px (typically 70% of reel frame). */
+  maxWidth?: number;
 };
 
-export function ExpandableCaption({ text, style, maxLines = 2 }: Props) {
+export function ExpandableCaption({ text, style, maxLines = 2, maxWidth }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [truncated, setTruncated] = useState(false);
 
   useEffect(() => {
-    if (text.length > maxLines * 42) setTruncated(true);
-  }, [text, maxLines]);
+    setExpanded(false);
+    setTruncated(false);
+  }, [text]);
 
   if (!text.trim()) return null;
 
+  const widthStyle = maxWidth != null ? { maxWidth, width: maxWidth } : styles.defaultWidth;
+
   return (
-    <View>
+    <View style={widthStyle}>
       <View style={styles.measureWrap} pointerEvents="none">
         <Text
-          style={[styles.caption, style]}
+          style={[styles.caption, style, widthStyle]}
           onTextLayout={(e) => {
             setTruncated(e.nativeEvent.lines.length > maxLines);
           }}
@@ -30,43 +35,40 @@ export function ExpandableCaption({ text, style, maxLines = 2 }: Props) {
         </Text>
       </View>
 
-      <View style={styles.row}>
-        <Text
-          style={[styles.caption, style, styles.captionBody]}
-          numberOfLines={expanded ? undefined : maxLines}
-          ellipsizeMode="tail"
-        >
-          {text}
-        </Text>
+      <Text
+        style={[styles.caption, style]}
+        numberOfLines={expanded ? undefined : maxLines}
+        ellipsizeMode="tail"
+      >
+        {text}
         {truncated && !expanded ? (
-          <TouchableOpacity onPress={() => setExpanded(true)} hitSlop={{ top: 6, bottom: 6, left: 2, right: 6 }}>
-            <Text style={styles.action}>more</Text>
-          </TouchableOpacity>
+          <Text style={styles.action} onPress={() => setExpanded(true)}>
+            {' '}
+            more
+          </Text>
         ) : null}
         {expanded && truncated ? (
-          <TouchableOpacity onPress={() => setExpanded(false)} hitSlop={{ top: 6, bottom: 6, left: 2, right: 6 }}>
-            <Text style={styles.action}>hide</Text>
-          </TouchableOpacity>
+          <Text style={styles.action} onPress={() => setExpanded(false)}>
+            {' '}
+            hide
+          </Text>
         ) : null}
-      </View>
+      </Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  defaultWidth: {
+    maxWidth: '70%',
+  },
   measureWrap: {
     position: 'absolute',
     opacity: 0,
     left: 0,
     right: 0,
-    width: '100%',
     zIndex: -1,
     pointerEvents: 'none',
-  },
-  row: {
-    flexDirection: 'row',
-    flexWrap: 'nowrap',
-    alignItems: 'flex-end',
   },
   caption: {
     color: '#fff',
@@ -74,17 +76,10 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     fontWeight: '500',
   },
-  captionBody: {
-    flexShrink: 1,
-    flexGrow: 0,
-    maxWidth: '88%',
-  },
   action: {
     color: 'rgba(255,255,255,0.75)',
     fontWeight: '700',
     fontSize: 14,
     lineHeight: 19,
-    marginLeft: 2,
-    marginBottom: 1,
   },
 });
