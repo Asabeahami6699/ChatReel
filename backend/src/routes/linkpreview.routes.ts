@@ -30,14 +30,15 @@ router.get(
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), OG_TIMEOUT_MS);
 
-      const response = await fetch(url, {
+      const fetchInit = {
         signal: controller.signal,
         headers: {
           'User-Agent': 'Mozilla/5.0 (compatible; ChatReelBot/1.0)',
           Accept: 'text/html',
         },
-        redirect: 'follow',
-      });
+        redirect: 'follow' as const,
+      };
+      const response = await fetch(url, fetchInit as RequestInit);
       clearTimeout(timeout);
 
       if (!response.ok) {

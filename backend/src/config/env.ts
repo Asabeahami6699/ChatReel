@@ -29,7 +29,23 @@ export const env = {
   reelsCdnUrl: process.env.REELS_CDN_URL ?? '',
   /** When true, new reels are transcoded to HLS segments after upload. Requires ffmpeg. */
   reelsHlsEnabled: process.env.REELS_HLS_ENABLED === 'true',
+  sightengine: {
+    apiUser: process.env.SIGHTENGINE_API_USER ?? '',
+    apiSecret: process.env.SIGHTENGINE_API_SECRET ?? '',
+  },
+  reelModeration: {
+    enabled: process.env.REEL_MODERATION_ENABLED !== 'false',
+    rejectThreshold: Number(process.env.REEL_MODERATION_REJECT_THRESHOLD ?? 0.55),
+    flagThreshold: Number(process.env.REEL_MODERATION_FLAG_THRESHOLD ?? 0.35),
+  },
 };
+
+export function isReelModerationEnabled(): boolean {
+  return (
+    env.reelModeration.enabled &&
+    Boolean(env.sightengine.apiUser && env.sightengine.apiSecret)
+  );
+}
 
 export function isLiveKitConfigured(): boolean {
   return Boolean(env.liveKit.apiKey && env.liveKit.apiSecret && env.liveKit.url);

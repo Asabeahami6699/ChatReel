@@ -1,6 +1,8 @@
 import { supabaseAdmin } from '../lib/supabaseAdmin';
 import { applyReelsCdnUrl, getReelPlaybackUrl, withCdnReelUrls } from '../lib/reelUrls';
 
+export type ModerationStatus = 'pending' | 'approved' | 'rejected' | 'flagged';
+
 export type ReelVisibility = 'public' | 'friends' | 'private' | 'group';
 
 export type ReelRow = {
@@ -19,6 +21,9 @@ export type ReelRow = {
   comment_count: number;
   hls_url: string | null;
   transcode_status: 'pending' | 'processing' | 'ready' | 'failed' | 'skipped';
+  moderation_status: ModerationStatus;
+  moderation_reason: string | null;
+  moderation_score: number | null;
   created_at: string;
 };
 
@@ -90,12 +95,16 @@ export async function getAcceptedFriendIds(profileId: string): Promise<Set<strin
 
 /** Whether `viewerProfileId` is allowed to see `reel`. */
 export async function canViewReel(
-  reel: Pick<ReelRow, 'author_id' | 'visibility' | 'group_id'>,
+  reel: Pick<ReelRow, 'author_id' | 'visibility' | 'group_id' | 'moderation_status'>,
   viewerProfileId: string,
   friendIds: Set<string>,
   viewerAuthUserId?: string
 ): Promise<boolean> {
   if (reel.author_id === viewerProfileId) return true;
+
+  const moderation = reel.moderation_status ?? 'approved';
+  if (moderation !== 'approved') return false;
+
   if (reel.visibility === 'public') return true;
   if (reel.visibility === 'friends') return friendIds.has(reel.author_id);
   if (reel.visibility === 'group' && reel.group_id && viewerAuthUserId) {
@@ -180,6 +189,9 @@ export async function enrichReels(
       ...r,
       transcode_status: r.transcode_status ?? 'pending',
       hls_url: r.hls_url ?? null,
+      moderation_status: r.moderation_status ?? 'pending',
+      moderation_reason: r.moderation_reason ?? null,
+      moderation_score: r.moderation_score ?? null,
       author: authorById.get(r.author_id) ?? null,
       liked_by_me: likedSet.has(r.id),
       media: mediaByReel.get(r.id),

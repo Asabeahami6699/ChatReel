@@ -63,8 +63,8 @@ export function scheduleReelsFeedPrefetch(delayMs = 1800) {
     }, delayMs);
 
     // Allow GC if never started (tests / fast unmount)
-    if (typeof timer === 'object' && 'unref' in timer) {
-      (timer as NodeJS.Timeout).unref?.();
+    if (typeof timer === 'object' && timer !== null && 'unref' in timer) {
+      (timer as { unref?: () => void }).unref?.();
     }
   });
 

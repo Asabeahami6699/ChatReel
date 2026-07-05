@@ -435,6 +435,7 @@ export async function fetchCandidateReels(params: FetchCandidatesParams): Promis
     let q = supabaseAdmin
       .from('reels')
       .select('*')
+      .eq('moderation_status', 'approved')
       .or(visibility)
       .order('created_at', { ascending: false })
       .limit(perSource);
@@ -447,6 +448,7 @@ export async function fetchCandidateReels(params: FetchCandidatesParams): Promis
     supabaseAdmin
       .from('reels')
       .select('*')
+      .eq('moderation_status', 'approved')
       .or(visibility)
       .order('view_count', { ascending: false })
       .order('like_count', { ascending: false })
@@ -454,6 +456,7 @@ export async function fetchCandidateReels(params: FetchCandidatesParams): Promis
     supabaseAdmin
       .from('reels')
       .select('*')
+      .eq('moderation_status', 'approved')
       .or(visibility)
       .order('like_count', { ascending: false })
       .order('created_at', { ascending: false })
@@ -462,6 +465,7 @@ export async function fetchCandidateReels(params: FetchCandidatesParams): Promis
       ? supabaseAdmin
           .from('reels')
           .select('*')
+          .eq('moderation_status', 'approved')
           .in('author_id', friendIds)
           .order('created_at', { ascending: false })
           .limit(perSource)
@@ -480,6 +484,7 @@ export async function fetchCandidateReels(params: FetchCandidatesParams): Promis
     const { data } = await supabaseAdmin
       .from('reels')
       .select('*')
+      .eq('moderation_status', 'approved')
       .or(pattern)
       .order('created_at', { ascending: false })
       .limit(perSource);

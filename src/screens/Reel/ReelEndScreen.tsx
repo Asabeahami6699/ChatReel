@@ -119,7 +119,7 @@ export function ReelEndScreen({ ownerName, durationMs = REEL_END_SCREEN_MS }: Pr
 
 const styles = StyleSheet.create({
   overlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0,0,0,0.72)',
     alignItems: 'center',
     justifyContent: 'center',

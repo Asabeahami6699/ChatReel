@@ -56,7 +56,11 @@ export function ReelUploadToast() {
         const prev = prevStatusRef.current.get(task.id);
         if (prev !== task.status) {
           if (task.status === 'done') {
-            setSnackbar({ visible: true, message: 'Reel posted!', isError: false });
+            const msg =
+              task.stage === 'Under review'
+                ? 'Reel submitted — we’ll notify you when it’s live'
+                : 'Reel posted!';
+            setSnackbar({ visible: true, message: msg, isError: false });
           } else if (task.status === 'error') {
             setSnackbar({
               visible: true,

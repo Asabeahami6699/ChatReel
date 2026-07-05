@@ -31,6 +31,6 @@ export function WebVideoPoster({ uri, style }: Props) {
 
 const styles = StyleSheet.create({
   fill: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
 });

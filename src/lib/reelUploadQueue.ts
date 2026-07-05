@@ -81,6 +81,41 @@ function setProgress(id: string, progress: number, stage?: string) {
   });
 }
 
+const MODERATION_POLL_MS = 2000;
+const MODERATION_TIMEOUT_MS = 90_000;
+
+async function waitForReelModeration(
+  reelId: string,
+  onStage: (stage: string) => void
+): Promise<'approved' | 'rejected' | 'pending'> {
+  const deadline = Date.now() + MODERATION_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const { reel } = await api.reels.get(reelId);
+    const status = reel.moderation_status;
+    if (status === 'approved') return 'approved';
+    if (status === 'rejected' || status === 'flagged') return 'rejected';
+    onStage('Reviewing content...');
+    await new Promise((resolve) => setTimeout(resolve, MODERATION_POLL_MS));
+  }
+  return 'pending';
+}
+
+async function finalizePublishedReel(id: string, reelId: string) {
+  setProgress(id, 92, 'Reviewing content...');
+  updateTask(id, { status: 'publishing', stage: 'Reviewing content...' });
+  const mod = await waitForReelModeration(reelId, (stage) => setProgress(id, 94, stage));
+  if (mod === 'rejected') {
+    throw new Error('This reel did not meet our community guidelines.');
+  }
+  notifyRealtimeTopic('reels');
+  updateTask(id, {
+    status: 'done',
+    stage: mod === 'pending' ? 'Under review' : 'Posted',
+    progress: 100,
+    reelId,
+  });
+}
+
 function createTask(): ReelUploadTask {
   const id = `reel-upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   return {
@@ -173,13 +208,7 @@ async function processOne(item: { id: string; draft: ReelUploadDraft }) {
       height: video.height,
     });
 
-    updateTask(id, {
-      status: 'done',
-      stage: 'Published',
-      progress: 100,
-      reelId: reel.id,
-    });
-    notifyRealtimeTopic('reels');
+    await finalizePublishedReel(id, reel.id);
     return;
   }
 
@@ -251,8 +280,7 @@ async function processOne(item: { id: string; draft: ReelUploadDraft }) {
         : undefined,
   });
 
-  notifyRealtimeTopic('reels');
-  updateTask(id, { status: 'done', stage: 'Posted', progress: 100, reelId: reel.id });
+  await finalizePublishedReel(id, reel.id);
 }
 
 async function processCarouselUpload(id: string, draft: ReelUploadDraft) {
@@ -347,13 +375,7 @@ async function processCarouselUpload(id: string, draft: ReelUploadDraft) {
     media: uploaded,
   });
 
-  notifyRealtimeTopic('reels');
-  updateTask(id, {
-    status: 'done',
-    stage: 'Published',
-    progress: 100,
-    reelId: reel.id,
-  });
+  await finalizePublishedReel(id, reel.id);
 }
 
 export function enqueueReelUpload(draft: ReelUploadDraft): ReelUploadTask {

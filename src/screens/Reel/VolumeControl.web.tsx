@@ -189,7 +189,7 @@ export function VolumeControl({
 
 const styles = StyleSheet.create({
   host: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 9999,
     elevation: 9999,
     pointerEvents: 'box-none',

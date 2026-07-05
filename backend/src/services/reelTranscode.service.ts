@@ -7,6 +7,7 @@ import { env } from '../config/env';
 import { supabaseAdmin } from '../lib/supabaseAdmin';
 import { applyReelsCdnUrl } from '../lib/reelUrls';
 import { probeVideoDimensionsFromPath } from '../lib/videoProbe';
+import { moderateReelById } from './reelModeration.service';
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
@@ -37,6 +38,15 @@ export async function transcodeReelToHls(
     if (!res.ok) throw new Error(`Download failed (${res.status})`);
     const inputPath = path.join(tmpDir, 'input.mp4');
     await fs.writeFile(inputPath, Buffer.from(await res.arrayBuffer()));
+
+    const modDecision = await moderateReelById(reelId, inputPath);
+    if (modDecision.status === 'rejected' || modDecision.status === 'flagged') {
+      await supabaseAdmin
+        .from('reels')
+        .update({ transcode_status: 'failed' })
+        .eq('id', reelId);
+      return null;
+    }
 
     try {
       const { data: existing } = await supabaseAdmin

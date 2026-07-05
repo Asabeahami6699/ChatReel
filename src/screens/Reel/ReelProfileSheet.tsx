@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useCurrentProfileId } from '../../hooks/useCurrentProfileId';
 import {
   ActivityIndicator,
   FlatList,
@@ -19,7 +20,8 @@ import { api, ApiError, type ReelDTO } from '../../lib/api';
 import { generateReelGridThumbnails } from '../../lib/generateReelGridThumbnails';
 import { REEL_ACCENT } from './reelTheme';
 import { REEL_PHONE_MAX_WIDTH } from './reelVideoLayout';
-import { ReelGridThumb } from './ReelGridThumb';
+import { ReelProfileGridItem } from './ReelProfileGridItem';
+import { useReelGridDeleteHandlers } from './useReelGridDelete';
 
 const GRID_COLS = 3;
 const GRID_GAP = 4;
@@ -52,8 +54,11 @@ export default function ReelProfileSheet({ reel, onClose, onFollowStateChange }:
   const [immersiveIndex, setImmersiveIndex] = useState<number | null>(null);
   const [followerCount, setFollowerCount] = useState(0);
   const [followersLoading, setFollowersLoading] = useState(true);
+  const myProfileId = useCurrentProfileId();
+  const handleReelDeleted = useReelGridDeleteHandlers(setPosts, setGeneratedThumbs, setImmersiveIndex);
 
   const author = reel.author;
+  const canDeleteReels = Boolean(author?.id && myProfileId && author.id === myProfileId);
   const username =
     author?.display_name?.trim() || author?.email?.split('@')[0] || 'unknown';
   const avatar = author?.avatar_url ?? null;
@@ -263,31 +268,17 @@ export default function ReelProfileSheet({ reel, onClose, onFollowStateChange }:
             columnWrapperStyle={styles.gridRow}
             showsVerticalScrollIndicator={false}
             renderItem={({ item, index }) => (
-              <TouchableOpacity
-                style={[styles.gridItem, { width: tileWidth, height: tileHeight }]}
-                activeOpacity={0.85}
-                onPress={() => setImmersiveIndex(index)}
-              >
-                <ReelGridThumb reel={item} generatedUri={generatedThumbs[item.id]} style={styles.gridImage} />
-                <View style={styles.gridOverlay}>
-                  {(item.media?.length ?? 0) > 1 && (
-                    <View style={styles.gridStat}>
-                      <Ionicons name="layers" size={11} color="#fff" />
-                      <Text style={styles.gridStatText}>{item.media!.length}</Text>
-                    </View>
-                  )}
-                  <View style={styles.gridStat}>
-                    <Ionicons name="play" size={11} color="#fff" />
-                    <Text style={styles.gridStatText}>{compact(item.view_count)}</Text>
-                  </View>
-                  {item.like_count > 0 && (
-                    <View style={styles.gridStat}>
-                      <Ionicons name="heart" size={10} color={REEL_ACCENT} />
-                      <Text style={styles.gridStatText}>{compact(item.like_count)}</Text>
-                    </View>
-                  )}
-                </View>
-              </TouchableOpacity>
+              <ReelProfileGridItem
+                reel={item}
+                index={index}
+                width={tileWidth}
+                height={tileHeight}
+                thumbUri={generatedThumbs[item.id]}
+                canDelete={canDeleteReels}
+                onOpen={() => setImmersiveIndex(index)}
+                onDeleted={handleReelDeleted}
+                style={styles.gridItem}
+              />
             )}
             ListEmptyComponent={
               <View style={styles.empty}>

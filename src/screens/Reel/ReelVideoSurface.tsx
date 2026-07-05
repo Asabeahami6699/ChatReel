@@ -129,7 +129,7 @@ export function ReelVideoSurface({
 
 const styles = StyleSheet.create({
   shell: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: '#000',
     alignItems: 'center',
     justifyContent: 'center',
@@ -139,7 +139,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   loadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.35)',

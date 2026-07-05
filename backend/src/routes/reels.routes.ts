@@ -16,7 +16,8 @@ import {
   ReelVisibility,
 } from '../services/reels.service';
 import { sendPushToUserSafe, getAuthUserIdByProfileId } from '../services/push.service';
-import { queueReelHlsTranscode } from '../services/reelTranscode.service';
+import { isReelHlsEnabled, queueReelHlsTranscode } from '../services/reelTranscode.service';
+import { assertCaptionAllowed, scheduleReelModeration } from '../services/reelModeration.service';
 import { probeVideoDimensionsFromUrl } from '../lib/videoProbe';
 
 const router = Router();
@@ -142,6 +143,7 @@ router.get(
     let query = supabaseAdmin
       .from('reels')
       .select('*')
+      .eq('moderation_status', 'approved')
       .in('author_id', authorIds)
       .order('created_at', { ascending: false })
       .order('id', { ascending: false })
@@ -448,6 +450,12 @@ router.post(
     const profileId = await getProfileIdByUserId(req.userId!);
     if (!profileId) return res.status(404).json({ error: 'Profile not found' });
 
+    try {
+      await assertCaptionAllowed(body.caption);
+    } catch (e) {
+      return res.status(400).json({ error: (e as Error).message });
+    }
+
     if (body.visibility === 'group') {
       if (!body.group_id) {
         return res.status(400).json({ error: 'group_id is required for group visibility' });
@@ -491,6 +499,7 @@ router.post(
         width,
         height,
         transcode_status: primary.media_type === 'image' ? 'skipped' : 'pending',
+        moderation_status: 'pending',
       })
       .select()
       .single();
@@ -532,6 +541,14 @@ router.post(
         trimStartSec: body.trim_start_sec,
         trimEndSec: body.trim_end_sec,
       });
+    }
+
+    const usesTranscodeModeration =
+      primary.media_type === 'video' &&
+      isReelHlsEnabled() &&
+      mediaItems.length <= 1;
+    if (!usesTranscodeModeration) {
+      scheduleReelModeration(reelId);
     }
 
     const [enriched] = await enrichReels([data as ReelRow], profileId);

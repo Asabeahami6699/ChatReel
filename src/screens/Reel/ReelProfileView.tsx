@@ -24,7 +24,8 @@ import type { ReelsStackParamList } from '../../navigation/reelsNavigation';
 import { REEL_ACCENT } from './reelTheme';
 import { reelTabBarOffset } from './ReelsTabBar';
 import { REEL_PHONE_MAX_WIDTH } from './reelVideoLayout';
-import { ReelGridThumb } from './ReelGridThumb';
+import { ReelProfileGridItem } from './ReelProfileGridItem';
+import { useReelGridDeleteHandlers } from './useReelGridDelete';
 
 const GRID_COLS = 3;
 const GRID_GAP = 4;
@@ -78,6 +79,7 @@ export default function ReelProfileView({ profileId, isSelf = false, showBack = 
   const [immersiveIndex, setImmersiveIndex] = useState<number | null>(null);
   const [followerCount, setFollowerCount] = useState(0);
   const [followersLoading, setFollowersLoading] = useState(true);
+  const handleReelDeleted = useReelGridDeleteHandlers(setPosts, setGeneratedThumbs, setImmersiveIndex);
 
   const username =
     profile?.display_name?.trim() || profile?.email?.split('@')[0] || 'unknown';
@@ -283,25 +285,17 @@ export default function ReelProfileView({ profileId, isSelf = false, showBack = 
           columnWrapperStyle={styles.gridRow}
           showsVerticalScrollIndicator={false}
           renderItem={({ item, index }) => (
-            <TouchableOpacity
-              style={[styles.gridItem, { width: tileWidth, height: tileHeight }]}
-              activeOpacity={0.85}
-              onPress={() => setImmersiveIndex(index)}
-            >
-                <ReelGridThumb reel={item} generatedUri={generatedThumbs[item.id]} style={styles.gridImage} />
-                <View style={styles.gridOverlay}>
-                  {(item.media?.length ?? 0) > 1 && (
-                    <View style={styles.gridStat}>
-                      <Ionicons name="layers" size={11} color="#fff" />
-                      <Text style={styles.gridStatText}>{item.media!.length}</Text>
-                    </View>
-                  )}
-                  <View style={styles.gridStat}>
-                    <Ionicons name="play" size={11} color="#fff" />
-                    <Text style={styles.gridStatText}>{compact(item.view_count)}</Text>
-                  </View>
-                </View>
-              </TouchableOpacity>
+            <ReelProfileGridItem
+              reel={item}
+              index={index}
+              width={tileWidth}
+              height={tileHeight}
+              thumbUri={generatedThumbs[item.id]}
+              canDelete={isSelf}
+              onOpen={() => setImmersiveIndex(index)}
+              onDeleted={handleReelDeleted}
+              style={styles.gridItem}
+            />
           )}
           ListEmptyComponent={
             <View style={styles.empty}>

@@ -23,6 +23,8 @@ export type ReelMediaDTO = {
   height: number | null;
   hls_url: string | null;
   transcode_status?: 'pending' | 'processing' | 'ready' | 'failed' | 'skipped';
+  moderation_status?: 'pending' | 'approved' | 'rejected' | 'flagged';
+  moderation_reason?: string | null;
   playback_url?: string;
 };
 
@@ -33,6 +35,8 @@ export type ReelDTO = {
   hls_url: string | null;
   playback_url?: string;
   transcode_status?: 'pending' | 'processing' | 'ready' | 'failed' | 'skipped';
+  moderation_status?: 'pending' | 'approved' | 'rejected' | 'flagged';
+  moderation_reason?: string | null;
   thumbnail_url: string | null;
   caption: string | null;
   duration: number | null;

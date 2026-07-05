@@ -13,11 +13,18 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
+import type { CompositeNavigationProp } from '@react-navigation/native';
+import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { api, ApiError, type ReelAuthorDTO, type ReelDTO } from '../../lib/api';
 import { getReelGridThumbnail, splitCaptionHighlight } from '../../lib/reelThumbnails';
-import type { ReelsStackParamList } from '../../navigation/reelsNavigation';
+import type { ReelsStackParamList, ReelsTabParamList } from '../../navigation/reelsNavigation';
 import { reelTabBarOffset } from './ReelsTabBar';
+
+type ReelSearchNavigation = CompositeNavigationProp<
+  BottomTabNavigationProp<ReelsTabParamList, 'ReelSearch'>,
+  NativeStackNavigationProp<ReelsStackParamList>
+>;
 
 type SearchTab = 'all' | 'videos' | 'users';
 
@@ -30,7 +37,7 @@ function displayName(p: ProfileRow): string {
 export default function ReelSearchScreen() {
   const insets = useSafeAreaInsets();
   const bottomPad = reelTabBarOffset(insets.bottom);
-  const navigation = useNavigation<NativeStackNavigationProp<ReelsStackParamList>>();
+  const navigation = useNavigation<ReelSearchNavigation>();
 
   const [query, setQuery] = useState('');
   const [tab, setTab] = useState<SearchTab>('all');

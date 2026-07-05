@@ -43,7 +43,12 @@ export function getMediaPlaybackUrl(
 }
 
 /** Prefer HLS when ready, otherwise MP4. Local cache wins if provided. */
-export function getReelPlaybackUrl(reel: ReelDTO, cachedLocalUri?: string): string {
+export type ReelPlaybackSource = Pick<
+  ReelDTO,
+  'video_url' | 'hls_url' | 'transcode_status' | 'playback_url'
+>;
+
+export function getReelPlaybackUrl(reel: ReelPlaybackSource, cachedLocalUri?: string): string {
   if (cachedLocalUri) return cachedLocalUri;
   if (reel.playback_url) return reel.playback_url;
   if (reel.transcode_status === 'ready' && reel.hls_url) return reel.hls_url;

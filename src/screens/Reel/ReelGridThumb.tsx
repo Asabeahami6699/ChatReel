@@ -1,5 +1,5 @@
 import React from 'react';
-import { Image, Platform, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Image, Platform, StyleSheet, View, type ImageStyle, type StyleProp, type ViewStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { ReelDTO } from '../../lib/api';
 import { getReelGridThumbnail } from '../../lib/reelThumbnails';
@@ -8,7 +8,7 @@ import { isImageReelUrl } from '../../lib/reelPlayback';
 type Props = {
   reel: ReelDTO;
   generatedUri?: string;
-  style?: StyleProp<ViewStyle>;
+  style?: StyleProp<ViewStyle | ImageStyle>;
 };
 
 function videoPreviewUrl(reel: ReelDTO): string | null {
@@ -23,7 +23,7 @@ export function ReelGridThumb({ reel, generatedUri, style }: Props) {
   const preview = videoPreviewUrl(reel);
 
   if (thumb) {
-    return <Image source={{ uri: thumb }} style={style} resizeMode="cover" />;
+    return <Image source={{ uri: thumb }} style={style as StyleProp<ImageStyle>} resizeMode="cover" />;
   }
 
   if (Platform.OS === 'web' && preview && !isImageReelUrl(preview)) {
