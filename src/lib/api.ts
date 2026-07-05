@@ -167,9 +167,26 @@ export class ApiError extends Error {
   status: number;
 
   constructor(message: string, status: number) {
-    super(message);
+    super(sanitizeApiErrorMessage(message, status));
     this.status = status;
   }
+}
+
+/** Hide auth/token internals from UI copy. */
+export function sanitizeApiErrorMessage(message: string, status: number): string {
+  const lower = message.toLowerCase();
+  if (
+    status === 401 ||
+    status === 403 ||
+    lower.includes('invalid or expired token') ||
+    lower.includes('jwt') ||
+    lower.includes('not authenticated') ||
+    lower.includes('unauthorized') ||
+    (lower.includes('token') && (lower.includes('expired') || lower.includes('invalid')))
+  ) {
+    return 'Something went wrong. Please try again.';
+  }
+  return message;
 }
 
 type RequestOptions = {

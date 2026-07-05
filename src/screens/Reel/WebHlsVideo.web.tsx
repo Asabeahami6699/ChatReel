@@ -1,7 +1,8 @@
-import React, { useEffect, useRef } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import { View, type StyleProp, type ViewStyle } from 'react-native';
 import Hls from 'hls.js/dist/hls.js';
-import type { ReelPlaybackStatus } from '../../components/ReelPlayer';
+import type { ReelPlaybackStatus, ReelPlayerHandle } from '../../components/ReelPlayer';
+import { isHlsUrl } from '../../lib/reelPlayback';
 
 type Props = {
   uri: string;
@@ -27,22 +28,32 @@ function isBenignPlayError(err: unknown): boolean {
   return err.name === 'AbortError' || err.name === 'NotAllowedError';
 }
 
-/** Web-only HLS player using hls.js (Chrome/Firefox do not play .m3u8 natively). */
-export function WebHlsVideo({
-  uri,
-  style,
-  muted,
-  volume,
-  shouldPlay,
-  onReady,
-  onPlaybackStatusUpdate,
-}: Props) {
+function bufferedEndMillis(video: HTMLVideoElement): number {
+  const ranges = video.buffered;
+  if (!ranges.length) return 0;
+  return Math.round(ranges.end(ranges.length - 1) * 1000);
+}
+
+/** Web player: no native loop — parent shows end screen then calls replayAsync(). */
+export const WebHlsVideo = forwardRef<ReelPlayerHandle, Props>(function WebHlsVideo(
+  {
+    uri,
+    style,
+    muted,
+    volume,
+    shouldPlay,
+    onReady,
+    onPlaybackStatusUpdate,
+  },
+  ref
+) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const hlsRef = useRef<typeof Hls.prototype | null>(null);
+  const hlsRef = useRef<InstanceType<typeof Hls> | null>(null);
   const onReadyRef = useRef(onReady);
   const onStatusRef = useRef(onPlaybackStatusUpdate);
   const shouldPlayRef = useRef(shouldPlay);
   const mutedRef = useRef(muted);
+  const volumeRef = useRef(volume);
   const playGenRef = useRef(0);
   const mountedRef = useRef(true);
 
@@ -50,6 +61,7 @@ export function WebHlsVideo({
   onStatusRef.current = onPlaybackStatusUpdate;
   shouldPlayRef.current = shouldPlay;
   mutedRef.current = muted;
+  volumeRef.current = volume;
 
   const emitStatus = (video: HTMLVideoElement, extra?: Partial<ReelPlaybackStatus>) => {
     const durationSec = video.duration;
@@ -59,12 +71,10 @@ export function WebHlsVideo({
       isPlaying: !video.paused && !video.ended,
       positionMillis: Math.round(video.currentTime * 1000),
       durationMillis: Math.round(durationSec * 1000),
+      bufferedMillis: bufferedEndMillis(video),
       ...extra,
     });
   };
-
-  const volumeRef = useRef(volume);
-  volumeRef.current = volume;
 
   const applyPlayback = (video: HTMLVideoElement) => {
     video.muted = mutedRef.current;
@@ -74,6 +84,7 @@ export function WebHlsVideo({
       emitStatus(video);
       return;
     }
+    if (video.ended) return;
     const gen = ++playGenRef.current;
     const result = video.play();
     if (result !== undefined) {
@@ -85,6 +96,57 @@ export function WebHlsVideo({
       });
     }
   };
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      playAsync: async () => {
+        const video = videoRef.current;
+        if (!video) return;
+        shouldPlayRef.current = true;
+        applyPlayback(video);
+      },
+      pauseAsync: async () => {
+        const video = videoRef.current;
+        if (!video) return;
+        shouldPlayRef.current = false;
+        video.pause();
+        emitStatus(video);
+      },
+      replayAsync: async () => {
+        const video = videoRef.current;
+        if (!video) return;
+        video.currentTime = 0;
+        shouldPlayRef.current = true;
+        applyPlayback(video);
+      },
+      setPositionAsync: async (millis: number) => {
+        const video = videoRef.current;
+        if (!video) return;
+        video.currentTime = millis / 1000;
+        emitStatus(video);
+      },
+      setIsMutedAsync: async (muted: boolean) => {
+        const video = videoRef.current;
+        if (!video) return;
+        video.muted = muted;
+      },
+      getStatusAsync: async () => {
+        const video = videoRef.current;
+        if (!video || !Number.isFinite(video.duration) || video.duration <= 0) {
+          return { isLoaded: false };
+        }
+        return {
+          isLoaded: true,
+          isPlaying: !video.paused && !video.ended,
+          positionMillis: Math.round(video.currentTime * 1000),
+          durationMillis: Math.round(video.duration * 1000),
+          bufferedMillis: bufferedEndMillis(video),
+        };
+      },
+    }),
+    []
+  );
 
   useEffect(() => {
     mountedRef.current = true;
@@ -102,15 +164,14 @@ export function WebHlsVideo({
     };
 
     const onTimeUpdate = () => emitStatus(video);
+    const onProgress = () => emitStatus(video);
     const onEnded = () => {
+      video.pause();
       emitStatus(video, { didJustFinish: true });
-      if (shouldPlayRef.current) {
-        video.currentTime = 0;
-        void video.play().catch(() => undefined);
-      }
     };
 
     video.addEventListener('timeupdate', onTimeUpdate);
+    video.addEventListener('progress', onProgress);
     video.addEventListener('ended', onEnded);
 
     const destroyHls = () => {
@@ -118,7 +179,15 @@ export function WebHlsVideo({
       hlsRef.current = null;
     };
 
-    if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    const isBlob = uri.startsWith('blob:');
+    const useHls = !isBlob && isHlsUrl(uri);
+
+    if (isBlob || !useHls) {
+      video.preload = 'auto';
+      video.src = uri;
+      video.addEventListener('loadeddata', signalReady, { once: true });
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.preload = 'auto';
       video.src = uri;
       video.addEventListener('loadeddata', signalReady, { once: true });
     } else if (Hls.isSupported()) {
@@ -142,9 +211,11 @@ export function WebHlsVideo({
       mountedRef.current = false;
       playGenRef.current += 1;
       video.removeEventListener('timeupdate', onTimeUpdate);
+      video.removeEventListener('progress', onProgress);
       video.removeEventListener('ended', onEnded);
       video.pause();
       video.removeAttribute('src');
+      video.load();
       destroyHls();
     };
   }, [uri]);
@@ -157,7 +228,7 @@ export function WebHlsVideo({
 
   return (
     <View style={style}>
-      <video ref={videoRef} style={VIDEO_CSS} playsInline muted={muted} loop />
+      <video ref={videoRef} style={VIDEO_CSS} playsInline muted={muted} preload="auto" />
     </View>
   );
-}
+});

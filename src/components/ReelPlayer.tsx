@@ -7,6 +7,8 @@ export type ReelPlaybackStatus = {
   isPlaying?: boolean;
   positionMillis?: number;
   durationMillis?: number;
+  /** How far ahead of the playhead is buffered (TikTok-style progress). */
+  bufferedMillis?: number;
   didJustFinish?: boolean;
   videoWidth?: number;
   videoHeight?: number;

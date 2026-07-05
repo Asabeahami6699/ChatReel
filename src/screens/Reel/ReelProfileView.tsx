@@ -1,16 +1,16 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Dimensions,
   FlatList,
   Image,
   Modal,
+  Platform,
   StatusBar,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -18,18 +18,17 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { ReelImmersiveViewer } from './ReelImmersiveViewer';
 import { api, ApiError, type ReelDTO } from '../../lib/api';
-import { getReelGridThumbnail } from '../../lib/reelThumbnails';
 import { generateReelGridThumbnails } from '../../lib/generateReelGridThumbnails';
 import { rootNavigationRef } from '../../navigation/rootNavigation';
 import type { ReelsStackParamList } from '../../navigation/reelsNavigation';
+import { REEL_ACCENT } from './reelTheme';
 import { reelTabBarOffset } from './ReelsTabBar';
+import { REEL_PHONE_MAX_WIDTH } from './reelVideoLayout';
+import { ReelGridThumb } from './ReelGridThumb';
 
 const GRID_COLS = 3;
 const GRID_GAP = 4;
 const GRID_PAD = 6;
-const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
-const TILE_WIDTH = Math.floor((SCREEN_W - GRID_PAD * 2 - GRID_GAP * (GRID_COLS - 1)) / GRID_COLS);
-const TILE_HEIGHT = Math.round(TILE_WIDTH * 1.15);
 
 type Props = {
   profileId: string;
@@ -54,7 +53,14 @@ function Stat({ label, value, loading }: { label: string; value: number; loading
 
 export default function ReelProfileView({ profileId, isSelf = false, showBack = false }: Props) {
   const insets = useSafeAreaInsets();
-  const bottomPad = reelTabBarOffset(insets.bottom);
+  const { width: windowWidth } = useWindowDimensions();
+  const usePhoneLayout = Platform.OS === 'web' && windowWidth > REEL_PHONE_MAX_WIDTH + 64;
+  const contentWidth = usePhoneLayout ? REEL_PHONE_MAX_WIDTH : windowWidth;
+  const { tileWidth, tileHeight } = useMemo(() => {
+    const tw = Math.floor((contentWidth - GRID_PAD * 2 - GRID_GAP * (GRID_COLS - 1)) / GRID_COLS);
+    return { tileWidth: tw, tileHeight: Math.round(tw * 1.15) };
+  }, [contentWidth]);
+  const bottomPad = reelTabBarOffset(insets.bottom, usePhoneLayout);
   const navigation = useNavigation<NativeStackNavigationProp<ReelsStackParamList>>();
 
   const [profile, setProfile] = useState<{
@@ -196,7 +202,8 @@ export default function ReelProfileView({ profileId, isSelf = false, showBack = 
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, usePhoneLayout && styles.containerPhone]}>
+      <View style={[styles.phoneColumn, { width: contentWidth }]}>
       <StatusBar barStyle="light-content" />
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
         {showBack ? (
@@ -269,26 +276,19 @@ export default function ReelProfileView({ profileId, isSelf = false, showBack = 
       ) : (
         <FlatList
           data={posts}
+          key={`profile-grid-${contentWidth}`}
           keyExtractor={(r) => r.id}
           numColumns={GRID_COLS}
-          contentContainerStyle={[styles.gridContainer, { paddingBottom: bottomPad + 16 }]}
+          contentContainerStyle={{ paddingBottom: bottomPad + 16 }}
           columnWrapperStyle={styles.gridRow}
           showsVerticalScrollIndicator={false}
-          renderItem={({ item, index }) => {
-            const thumb = getReelGridThumbnail(item, generatedThumbs);
-            return (
-              <TouchableOpacity
-                style={styles.gridItem}
-                activeOpacity={0.85}
-                onPress={() => setImmersiveIndex(index)}
-              >
-                {thumb ? (
-                  <Image source={{ uri: thumb }} style={styles.gridImage} resizeMode="cover" />
-                ) : (
-                  <View style={[styles.gridImage, styles.gridPlaceholder]}>
-                    <Ionicons name="film-outline" size={28} color="#666" />
-                  </View>
-                )}
+          renderItem={({ item, index }) => (
+            <TouchableOpacity
+              style={[styles.gridItem, { width: tileWidth, height: tileHeight }]}
+              activeOpacity={0.85}
+              onPress={() => setImmersiveIndex(index)}
+            >
+                <ReelGridThumb reel={item} generatedUri={generatedThumbs[item.id]} style={styles.gridImage} />
                 <View style={styles.gridOverlay}>
                   {(item.media?.length ?? 0) > 1 && (
                     <View style={styles.gridStat}>
@@ -302,8 +302,7 @@ export default function ReelProfileView({ profileId, isSelf = false, showBack = 
                   </View>
                 </View>
               </TouchableOpacity>
-            );
-          }}
+          )}
           ListEmptyComponent={
             <View style={styles.empty}>
               <Ionicons name="film-outline" size={36} color="#666" />
@@ -324,12 +323,22 @@ export default function ReelProfileView({ profileId, isSelf = false, showBack = 
           />
         )}
       </Modal>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
+  containerPhone: {
+    alignItems: 'center',
+    backgroundColor: '#0a0a0a',
+  },
+  phoneColumn: {
+    flex: 1,
+    backgroundColor: '#000',
+    maxWidth: '100%',
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -355,7 +364,7 @@ const styles = StyleSheet.create({
   followBtn: {
     marginHorizontal: 20,
     marginBottom: 12,
-    backgroundColor: '#ff375f',
+    backgroundColor: REEL_ACCENT,
     borderRadius: 10,
     paddingVertical: 10,
     flexDirection: 'row',
@@ -369,11 +378,13 @@ const styles = StyleSheet.create({
   statNumber: { color: '#fff', fontSize: 17, fontWeight: 'bold' },
   statLabel: { color: '#888', fontSize: 11, marginTop: 2 },
   loaderBox: { padding: 32, alignItems: 'center' },
-  gridContainer: { paddingHorizontal: GRID_PAD },
-  gridRow: { gap: GRID_GAP, marginBottom: GRID_GAP },
+  gridContainer: {},
+  gridRow: {
+    paddingHorizontal: GRID_PAD,
+    marginBottom: GRID_GAP,
+    justifyContent: 'space-between',
+  },
   gridItem: {
-    width: TILE_WIDTH,
-    height: TILE_HEIGHT,
     borderRadius: 6,
     overflow: 'hidden',
     backgroundColor: '#1a1a1a',

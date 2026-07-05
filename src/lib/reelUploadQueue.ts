@@ -57,7 +57,9 @@ const tasks = new Map<string, ReelUploadTask>();
 const taskDrafts = new Map<string, ReelUploadDraft>();
 const queue: Array<{ id: string; draft: ReelUploadDraft }> = [];
 const listeners = new Set<Listener>();
-let workerRunning = false;
+/** Run multiple reel uploads in parallel — no waiting for the previous post to finish. */
+const MAX_PARALLEL_UPLOADS = 3;
+let activeUploads = 0;
 
 function emit() {
   const list = Array.from(tasks.values()).sort((a, b) => b.createdAt - a.createdAt);
@@ -89,6 +91,28 @@ function createTask(): ReelUploadTask {
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
+}
+
+function pumpWorkers() {
+  while (activeUploads < MAX_PARALLEL_UPLOADS && queue.length > 0) {
+    const item = queue.shift();
+    if (!item) break;
+    activeUploads += 1;
+    void processOne(item)
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : 'Upload failed';
+        updateTask(item.id, {
+          status: 'error',
+          stage: 'Failed',
+          progress: 0,
+          error: message,
+        });
+      })
+      .finally(() => {
+        activeUploads -= 1;
+        pumpWorkers();
+      });
+  }
 }
 
 async function processOne(item: { id: string; draft: ReelUploadDraft }) {
@@ -162,18 +186,13 @@ async function processOne(item: { id: string; draft: ReelUploadDraft }) {
   let width = video.width;
   let height = video.height;
   let duration = video.duration;
-  if (!width || !height || !duration) {
-    const probed = await probeVideoDimensions(video.uri);
-    width = width ?? probed?.width;
-    height = height ?? probed?.height;
-    duration = duration ?? probed?.duration;
-  }
-
-  const trimStartSec = video.trimStartSec ?? 0;
-  const trimEndSec =
-    video.trimEndSec ?? (typeof duration === 'number' ? duration : undefined);
 
   updateTask(id, { status: 'uploading', stage: 'Uploading video...', progress: 5 });
+
+  const probePromise =
+    !width || !height || !duration
+      ? probeVideoDimensions(video.uri).catch(() => null)
+      : Promise.resolve(null);
 
   const videoPromise = uploadReelVideo({
     uri: video.uri,
@@ -188,14 +207,24 @@ async function processOne(item: { id: string; draft: ReelUploadDraft }) {
   });
 
   const thumbPromise = thumbUri
-    ? uploadReelThumbnail({ uri: thumbUri })
-        .then((url) => url)
-        .catch(() => undefined)
+    ? uploadReelThumbnail({ uri: thumbUri }).catch(() => undefined)
     : Promise.resolve<string | undefined>(undefined);
 
-  if (thumbUri) setProgress(id, 78, 'Uploading video & thumbnail...');
+  const [probed, videoUrl, thumbnailUrl] = await Promise.all([
+    probePromise,
+    videoPromise,
+    thumbPromise,
+  ]);
 
-  const [videoUrl, thumbnailUrl] = await Promise.all([videoPromise, thumbPromise]);
+  width = width ?? probed?.width;
+  height = height ?? probed?.height;
+  duration = duration ?? probed?.duration;
+
+  const trimStartSec = video.trimStartSec ?? 0;
+  const trimEndSec =
+    video.trimEndSec ?? (typeof duration === 'number' ? duration : undefined);
+
+  if (thumbUri) setProgress(id, 78, 'Uploading video & thumbnail...');
 
   setProgress(id, 90, 'Publishing reel...');
   updateTask(id, { status: 'publishing' });
@@ -233,100 +262,81 @@ async function processCarouselUpload(id: string, draft: ReelUploadDraft) {
       ? { visibility: 'group' as const, group_id: draft.group_id }
       : { visibility: draft.visibility };
   const total = items.length;
-  const uploaded: Array<{
-    media_url: string;
-    media_type: 'image' | 'video';
-    thumbnail_url?: string;
-    duration?: number;
-    width?: number;
-    height?: number;
-    trim_start_sec?: number;
-    trim_end_sec?: number;
-  }> = [];
 
-  setProgress(id, 2, `Uploading 1/${total}...`);
+  setProgress(id, 2, `Uploading 0/${total}...`);
+  updateTask(id, { status: 'uploading' });
 
-  for (let i = 0; i < items.length; i++) {
-    const media = items[i];
-    const isImage = media.mediaType === 'image' || isImageMime(media.mime);
-    const basePct = 5 + (i / total) * 80;
-    const span = 80 / total;
+  const uploaded = await Promise.all(
+    items.map(async (media, i) => {
+      const isImage = media.mediaType === 'image' || isImageMime(media.mime);
+      const basePct = 5 + (i / total) * 80;
+      const span = 80 / total;
 
-    if (isImage) {
-      updateTask(id, { status: 'uploading', stage: `Uploading photo ${i + 1}/${total}...` });
-      const imageUrl = await uploadReelImage({
-        uri: media.uri,
-        fileName: media.fileName,
-        contentType: media.mime,
-        onProgress: (loaded, totalBytes) => {
-          if (totalBytes > 0) {
-            setProgress(id, basePct + (loaded / totalBytes) * span, `Uploading photo ${i + 1}/${total}...`);
-          }
-        },
-      });
-      uploaded.push({
-        media_url: imageUrl,
-        media_type: 'image',
-        thumbnail_url: imageUrl,
-        width: media.width,
-        height: media.height,
-      });
-      continue;
-    }
-
-    let width = media.width;
-    let height = media.height;
-    let duration = media.duration;
-    if (!width || !height || !duration) {
-      const probed = await probeVideoDimensions(media.uri);
-      width = width ?? probed?.width;
-      height = height ?? probed?.height;
-      duration = duration ?? probed?.duration;
-    }
-
-    updateTask(id, { status: 'uploading', stage: `Uploading video ${i + 1}/${total}...` });
-    const videoUrl = await uploadReelVideo({
-      uri: media.uri,
-      fileName: media.fileName,
-      contentType: media.mime,
-      onProgress: (loaded, totalBytes) => {
-        if (totalBytes > 0) {
-          setProgress(id, basePct + (loaded / totalBytes) * span, `Uploading video ${i + 1}/${total}...`);
-        }
-      },
-    });
-
-    let thumbnailUrl: string | undefined;
-    if (media.thumbUri) {
-      try {
-        thumbnailUrl = await uploadReelThumbnail({ uri: media.thumbUri });
-      } catch {
-        thumbnailUrl = undefined;
+      if (isImage) {
+        const imageUrl = await uploadReelImage({
+          uri: media.uri,
+          fileName: media.fileName,
+          contentType: media.mime,
+          onProgress: (loaded, totalBytes) => {
+            if (totalBytes > 0) {
+              setProgress(id, basePct + (loaded / totalBytes) * span, `Uploading photo ${i + 1}/${total}...`);
+            }
+          },
+        });
+        return {
+          media_url: imageUrl,
+          media_type: 'image' as const,
+          thumbnail_url: imageUrl,
+          width: media.width,
+          height: media.height,
+        };
       }
-    }
 
-    const trimStartSec = media.trimStartSec ?? 0;
-    const trimEndSec = media.trimEndSec ?? (typeof duration === 'number' ? duration : undefined);
-    const safeDuration = typeof duration === 'number' && duration >= 0.5 ? duration : undefined;
-    const effectiveDuration =
-      trimEndSec != null && trimStartSec < trimEndSec
-        ? trimEndSec - trimStartSec
-        : safeDuration;
+      const [probed, videoUrl, thumbnailUrl] = await Promise.all([
+        !media.width || !media.height || !media.duration
+          ? probeVideoDimensions(media.uri).catch(() => null)
+          : Promise.resolve(null),
+        uploadReelVideo({
+          uri: media.uri,
+          fileName: media.fileName,
+          contentType: media.mime,
+          onProgress: (loaded, totalBytes) => {
+            if (totalBytes > 0) {
+              setProgress(id, basePct + (loaded / totalBytes) * span, `Uploading video ${i + 1}/${total}...`);
+            }
+          },
+        }),
+        media.thumbUri
+          ? uploadReelThumbnail({ uri: media.thumbUri }).catch(() => undefined)
+          : Promise.resolve<string | undefined>(undefined),
+      ]);
 
-    uploaded.push({
-      media_url: videoUrl,
-      media_type: 'video',
-      thumbnail_url: thumbnailUrl,
-      duration: effectiveDuration,
-      width,
-      height,
-      trim_start_sec: trimStartSec > 0 ? trimStartSec : undefined,
-      trim_end_sec:
-        trimEndSec != null && duration != null && trimEndSec < duration - 0.05
-          ? trimEndSec
-          : undefined,
-    });
-  }
+      const width = media.width ?? probed?.width;
+      const height = media.height ?? probed?.height;
+      const duration = media.duration ?? probed?.duration;
+      const trimStartSec = media.trimStartSec ?? 0;
+      const trimEndSec = media.trimEndSec ?? (typeof duration === 'number' ? duration : undefined);
+      const safeDuration = typeof duration === 'number' && duration >= 0.5 ? duration : undefined;
+      const effectiveDuration =
+        trimEndSec != null && trimStartSec < trimEndSec
+          ? trimEndSec - trimStartSec
+          : safeDuration;
+
+      return {
+        media_url: videoUrl,
+        media_type: 'video' as const,
+        thumbnail_url: thumbnailUrl,
+        duration: effectiveDuration,
+        width,
+        height,
+        trim_start_sec: trimStartSec > 0 ? trimStartSec : undefined,
+        trim_end_sec:
+          trimEndSec != null && duration != null && trimEndSec < duration - 0.05
+            ? trimEndSec
+            : undefined,
+      };
+    })
+  );
 
   setProgress(id, 90, 'Publishing reel...');
   updateTask(id, { status: 'publishing' });
@@ -346,37 +356,13 @@ async function processCarouselUpload(id: string, draft: ReelUploadDraft) {
   });
 }
 
-async function runWorker() {
-  if (workerRunning) return;
-  workerRunning = true;
-  try {
-    while (queue.length > 0) {
-      const item = queue.shift();
-      if (!item) break;
-      try {
-        await processOne(item);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Upload failed';
-        updateTask(item.id, {
-          status: 'error',
-          stage: 'Failed',
-          progress: 0,
-          error: message,
-        });
-      }
-    }
-  } finally {
-    workerRunning = false;
-  }
-}
-
 export function enqueueReelUpload(draft: ReelUploadDraft): ReelUploadTask {
   const task = createTask();
   tasks.set(task.id, task);
   taskDrafts.set(task.id, draft);
   queue.push({ id: task.id, draft });
   emit();
-  void runWorker();
+  pumpWorkers();
   return task;
 }
 
@@ -393,7 +379,8 @@ export function retryReelUploadTask(taskId: string): boolean {
     error: undefined,
   });
   queue.push({ id: taskId, draft });
-  void runWorker();
+  emit();
+  pumpWorkers();
   return true;
 }
 

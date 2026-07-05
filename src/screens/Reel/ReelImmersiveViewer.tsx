@@ -13,7 +13,6 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { USE_NATIVE_DRIVER } from '../../lib/animation';
@@ -24,7 +23,11 @@ import ReelCommentSheet from './ReelCommentSheet';
 import ReelShareSheet from './ReelShareSheet';
 import ReelProfileSheet from './ReelProfileSheet';
 import { useReelVideoPrefetch } from './useReelVideoPrefetch';
-import { REEL_ACTION_RAIL_WIDTH, REEL_BOTTOM_INSET, getReelFrameDimensions } from './reelVideoLayout';
+import { REEL_ACTION_RAIL_WIDTH, REEL_BOTTOM_INSET, REEL_PHONE_MAX_WIDTH, getReelFrameDimensions } from './reelVideoLayout';
+import { ExpandableCaption } from './ExpandableCaption';
+import { ReelBrandBadge } from './ReelBrandBadge';
+import { ReelEndScreen } from './ReelEndScreen';
+import { REEL_ACCENT, REEL_END_SCREEN_MS, reelBottomLayout } from './reelTheme';
 
 type Props = {
   reels: ReelDTO[];
@@ -67,6 +70,11 @@ export function ReelImmersiveViewer({
   const [openComments, setOpenComments] = useState<ReelDTO | null>(null);
   const [openShare, setOpenShare] = useState<ReelDTO | null>(null);
   const [openProfile, setOpenProfile] = useState<ReelDTO | null>(null);
+  const [endScreenReelId, setEndScreenReelId] = useState<string | null>(null);
+  const [badgePlayCycle, setBadgePlayCycle] = useState(0);
+  const endScreenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const { progressBottom, metaBottom } = reelBottomLayout(insets.bottom);
 
   const flatListRef = useRef<FlatList<ReelDTO>>(null);
   const videos = useRef<Record<string, ReelPlayerHandle | null>>({});
@@ -83,7 +91,7 @@ export function ReelImmersiveViewer({
   const tapCount = useRef(0);
   const lastTap = useRef(0);
 
-  const { resolveUri, prefetchAround } = useReelVideoPrefetch();
+  const { resolveUri, prefetchAround } = useReelVideoPrefetch(activeReelIdRef);
 
   const patchReel = useCallback(
     (id: string, patch: Partial<ReelDTO>) => {
@@ -116,6 +124,12 @@ export function ReelImmersiveViewer({
   const registerVideoRef = useCallback((reelId: string, ref: ReelPlayerHandle | null) => {
     if (ref) videos.current[reelId] = ref;
     else delete videos.current[reelId];
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (endScreenTimerRef.current) clearTimeout(endScreenTimerRef.current);
+    };
   }, []);
 
   const playActiveReel = useCallback(async (reelId: string | null) => {
@@ -212,7 +226,17 @@ export function ReelImmersiveViewer({
     if (!status.isLoaded || !isCurrent) return;
     if (status.didJustFinish) {
       const key = activePlayerKey(reelId);
-      void (key ? videos.current[key] : null)?.replayAsync();
+      void (key ? videos.current[key] : null)?.pauseAsync();
+      setEndScreenReelId(reelId);
+      if (endScreenTimerRef.current) clearTimeout(endScreenTimerRef.current);
+      endScreenTimerRef.current = setTimeout(() => {
+        setEndScreenReelId((cur) => (cur === reelId ? null : cur));
+        setBadgePlayCycle((c) => c + 1);
+        const key = activePlayerKey(reelId);
+        setIsPlaying(true);
+        void (key ? videos.current[key] : null)?.replayAsync();
+      }, REEL_END_SCREEN_MS);
+      return;
     }
     if (status.positionMillis != null && status.durationMillis != null && status.durationMillis > 0) {
       if (!isScrubbingRef.current) setProgress(status.positionMillis / status.durationMillis);
@@ -282,8 +306,12 @@ export function ReelImmersiveViewer({
       if (viewableItems.length === 0) return;
       const v = viewableItems[0];
       if (v.index == null || !v.item?.id) return;
+      const prevId = activeReelIdRef.current;
       setCurrentIndex(v.index);
       setProgress(0);
+      setEndScreenReelId(null);
+      if (endScreenTimerRef.current) clearTimeout(endScreenTimerRef.current);
+      if (prevId !== v.item.id) setBadgePlayCycle((c) => c + 1);
       setIsPlaying(true);
       void playActiveReel(v.item.id);
       if (!viewedReelIds.current.has(v.item.id)) {
@@ -330,8 +358,20 @@ export function ReelImmersiveViewer({
                 style={[styles.heartAnimation, { transform: [{ scale: heartScale }], opacity: heartOpacity }]}
                 pointerEvents="none"
               >
-                <Ionicons name="heart" size={100} color="#ff3b30" />
+                <Ionicons name="heart" size={100} color={REEL_ACCENT} />
               </Animated.View>
+            )}
+            {isCurrent && (
+              <ReelBrandBadge
+                ownerName={authorLabel(item)}
+                frameWidth={reelWidth}
+                frameHeight={reelHeight}
+                progressBottom={progressBottom}
+                playCycle={badgePlayCycle}
+              />
+            )}
+            {isCurrent && endScreenReelId === item.id && (
+              <ReelEndScreen ownerName={authorLabel(item)} />
             )}
           </TouchableOpacity>
 
@@ -340,15 +380,15 @@ export function ReelImmersiveViewer({
           </TouchableOpacity>
 
           {isCurrent && (
-            <View style={[styles.progressContainer, { bottom: insets.bottom + 12 }]} {...progressPan.panHandlers}>
+            <View style={[styles.progressContainer, { bottom: progressBottom }]} {...progressPan.panHandlers}>
               <View style={styles.progressBg}>
                 <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
               </View>
             </View>
           )}
 
-          <LinearGradient colors={['transparent', 'rgba(0,0,0,0.85)']} style={styles.bottomGradient} pointerEvents="box-none">
-            <View style={[styles.captionContainer, { marginBottom: REEL_BOTTOM_INSET + insets.bottom, paddingRight: REEL_ACTION_RAIL_WIDTH + 8 }]}>
+          <View style={styles.bottomMeta} pointerEvents="box-none">
+            <View style={[styles.captionContainer, { marginBottom: metaBottom, paddingRight: REEL_ACTION_RAIL_WIDTH + 8 }]}>
               <View style={styles.userInfo}>
                 {disableProfileNavigation ? (
                   <>
@@ -374,9 +414,7 @@ export function ReelImmersiveViewer({
                 <Text style={styles.username}>@{authorLabel(item)}</Text>
               </View>
               {!!item.caption && (
-                <Text style={styles.caption} numberOfLines={3}>
-                  {item.caption}
-                </Text>
+                <ExpandableCaption text={item.caption} style={styles.caption} maxLines={3} />
               )}
               <View style={styles.musicContainer}>
                 <Ionicons name="musical-notes" size={14} color="rgba(255,255,255,0.85)" />
@@ -385,11 +423,11 @@ export function ReelImmersiveViewer({
                 </Text>
               </View>
             </View>
-          </LinearGradient>
+          </View>
 
-          <View style={[styles.actionButtons, { bottom: REEL_BOTTOM_INSET + insets.bottom }]}>
+          <View style={[styles.actionButtons, { bottom: metaBottom }]}>
             <TouchableOpacity style={styles.actionButton} onPress={() => toggleLike(item)}>
-              <Ionicons name={isLiked ? 'heart' : 'heart-outline'} size={26} color={isLiked ? '#ff375f' : '#fff'} />
+              <Ionicons name={isLiked ? 'heart' : 'heart-outline'} size={26} color={isLiked ? REEL_ACCENT : '#fff'} />
               <Text style={styles.actionText}>{formatCount(item.like_count)}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.actionButton} onPress={() => setOpenComments(item)}>
@@ -428,6 +466,10 @@ export function ReelImmersiveViewer({
       registerVideoRef,
       resolveUri,
       toggleLike,
+      endScreenReelId,
+      badgePlayCycle,
+      metaBottom,
+      progressBottom,
       disableProfileNavigation,
     ]
   );
@@ -486,9 +528,9 @@ export function ReelImmersiveViewer({
       </Modal>
 
       <Modal visible={!!openProfile && !disableProfileNavigation} animationType="slide" transparent onRequestClose={() => setOpenProfile(null)}>
-        <View style={styles.sheetBackdrop}>
+        <View style={[styles.sheetBackdrop, usePhoneFrame && styles.sheetBackdropCentered]}>
           <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setOpenProfile(null)} />
-          <View style={styles.sheet}>
+          <View style={[styles.sheet, usePhoneFrame && styles.profileSheetPhone]}>
             {openProfile && <ReelProfileSheet reel={openProfile} onClose={() => setOpenProfile(null)} />}
           </View>
         </View>
@@ -542,13 +584,13 @@ const styles = StyleSheet.create({
   },
   progressBg: { height: 4, backgroundColor: 'rgba(255,255,255,0.25)' },
   progressFill: { height: 4, backgroundColor: '#fff' },
-  bottomGradient: {
+  bottomMeta: {
     position: 'absolute',
     left: 0,
     right: 0,
     bottom: 0,
-    paddingTop: 80,
-    zIndex: 5,
+    zIndex: 15,
+    paddingHorizontal: 14,
   },
   captionContainer: { paddingHorizontal: 14 },
   userInfo: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
@@ -575,11 +617,25 @@ const styles = StyleSheet.create({
     zIndex: 8,
   },
   sheetBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
+  sheetBackdropCentered: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.72)',
+  },
   sheet: {
     height: '78%',
     backgroundColor: '#111',
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
     overflow: 'hidden',
+  },
+  profileSheetPhone: {
+    height: '92%',
+    maxHeight: 900,
+    width: REEL_PHONE_MAX_WIDTH,
+    borderRadius: 16,
+    backgroundColor: '#000',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#1f1f1f',
   },
 });

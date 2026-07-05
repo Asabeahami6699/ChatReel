@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { ReelsTabParamList } from '../../navigation/reelsNavigation';
 import { rootNavigationRef } from '../../navigation/rootNavigation';
 import { REEL_TAB_BAR_HEIGHT, REEL_PHONE_MAX_WIDTH } from './reelVideoLayout';
+import { REEL_ACCENT } from './reelTheme';
 
 const TAB_META: Record<
   keyof ReelsTabParamList,
@@ -206,7 +207,7 @@ const mobileS = StyleSheet.create({
     width: 44,
     height: 32,
     borderRadius: 8,
-    backgroundColor: '#ff375f',
+    backgroundColor: REEL_ACCENT,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -260,7 +261,7 @@ const dk = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#ff375f',
+    backgroundColor: REEL_ACCENT,
     alignItems: 'center',
     justifyContent: 'center',
   },

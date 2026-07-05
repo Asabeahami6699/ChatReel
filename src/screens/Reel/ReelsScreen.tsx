@@ -19,7 +19,6 @@ import {
 } from 'react-native';
 import { ProgressBar } from 'react-native-paper';
 import { ReelPlayer, type ReelPlaybackStatus, type ReelPlayerHandle } from '../../components/ReelPlayer';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused, useFocusEffect, useNavigation } from '@react-navigation/native';
@@ -36,12 +35,24 @@ import {
 import ReelCommentSheet from './ReelCommentSheet';
 import ReelShareSheet from './ReelShareSheet';
 import ReelProfileSheet from './ReelProfileSheet';
-import { SCREEN_HEIGHT, SCREEN_WIDTH, REEL_ACTION_RAIL_WIDTH, REEL_BOTTOM_INSET, getReelFrameDimensions } from './reelVideoLayout';
+import {
+  SCREEN_HEIGHT,
+  SCREEN_WIDTH,
+  REEL_ACTION_RAIL_WIDTH,
+  REEL_BOTTOM_INSET,
+  REEL_PHONE_MAX_WIDTH,
+  getReelFrameDimensions,
+} from './reelVideoLayout';
 import { useReelVideoPrefetch } from './useReelVideoPrefetch';
 import { ReelFeedMedia } from './ReelFeedMedia';
 import { reelTabBarOffset } from './ReelsTabBar';
 import { useReelsMainTabFocused } from '../../context/ReelsMainTabFocusContext';
 import { useReelFeedMode } from './ReelFeedModeContext';
+import { ExpandableCaption } from './ExpandableCaption';
+import { ReelBrandBadge } from './ReelBrandBadge';
+import { ReelEndScreen } from './ReelEndScreen';
+import { REEL_ACCENT, REEL_END_SCREEN_MS, reelBottomLayout } from './reelTheme';
+import { VolumeControl } from './VolumeControl';
 
 const WINDOW_HEIGHT = SCREEN_HEIGHT;
 
@@ -80,146 +91,6 @@ function authorLabel(reel: ReelDTO): string {
 function avatarFor(reel: ReelDTO): string | null {
   return reel.author?.avatar_url ?? null;
 }
-
-const VOL_TRACK_H = 100;
-const VOL_THUMB = 14;
-
-function VolumeControl({
-  volume,
-  isMuted,
-  onVolumeChange,
-  onMuteToggle,
-}: {
-  volume: number;
-  isMuted: boolean;
-  onVolumeChange: (v: number) => void;
-  onMuteToggle: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const trackRef = useRef<View>(null);
-  const draggingRef = useRef(false);
-  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const clearHideTimer = () => {
-    if (hideTimer.current) { clearTimeout(hideTimer.current); hideTimer.current = null; }
-  };
-  const scheduleHide = () => {
-    clearHideTimer();
-    hideTimer.current = setTimeout(() => { if (!draggingRef.current) setOpen(false); }, 600);
-  };
-
-  const volFromY = useCallback((clientY: number) => {
-    const node = trackRef.current as unknown as HTMLElement | null;
-    if (!node) return volume;
-    const rect = node.getBoundingClientRect();
-    const ratio = 1 - Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
-    return Math.round(ratio * 100) / 100;
-  }, [volume]);
-
-  const onPointerDown = useCallback((e: React.PointerEvent) => {
-    e.preventDefault();
-    draggingRef.current = true;
-    clearHideTimer();
-    const v = volFromY(e.clientY);
-    onVolumeChange(v);
-    const onMove = (ev: PointerEvent) => { onVolumeChange(volFromY(ev.clientY)); };
-    const onUp = () => {
-      draggingRef.current = false;
-      document.removeEventListener('pointermove', onMove);
-      document.removeEventListener('pointerup', onUp);
-      scheduleHide();
-    };
-    document.addEventListener('pointermove', onMove);
-    document.addEventListener('pointerup', onUp);
-  }, [volFromY, onVolumeChange]);
-
-  const displayVol = isMuted ? 0 : volume;
-  const icon: keyof typeof Ionicons.glyphMap =
-    isMuted || displayVol === 0 ? 'volume-mute'
-    : displayVol < 0.5 ? 'volume-low'
-    : 'volume-medium';
-
-  return (
-    <View
-      style={volStyles.wrap}
-      onPointerEnter={() => { clearHideTimer(); setOpen(true); }}
-      onPointerLeave={scheduleHide}
-    >
-      <TouchableOpacity style={volStyles.btn} onPress={onMuteToggle} activeOpacity={0.75}>
-        <Ionicons name={icon} size={20} color="#fff" />
-      </TouchableOpacity>
-      {open && (
-        <View style={volStyles.dropdown}>
-          <Text style={volStyles.pct}>{Math.round(displayVol * 100)}</Text>
-          <View ref={trackRef} style={volStyles.track} onPointerDown={onPointerDown as any}>
-            <View style={[volStyles.fill, { height: `${displayVol * 100}%` }]} />
-            <View style={[volStyles.thumb, { bottom: `${displayVol * 100}%` }]} />
-          </View>
-        </View>
-      )}
-    </View>
-  );
-}
-
-const volStyles = StyleSheet.create({
-  wrap: {
-    position: 'absolute',
-    right: 14,
-    top: 16,
-    zIndex: 22,
-    alignItems: 'center',
-  },
-  btn: {
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
-    borderRadius: 20,
-    padding: 8,
-  },
-  dropdown: {
-    width: 40,
-    paddingVertical: 10,
-    backgroundColor: 'rgba(20,20,20,0.88)',
-    borderRadius: 20,
-    marginTop: 6,
-    alignItems: 'center',
-    gap: 6,
-  },
-  pct: {
-    color: '#fff',
-    fontSize: 10,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  track: {
-    width: 6,
-    height: VOL_TRACK_H,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    borderRadius: 3,
-    overflow: 'visible' as any,
-    justifyContent: 'flex-end',
-    position: 'relative',
-    // @ts-ignore web cursor
-    cursor: 'pointer',
-  },
-  fill: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: '#fff',
-    borderRadius: 3,
-  },
-  thumb: {
-    position: 'absolute',
-    left: -4,
-    width: VOL_THUMB,
-    height: VOL_THUMB,
-    borderRadius: VOL_THUMB / 2,
-    backgroundColor: '#fff',
-    marginBottom: -(VOL_THUMB / 2),
-  },
-});
 
 const navArrowStyles = StyleSheet.create({
   container: {
@@ -284,15 +155,18 @@ export default function ReelsScreen() {
   const myProfileId = useCurrentProfileId();
   const [showUploadPanel, setShowUploadPanel] = useState(false);
 
-  const { resolveUri, prefetchAround, warmReel } = useReelVideoPrefetch();
-  const prefetchAroundRef = useRef(prefetchAround);
-  const reelsRef = useRef(reels);
-  prefetchAroundRef.current = prefetchAround;
-  reelsRef.current = reels;
-
   const flatListRef = useRef<FlatList<ReelDTO>>(null);
   const videos = useRef<Record<string, ReelPlayerHandle | null>>({});
   const activeReelIdRef = useRef<string | null>(null);
+
+  const { resolveUri, prefetchAround, warmReel, clearPins, releasePin } = useReelVideoPrefetch(activeReelIdRef);
+  const prefetchAroundRef = useRef(prefetchAround);
+  const releasePinRef = useRef(releasePin);
+  const reelsRef = useRef(reels);
+  prefetchAroundRef.current = prefetchAround;
+  releasePinRef.current = releasePin;
+  reelsRef.current = reels;
+
   const activeMediaIndexRef = useRef<Record<string, number>>({});
   const durationMillisRef = useRef(1);
   const isScrubbingRef = useRef(false);
@@ -304,13 +178,20 @@ export default function ReelsScreen() {
   const [volume, setVolume] = useState(1);
   const [isPlaying, setIsPlaying] = useState(true);
   const [progress, setProgress] = useState(0);
+  const [bufferedProgress, setBufferedProgress] = useState(0);
   const [playbackIcon, setPlaybackIcon] = useState<'play' | 'pause' | null>(null);
+  const [isScrubbing, setIsScrubbing] = useState(false);
 
   const [openComments, setOpenComments] = useState<ReelDTO | null>(null);
   const [openShare, setOpenShare] = useState<ReelDTO | null>(null);
   const [openProfile, setOpenProfile] = useState<ReelDTO | null>(null);
   const [followedAuthorIds, setFollowedAuthorIds] = useState<Set<string>>(new Set());
   const [followBusyAuthorIds, setFollowBusyAuthorIds] = useState<Set<string>>(new Set());
+  const [endScreenReelId, setEndScreenReelId] = useState<string | null>(null);
+  const [badgePlayCycle, setBadgePlayCycle] = useState(0);
+  const endScreenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const { progressBottom, metaBottom } = reelBottomLayout();
 
   const pauseAllVideos = useCallback(async () => {
     await Promise.all(
@@ -338,8 +219,17 @@ export default function ReelsScreen() {
     registerBeforeChatNavigate(() => {
       void pauseAllVideos();
     });
-    return () => unregisterBeforeChatNavigate();
+    return () => {
+      unregisterBeforeChatNavigate();
+      if (endScreenTimerRef.current) clearTimeout(endScreenTimerRef.current);
+    };
   }, [pauseAllVideos]);
+
+  useEffect(() => {
+    return () => {
+      if (endScreenTimerRef.current) clearTimeout(endScreenTimerRef.current);
+    };
+  }, []);
 
   const activePlayerKey = useCallback((reelId: string | null) => {
     if (!reelId) return null;
@@ -384,13 +274,28 @@ export default function ReelsScreen() {
       if (!status.isLoaded || !isCurrent) return;
       if (status.didJustFinish) {
         const key = activePlayerKey(reelId);
-        void (key ? videos.current[key] : null)?.replayAsync();
+        void (key ? videos.current[key] : null)?.pauseAsync();
+        setEndScreenReelId(reelId);
+        if (endScreenTimerRef.current) clearTimeout(endScreenTimerRef.current);
+        endScreenTimerRef.current = setTimeout(() => {
+          setEndScreenReelId((cur) => (cur === reelId ? null : cur));
+          setBadgePlayCycle((c) => c + 1);
+          const key = activePlayerKey(reelId);
+          setIsPlaying(true);
+          void (key ? videos.current[key] : null)?.replayAsync();
+        }, REEL_END_SCREEN_MS);
+        return;
       }
-      if (status.positionMillis != null && status.durationMillis != null && status.durationMillis > 0) {
-        if (!isScrubbingRef.current) {
+      if (status.durationMillis != null && status.durationMillis > 0) {
+        durationMillisRef.current = status.durationMillis;
+        if (status.bufferedMillis != null) {
+          setBufferedProgress(
+            Math.min(1, Math.max(0, status.bufferedMillis / status.durationMillis))
+          );
+        }
+        if (status.positionMillis != null && !isScrubbingRef.current) {
           setProgress(status.positionMillis / status.durationMillis);
         }
-        durationMillisRef.current = status.durationMillis;
       }
     },
     []
@@ -417,12 +322,14 @@ export default function ReelsScreen() {
   const resetFeedScroll = useCallback(() => {
     setCurrentIndex(0);
     setProgress(0);
+    setBufferedProgress(0);
+    clearPins();
     activeReelIdRef.current = null;
     viewedReelIds.current.clear();
     setReadyReelIds(new Set());
     flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
     void Promise.all(Object.values(videos.current).map((v) => v?.pauseAsync()));
-  }, []);
+  }, [clearPins]);
 
   const prevFeedModeRef = useRef(feedMode);
   useEffect(() => {
@@ -507,10 +414,7 @@ export default function ReelsScreen() {
             const isActive =
               reelId != null && (id === reelId || id === activeSlideKey || id.startsWith(`${reelId}:`));
             if (isActive && (id === reelId || id === activeSlideKey)) {
-              const status = await player.getStatusAsync();
-              if (status.isLoaded) {
-                await player.playAsync();
-              }
+              await player.playAsync();
             } else {
               await player.pauseAsync();
             }
@@ -637,11 +541,19 @@ export default function ReelsScreen() {
       if (viewableItems.length === 0) return;
       const v = viewableItems[0];
       if (v.index == null || !v.item?.id) return;
+      const prevId = activeReelIdRef.current;
       setCurrentIndex(v.index);
       setProgress(0);
+      setBufferedProgress(0);
+      setEndScreenReelId(null);
+      if (endScreenTimerRef.current) clearTimeout(endScreenTimerRef.current);
+      if (prevId !== v.item.id) setBadgePlayCycle((c) => c + 1);
       setIsPlaying(true);
       setPlaybackIcon(null);
       void playActiveReel(v.item.id);
+      if (prevId && prevId !== v.item.id) {
+        releasePinRef.current(prevId);
+      }
 
       const reel = v.item;
       if (reel && !viewedReelIds.current.has(reel.id)) {
@@ -682,6 +594,7 @@ export default function ReelsScreen() {
         onMoveShouldSetPanResponder: () => true,
         onPanResponderGrant: (_, gesture) => {
           isScrubbingRef.current = true;
+          setIsScrubbing(true);
           const v = getActivePlayer(activeReelIdRef.current);
           void v?.pauseAsync();
           setIsPlaying(false);
@@ -692,12 +605,14 @@ export default function ReelsScreen() {
         },
         onPanResponderRelease: () => {
           isScrubbingRef.current = false;
+          setIsScrubbing(false);
           const v = getActivePlayer(activeReelIdRef.current);
           void v?.playAsync();
           setIsPlaying(true);
         },
         onPanResponderTerminate: () => {
           isScrubbingRef.current = false;
+          setIsScrubbing(false);
         },
       }),
     [reelWidth, seekToProgress, getActivePlayer]
@@ -804,8 +719,21 @@ export default function ReelsScreen() {
                 ]}
                 pointerEvents="none"
               >
-                <Ionicons name="heart" size={100} color="#ff3b30" />
+                <Ionicons name="heart" size={100} color={REEL_ACCENT} />
               </Animated.View>
+            )}
+            {isCurrent && (
+              <ReelBrandBadge
+                ownerName={authorLabel(item)}
+                frameWidth={reelWidth}
+                frameHeight={reelHeight}
+                progressBottom={progressBottom}
+                playCycle={badgePlayCycle}
+                compact={!usePhoneFrame}
+              />
+            )}
+            {isCurrent && endScreenReelId === item.id && (
+              <ReelEndScreen ownerName={authorLabel(item)} />
             )}
             {isCurrent && playbackIcon && (
               <View style={styles.playbackIconOverlay} pointerEvents="none">
@@ -818,56 +746,27 @@ export default function ReelsScreen() {
             )}
           </TouchableOpacity>
 
-          {usePhoneFrame ? (
-            <VolumeControl
-              volume={volume}
-              isMuted={isMuted}
-              onVolumeChange={(v) => {
-                setVolume(v);
-                setIsMuted(v === 0);
-              }}
-              onMuteToggle={() => {
-                if (isMuted) {
-                  setIsMuted(false);
-                  if (volume === 0) setVolume(1);
-                } else {
-                  setIsMuted(true);
-                }
-              }}
-            />
-          ) : (
-            <TouchableOpacity
-              style={[styles.muteButton, styles.muteButtonMobile, { top: insets.top + 56 }]}
-              onPress={() => setIsMuted((m) => !m)}
-            >
-              <Ionicons
-                name={isMuted ? 'volume-mute' : 'volume-medium'}
-                size={22}
-                color="#fff"
-              />
-            </TouchableOpacity>
-          )}
-
           {isCurrent && (
             <View
               style={[
                 styles.progressContainer,
-                { bottom: bottomNavOffset },
+                { bottom: progressBottom },
                 usePhoneFrame && { width: reelWidth },
+                Platform.OS === 'web' && (isScrubbing ? styles.progressScrubbing : styles.progressGrab),
               ]}
               {...progressPan.panHandlers}
             >
               <View style={styles.progressBg}>
+                <View style={[styles.progressBuffered, { width: `${bufferedProgress * 100}%` }]} />
                 <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
               </View>
             </View>
           )}
 
-          <LinearGradient
-            colors={['transparent', 'rgba(0,0,0,0.85)']}
+          <View
             style={[
-              styles.bottomGradient,
-              usePhoneFrame && [styles.bottomGradientDesktop, { width: reelWidth }],
+              styles.bottomMeta,
+              usePhoneFrame && [styles.bottomMetaDesktop, { width: reelWidth }],
             ]}
             pointerEvents="box-none"
           >
@@ -875,7 +774,7 @@ export default function ReelsScreen() {
               style={[
                 styles.captionContainer,
                 {
-                  marginBottom: REEL_BOTTOM_INSET + bottomNavOffset,
+                  marginBottom: metaBottom,
                   paddingRight: usePhoneFrame ? 8 : REEL_ACTION_RAIL_WIDTH + 8,
                 },
               ]}
@@ -910,9 +809,7 @@ export default function ReelsScreen() {
                 )}
               </View>
               {!!item.caption && (
-                <Text style={styles.caption} numberOfLines={2}>
-                  {item.caption}
-                </Text>
+                <ExpandableCaption text={item.caption} style={styles.caption} />
               )}
               <View style={styles.musicContainer}>
                 <Ionicons name="musical-notes" size={14} color="rgba(255,255,255,0.85)" />
@@ -921,12 +818,12 @@ export default function ReelsScreen() {
                 </Text>
               </View>
             </View>
-          </LinearGradient>
+          </View>
 
           <View
             style={[
               styles.actionButtons,
-              { bottom: REEL_BOTTOM_INSET + bottomNavOffset },
+              { bottom: metaBottom },
               usePhoneFrame && styles.actionButtonsDesktop,
             ]}
           >
@@ -953,7 +850,7 @@ export default function ReelsScreen() {
               <ActionIcon
                 name={isLiked ? 'heart' : 'heart-outline'}
                 size={26}
-                color={isLiked ? '#ff375f' : '#fff'}
+                color={isLiked ? REEL_ACCENT : '#fff'}
                 active={isLiked}
               />
               <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>
@@ -994,6 +891,7 @@ export default function ReelsScreen() {
       isMuted,
       isPlaying,
       progress,
+      bufferedProgress,
       progressPan.panHandlers,
       handleVideoReady,
       handlePlaybackStatus,
@@ -1008,6 +906,11 @@ export default function ReelsScreen() {
       navigation,
       usePhoneFrame,
       desktopActionOffset,
+      endScreenReelId,
+      badgePlayCycle,
+      metaBottom,
+      progressBottom,
+      isScrubbing,
       volume,
     ]
   );
@@ -1041,12 +944,11 @@ export default function ReelsScreen() {
 
       <View style={[styles.feedColumn, usePhoneFrame && styles.feedColumnPhone, { width: reelWidth + desktopActionOffset }]}>
 
-      <LinearGradient
-        colors={['rgba(0,0,0,0.55)', 'transparent']}
+      <View
         style={[
-          styles.topGradient,
+          styles.topBarWrap,
           { paddingTop: usePhoneFrame ? 16 : insets.top + 8 },
-          usePhoneFrame && styles.topGradientDesktop,
+          usePhoneFrame && styles.topBarWrapDesktop,
         ]}
         pointerEvents="box-none"
       >
@@ -1076,7 +978,7 @@ export default function ReelsScreen() {
 
           <View style={styles.topIconBtnSpacer} />
         </View>
-      </LinearGradient>
+      </View>
 
       {(activeCount > 0 || summary.error > 0) && (
         <TouchableOpacity
@@ -1101,6 +1003,8 @@ export default function ReelsScreen() {
       <FlatList
         ref={flatListRef}
         data={reels}
+        style={{ height: reelHeight }}
+        contentContainerStyle={reels.length === 0 ? undefined : { flexGrow: 0 }}
         extraData={currentIndex}
         renderItem={renderReel}
         keyExtractor={(item) => item.id}
@@ -1173,6 +1077,34 @@ export default function ReelsScreen() {
         }
       />
       </View>
+
+      {Platform.OS === 'web' && isFocused && (
+        <View
+          style={[
+            styles.volumeOverlay,
+            { height: reelHeight },
+            usePhoneFrame && { width: reelWidth, alignSelf: 'center' },
+          ]}
+          pointerEvents="box-none"
+        >
+          <VolumeControl
+            volume={volume}
+            isMuted={isMuted}
+            onVolumeChange={(v) => {
+              setVolume(v);
+              setIsMuted(v === 0);
+            }}
+            onMuteToggle={() => {
+              if (isMuted) {
+                setIsMuted(false);
+                if (volume === 0) setVolume(1);
+              } else {
+                setIsMuted(true);
+              }
+            }}
+          />
+        </View>
+      )}
 
       {usePhoneFrame && reels.length > 0 && (
         <View style={navArrowStyles.container}>
@@ -1254,13 +1186,19 @@ export default function ReelsScreen() {
         transparent
         onRequestClose={() => setOpenProfile(null)}
       >
-        <View style={styles.modalBackdrop}>
+        <View style={[styles.modalBackdrop, usePhoneFrame && styles.modalBackdropCentered]}>
           <TouchableOpacity
             style={StyleSheet.absoluteFill}
             activeOpacity={1}
             onPress={() => setOpenProfile(null)}
           />
-          <View style={[styles.profileSheetWrapper, { paddingBottom: insets.bottom }]}>
+          <View
+            style={[
+              styles.profileSheetWrapper,
+              usePhoneFrame && styles.profileSheetPhone,
+              { paddingBottom: usePhoneFrame ? 0 : insets.bottom },
+            ]}
+          >
             {openProfile && (
               <ReelProfileSheet
                 reel={openProfile}
@@ -1353,7 +1291,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  feedColumn: { flex: 1, alignSelf: 'stretch' },
+  feedColumn: { flex: 1, alignSelf: 'stretch', overflow: 'hidden' },
   feedColumnPhone: {
     alignSelf: 'center',
     maxWidth: '100%',
@@ -1363,8 +1301,8 @@ const styles = StyleSheet.create({
   },
   center: { justifyContent: 'center', alignItems: 'center' },
   reelContainer: { position: 'relative', backgroundColor: '#000', overflow: 'hidden' },
-  reelContainerDesktop: { borderRadius: 16, overflow: 'visible' },
-  videoTouchLayer: StyleSheet.absoluteFillObject as any,
+  reelContainerDesktop: { borderRadius: 16, overflow: 'hidden' },
+  videoTouchLayer: { ...StyleSheet.absoluteFillObject, zIndex: 1 },
   videoTouchLayerDesktop: {
     position: 'absolute' as const,
     top: 0,
@@ -1373,7 +1311,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     overflow: 'hidden',
   },
-  topGradient: {
+  topBarWrap: {
     position: 'absolute',
     top: 0,
     left: 0,
@@ -1381,9 +1319,9 @@ const styles = StyleSheet.create({
     zIndex: 20,
     elevation: 20,
     paddingHorizontal: 12,
-    paddingBottom: 16,
+    paddingBottom: 8,
   },
-  topGradientDesktop: {
+  topBarWrapDesktop: {
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
   },
@@ -1517,6 +1455,22 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     paddingHorizontal: 0,
   },
+  progressGrab: {
+    cursor: 'grab',
+  } as object,
+  progressScrubbing: {
+    cursor: 'grabbing',
+  } as object,
+  volumeOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: '100%',
+    zIndex: 200,
+    elevation: 200,
+    pointerEvents: 'box-none',
+  },
   scrubArea: {
     position: 'absolute',
     left: 0,
@@ -1544,7 +1498,21 @@ const styles = StyleSheet.create({
     zIndex: 16,
   },
   captionSmall: { color: 'rgba(255,255,255,0.85)', fontSize: 12, fontWeight: '500' },
-  progressBg: { height: 4, backgroundColor: 'rgba(255,255,255,0.25)', borderRadius: 2, overflow: 'hidden' },
+  progressBg: {
+    height: 4,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    borderRadius: 2,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  progressBuffered: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(255,255,255,0.45)',
+    borderRadius: 2,
+  },
   progressFill: { height: '100%', backgroundColor: '#fff', borderRadius: 2 },
   playbackIconOverlay: {
     position: 'absolute',
@@ -1568,18 +1536,16 @@ const styles = StyleSheet.create({
     marginTop: -50,
     zIndex: 10,
   },
-  bottomGradient: {
+  bottomMeta: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
-    height: 260,
-    justifyContent: 'flex-end',
-    paddingHorizontal: 14,
     zIndex: 15,
     elevation: 15,
+    paddingHorizontal: 14,
   },
-  bottomGradientDesktop: {
+  bottomMetaDesktop: {
     borderBottomLeftRadius: 16,
     borderBottomRightRadius: 16,
   },
@@ -1627,8 +1593,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   actionIconWrapActive: {
-    backgroundColor: 'rgba(255,55,95,0.25)',
-    borderColor: 'rgba(255,55,95,0.45)',
+    backgroundColor: 'rgba(0,122,255,0.25)',
+    borderColor: 'rgba(0,122,255,0.45)',
   },
   profileActionWrap: { marginBottom: 14, alignItems: 'center', position: 'relative' },
   profileButton: { alignItems: 'center' },
@@ -1636,7 +1602,7 @@ const styles = StyleSheet.create({
   profileFollowPlus: {
     position: 'absolute',
     bottom: -5,
-    backgroundColor: '#ff375f',
+    backgroundColor: REEL_ACCENT,
     borderRadius: 10,
     width: 20,
     height: 20,
@@ -1676,5 +1642,19 @@ const styles = StyleSheet.create({
     height: '100%',
     backgroundColor: '#111',
     overflow: 'hidden',
+  },
+  modalBackdropCentered: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.72)',
+  },
+  profileSheetPhone: {
+    height: '92%',
+    maxHeight: 900,
+    width: REEL_PHONE_MAX_WIDTH,
+    borderRadius: 16,
+    backgroundColor: '#000',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#1f1f1f',
   },
 });

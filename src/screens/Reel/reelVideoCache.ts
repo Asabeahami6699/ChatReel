@@ -1,11 +1,18 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import { Platform } from 'react-native';
+import type { ReelDTO } from '../../lib/api';
+import { getReelPlaybackUrl, isHlsUrl } from '../../lib/reelPlayback';
 
 const CACHE_DIR = `${FileSystem.cacheDirectory ?? ''}reels-cache/`;
 const PREFETCH_AHEAD = 4;
-const MAX_CONCURRENT = 2;
+const MAX_CONCURRENT = 3;
 
 type CacheEntry = { localUri: string; blobUrl?: string };
+
+type ReelLike = Pick<
+  ReelDTO,
+  'id' | 'video_url' | 'hls_url' | 'transcode_status' | 'playback_url'
+>;
 
 const memory = new Map<string, CacheEntry>();
 const inFlight = new Map<string, Promise<string>>();
@@ -37,6 +44,13 @@ async function ensureCacheDir() {
   if (!info.exists) {
     await FileSystem.makeDirectoryAsync(CACHE_DIR, { intermediates: true });
   }
+}
+
+/** MP4 URL suitable for full-file cache (HLS stays streamed). */
+function mp4CacheUrl(reel: ReelLike): string | null {
+  const mp4 = reel.video_url;
+  if (!mp4 || isHlsUrl(mp4)) return null;
+  return mp4;
 }
 
 async function downloadReel(id: string, url: string): Promise<string> {
@@ -81,28 +95,41 @@ async function downloadReel(id: string, url: string): Promise<string> {
   }
 }
 
+export function isReelFullyCached(reelId: string): boolean {
+  return memory.has(reelId);
+}
+
 export function getCachedReelUri(reelId: string, remoteUrl: string): string {
   return memory.get(reelId)?.localUri ?? remoteUrl;
 }
 
-/** Prioritize next reel, then ahead queue, then previous for swipe-back. */
+/**
+ * Playback URI: use local blob/file when cached (instant), otherwise stream
+ * (HLS preferred when ready, else remote MP4).
+ */
+export function resolveReelPlaybackUri(reel: ReelLike): string {
+  const cached = memory.get(reel.id)?.localUri;
+  if (cached) return cached;
+  return getReelPlaybackUrl(reel);
+}
+
+/** Prioritize next reel, current (background), ahead queue, then previous. */
 export function scheduleReelPrefetch(
-  reels: Array<{ id: string; video_url: string; hls_url?: string | null; transcode_status?: string; playback_url?: string }>,
+  reels: ReelLike[],
   currentIndex: number,
   onCached: (reelId: string, localUri: string) => void
 ) {
   const tasks: Array<{ id: string; url: string; priority: number }> = [];
 
-  const addTask = (reel: (typeof reels)[number] | undefined, priority: number) => {
+  const addTask = (reel: ReelLike | undefined, priority: number) => {
     if (!reel) return;
-    const url =
-      reel.playback_url ??
-      (reel.transcode_status === 'ready' && reel.hls_url ? reel.hls_url : reel.video_url);
-    if (isHlsUrl(url)) return;
+    const url = mp4CacheUrl(reel);
+    if (!url) return;
     tasks.push({ id: reel.id, url, priority });
   };
 
   addTask(reels[currentIndex + 1], 0);
+  addTask(reels[currentIndex], 0.25);
 
   for (let offset = 2; offset <= PREFETCH_AHEAD; offset += 1) {
     addTask(reels[currentIndex + offset], offset);
@@ -120,23 +147,17 @@ export function scheduleReelPrefetch(
   }
 }
 
-/** Warm the current reel immediately (e.g. on feed load). Skips HLS (streamed). */
+/** Warm the current reel MP4 in background while streaming plays. */
 export function prefetchReelNow(
-  reel: { id: string; video_url: string; hls_url?: string | null; transcode_status?: string; playback_url?: string },
+  reel: ReelLike,
   onCached: (reelId: string, localUri: string) => void
 ) {
-  const url =
-    reel.playback_url ??
-    (reel.transcode_status === 'ready' && reel.hls_url ? reel.hls_url : reel.video_url);
-  if (isHlsUrl(url)) return;
+  const url = mp4CacheUrl(reel);
+  if (!url) return;
   if (memory.has(reel.id) || inFlight.has(reel.id)) return;
   void downloadReel(reel.id, url)
     .then((uri) => onCached(reel.id, uri))
     .catch(() => undefined);
-}
-
-function isHlsUrl(url: string): boolean {
-  return /\.m3u8(\?|$)/i.test(url);
 }
 
 export const REEL_RENDER_WINDOW = 1;

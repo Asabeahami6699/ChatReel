@@ -1,5 +1,5 @@
 import React from 'react';
-import type { ReelPlaybackStatus } from '../../components/ReelPlayer';
+import type { ReelPlaybackStatus, ReelPlayerHandle } from '../../components/ReelPlayer';
 
 type Props = {
   uri: string;
@@ -12,6 +12,6 @@ type Props = {
 };
 
 /** Native stub — HLS on native uses expo-video / direct URLs. */
-export function WebHlsVideo(_props: Props) {
+export const WebHlsVideo = React.forwardRef<ReelPlayerHandle, Props>(function WebHlsVideo(_props, _ref) {
   return null;
-}
+});

@@ -18,6 +18,7 @@ import { api, ApiError, type ReelInboxItemDTO } from '../../lib/api';
 import { useRealtimeTopic } from '../../hooks/useRealtimeTopic';
 import type { ReelsStackParamList } from '../../navigation/reelsNavigation';
 import { reelTabBarOffset } from './ReelsTabBar';
+import { REEL_ACCENT } from './reelTheme';
 
 function actorName(item: ReelInboxItemDTO): string {
   return (
@@ -116,7 +117,7 @@ export default function ReelInboxScreen() {
           <Ionicons
             name={item.type === 'like' ? 'heart' : 'chatbubble'}
             size={18}
-            color={item.type === 'like' ? '#ff375f' : '#93c5fd'}
+            color={item.type === 'like' ? REEL_ACCENT : '#93c5fd'}
           />
         </View>
       )}

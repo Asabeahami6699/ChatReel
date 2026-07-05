@@ -66,6 +66,7 @@ type MediaDraft =
       duration: number;
       trimStartSec: number;
       trimEndSec: number;
+      thumbUri?: string | null;
     };
 
 const MAX_DURATION_SECONDS = 60;
@@ -108,17 +109,25 @@ export default function PostReelScreen() {
     };
   }, []);
 
-  const generateThumbnail = useCallback(async (uri: string, timeMs = 500) => {
+  const generateThumbnail = useCallback(async (uri: string, timeMs = 500): Promise<string | null> => {
     try {
       const { uri: thumb } = await VideoThumbnails.getThumbnailAsync(uri, {
         time: timeMs,
-        quality: 0.8,
+        quality: 0.75,
       });
-      setThumbUri(thumb);
+      return thumb;
     } catch {
-      setThumbUri(null);
+      return null;
     }
   }, []);
+
+  const attachVideoThumb = useCallback(
+    async (draft: Extract<MediaDraft, { mediaType: 'video' }>): Promise<MediaDraft> => {
+      const thumb = await generateThumbnail(draft.uri);
+      return { ...draft, thumbUri: thumb };
+    },
+    [generateThumbnail]
+  );
 
   const singleVideo = items.length === 1 && items[0].mediaType === 'video' ? items[0] : null;
 
@@ -155,7 +164,7 @@ export default function PostReelScreen() {
       duration = duration ?? probed?.duration;
     }
     const dur = duration && duration > 0 ? duration : MAX_DURATION_SECONDS;
-    return {
+    const videoDraft: Extract<MediaDraft, { mediaType: 'video' }> = {
       id: newId(),
       mediaType: 'video',
       uri: asset.uri,
@@ -167,7 +176,8 @@ export default function PostReelScreen() {
       trimStartSec: 0,
       trimEndSec: dur,
     };
-  }, []);
+    return attachVideoThumb(videoDraft);
+  }, [attachVideoThumb]);
 
   const pickMedia = useCallback(async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -193,10 +203,10 @@ export default function PostReelScreen() {
 
     setItems((prev) => [...prev, ...drafts].slice(0, MAX_SELECTION));
     const firstVideo = drafts.find((d) => d.mediaType === 'video');
-    if (firstVideo && firstVideo.mediaType === 'video') {
-      void generateThumbnail(firstVideo.uri);
+    if (firstVideo?.mediaType === 'video') {
+      setThumbUri(firstVideo.thumbUri ?? null);
     }
-  }, [assetToDraft, generateThumbnail]);
+  }, [assetToDraft]);
 
   const recordVideo = useCallback(async () => {
     const cam = await ImagePicker.requestCameraPermissionsAsync();
@@ -213,9 +223,9 @@ export default function PostReelScreen() {
     const draft = await assetToDraft(result.assets[0]);
     if (draft) {
       setItems([draft]);
-      if (draft.mediaType === 'video') void generateThumbnail(draft.uri);
+      if (draft.mediaType === 'video') setThumbUri(draft.thumbUri ?? null);
     }
-  }, [assetToDraft, generateThumbnail]);
+  }, [assetToDraft]);
 
   const editNativeCrop = useCallback(() => {
     if (Platform.OS === 'web') {
@@ -233,9 +243,19 @@ export default function PostReelScreen() {
   }, []);
 
   const handlePickThumbnailFrame = useCallback(
-    (timeSec: number) => {
+    async (timeSec: number) => {
       if (!singleVideo) return;
-      void generateThumbnail(singleVideo.uri, Math.max(200, Math.floor(timeSec * 1000)));
+      const thumb = await generateThumbnail(singleVideo.uri, Math.max(200, Math.floor(timeSec * 1000)));
+      setThumbUri(thumb);
+      if (thumb) {
+        setItems((prev) =>
+          prev.map((item) =>
+            item.id === singleVideo.id && item.mediaType === 'video'
+              ? { ...item, thumbUri: thumb }
+              : item
+          )
+        );
+      }
     },
     [generateThumbnail, singleVideo]
   );
@@ -271,7 +291,10 @@ export default function PostReelScreen() {
           duration: item.mediaType === 'video' ? item.duration : undefined,
           trimStartSec: item.mediaType === 'video' ? item.trimStartSec : undefined,
           trimEndSec: item.mediaType === 'video' ? item.trimEndSec : undefined,
-          thumbUri: item.mediaType === 'video' ? thumbUri : item.uri,
+          thumbUri:
+            item.mediaType === 'video'
+              ? item.thumbUri ?? thumbUri
+              : item.uri,
         })),
         caption,
         visibility,

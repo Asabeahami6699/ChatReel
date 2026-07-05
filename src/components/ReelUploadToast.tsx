@@ -25,11 +25,11 @@ function CircularProgress({ progress, size = 44 }: { progress: number; size?: nu
             width: size,
             height: size,
             borderRadius: size / 2,
-            borderColor: '#1e90ff',
-            borderTopColor: pct >= 25 ? '#1e90ff' : 'transparent',
-            borderRightColor: pct >= 50 ? '#1e90ff' : 'transparent',
-            borderBottomColor: pct >= 75 ? '#1e90ff' : 'transparent',
-            borderLeftColor: pct >= 100 ? '#1e90ff' : 'transparent',
+            borderColor: '#007AFF',
+            borderTopColor: pct >= 25 ? '#007AFF' : 'transparent',
+            borderRightColor: pct >= 50 ? '#007AFF' : 'transparent',
+            borderBottomColor: pct >= 75 ? '#007AFF' : 'transparent',
+            borderLeftColor: pct >= 100 ? '#007AFF' : 'transparent',
           },
         ]}
       />
@@ -113,7 +113,7 @@ export function ReelUploadToast() {
         >
           <CircularProgress progress={progress} />
           <View style={styles.chipTextWrap}>
-            <Ionicons name="cloud-upload-outline" size={14} color="#1e90ff" />
+            <Ionicons name="cloud-upload-outline" size={14} color="#007AFF" />
             <Text style={styles.chipText} numberOfLines={1}>
               {stage}
               {activeTasks.length > 1 ? ` · ${activeTasks.length}` : ''}
@@ -127,8 +127,11 @@ export function ReelUploadToast() {
         onDismiss={() => setSnackbar((s) => ({ ...s, visible: false }))}
         duration={3000}
         style={snackbar.isError ? styles.snackbarError : styles.snackbarOk}
+        theme={{ colors: { onSurface: snackbar.isError ? '#fff' : '#111' } }}
       >
-        {snackbar.message}
+        <Text style={snackbar.isError ? styles.snackbarTextError : styles.snackbarTextOk}>
+          {snackbar.message}
+        </Text>
       </Snackbar>
     </Portal>
   );
@@ -163,6 +166,12 @@ const styles = StyleSheet.create({
     borderWidth: 3,
   },
   circleText: { color: '#fff', fontSize: 10, fontWeight: '700' },
-  snackbarOk: { backgroundColor: '#1a472a' },
+  snackbarOk: {
+    backgroundColor: '#fff',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(0,0,0,0.12)',
+  },
   snackbarError: { backgroundColor: '#4a1a1a' },
+  snackbarTextOk: { color: '#111', fontWeight: '600' },
+  snackbarTextError: { color: '#fff', fontWeight: '600' },
 });

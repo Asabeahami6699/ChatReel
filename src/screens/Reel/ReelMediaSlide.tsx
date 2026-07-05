@@ -1,9 +1,10 @@
 import React, { useEffect, useRef } from 'react';
 import { ActivityIndicator, Image, Platform, StyleSheet, View } from 'react-native';
 import type { ReelDTO, ReelMediaDTO } from '../../lib/api';
-import { getMediaPlaybackUrl, isHlsUrl, isImageReelUrl } from '../../lib/reelPlayback';
+import { getMediaPlaybackUrl, isImageReelUrl } from '../../lib/reelPlayback';
 import { ReelPlayer, type ReelPlaybackStatus, type ReelPlayerHandle } from '../../components/ReelPlayer';
 import { WebHlsVideo } from './WebHlsVideo';
+import { WebVideoPoster } from './WebVideoPoster';
 
 type Props = {
   reel: ReelDTO;
@@ -42,7 +43,7 @@ export function ReelMediaSlide({
 }: Props) {
   const isImage = media.media_type === 'image' || isImageReelUrl(media.media_url);
   const playbackUri = videoUri ?? getMediaPlaybackUrl(media);
-  const useWebHls = Platform.OS === 'web' && !isImage && isHlsUrl(playbackUri);
+  const useWebStream = Platform.OS === 'web' && !isImage;
   const posterUri = media.thumbnail_url ?? (isImage ? playbackUri : reel.thumbnail_url);
   const showPoster = Boolean(posterUri) && !isReady;
   const imageReadyRef = useRef(false);
@@ -79,8 +80,12 @@ export function ReelMediaSlide({
       {showPoster && posterUri && (
         <Image source={{ uri: posterUri }} style={styles.media} resizeMode="contain" />
       )}
-      {useWebHls ? (
+      {!isReady && !showPoster && useWebStream && (
+        <WebVideoPoster uri={playbackUri} style={styles.media} />
+      )}
+      {useWebStream ? (
         <WebHlsVideo
+          ref={(playerRef) => onRef(slideKey, playerRef)}
           uri={playbackUri}
           style={styles.media}
           muted={isMuted}
@@ -98,13 +103,13 @@ export function ReelMediaSlide({
           shouldPlay={isActiveSlide && isPlaying && isFocused}
           isMuted={isMuted}
           volume={volume}
-          isLooping
+          isLooping={false}
           progressUpdateIntervalMillis={isActiveSlide ? 250 : 1000}
           onReadyForDisplay={() => onReady(slideKey)}
           onPlaybackStatusUpdate={(status) => onPlaybackStatus(slideKey, status, isActiveSlide)}
         />
       )}
-      {!isReady && !showPoster && (
+      {!isReady && !showPoster && !useWebStream && (
         <View style={styles.loadingOverlay}>
           <ActivityIndicator color="#fff" size="large" />
         </View>

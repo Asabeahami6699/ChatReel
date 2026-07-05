@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { ActivityIndicator, Image, Platform, StyleSheet, View, useWindowDimensions } from 'react-native';
 import type { ReelDTO } from '../../lib/api';
-import { getReelPlaybackUrl, isHlsUrl, isImageReelUrl } from '../../lib/reelPlayback';
+import { getReelPlaybackUrl, isImageReelUrl } from '../../lib/reelPlayback';
 import { ReelPlayer, type ReelPlaybackStatus, type ReelPlayerHandle } from '../../components/ReelPlayer';
 import { getReelVideoLayout } from './reelVideoLayout';
 import { isReelNearViewport } from './reelVideoCache';
@@ -41,7 +41,7 @@ export function ReelVideoSurface({
     isImageReelUrl(videoUri) ||
     isImageReelUrl(reel.video_url) ||
     (!reel.duration && isImageReelUrl(reel.thumbnail_url ?? ''));
-  const useWebHls = Platform.OS === 'web' && !isImage && isHlsUrl(videoUri);
+  const useWebStream = Platform.OS === 'web' && !isImage;
   const videoLayout = getReelVideoLayout(reel, frameWidth, frameHeight);
   const posterUri = reel.thumbnail_url ?? (isImage ? videoUri : null);
   const showPoster = Boolean(posterUri) && (!isReady || !isNear);
@@ -85,13 +85,14 @@ export function ReelVideoSurface({
           />
         )}
         {isNear ? (
-          useWebHls ? (
+          useWebStream ? (
             <WebHlsVideo
               uri={videoUri}
               style={StyleSheet.absoluteFill}
               muted={isMuted}
               shouldPlay={isCurrent && isPlaying && isFocused}
               onReady={() => onReady(reel.id)}
+              onPlaybackStatusUpdate={(status) => onPlaybackStatus(reel.id, status, isCurrent)}
             />
           ) : (
             <ReelPlayer
