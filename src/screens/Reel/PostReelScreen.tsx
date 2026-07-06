@@ -16,13 +16,18 @@ import * as ImagePicker from 'expo-image-picker';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useAuth } from '../../hooks/useAuth';
 import { isImageMime } from '../../lib/reelPlayback';
+import { pauseReelFeedPlayback } from '../../lib/reelPlaybackBridge';
 import { enqueueReelUpload, type ReelUploadVisibility } from '../../lib/reelUploadQueue';
 import { probeVideoDimensions } from '../../lib/videoDimensions';
-import { ReelVideoEditor, type ReelVideoEditState } from './ReelVideoEditor';
+import type { ReelVideoEditState } from './ReelVideoEditor';
 import { ReelPlayer } from '../../components/ReelPlayer';
-import { api } from '../../lib/api';
+import { PostReelVideoComposer } from './PostReelVideoComposer';
+import { PostReelImageComposer } from './PostReelImageComposer';
+import type { ReelFilterId } from './reelFilters';
+import { api, type ReelSoundDTO } from '../../lib/api';
 
 function MediaTilePreview({ item }: { item: MediaDraft }) {
   if (item.mediaType === 'image') {
@@ -54,6 +59,7 @@ type MediaDraft =
       mime?: string;
       width?: number;
       height?: number;
+      filterId?: ReelFilterId;
     }
   | {
       id: string;
@@ -79,6 +85,7 @@ function newId() {
 export default function PostReelScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
+  const { user } = useAuth();
 
   const [items, setItems] = useState<MediaDraft[]>([]);
   const [thumbUri, setThumbUri] = useState<string | null>(null);
@@ -87,8 +94,21 @@ export default function PostReelScreen() {
   const [groupId, setGroupId] = useState<string | null>(null);
   const [groups, setGroups] = useState<Array<{ id: string; name?: string }>>([]);
   const [isQueuing, setIsQueuing] = useState(false);
+  const [selectedSound, setSelectedSound] = useState<ReelSoundDTO | null>(null);
+  const [soundStartSec, setSoundStartSec] = useState(0);
+  const [soundEndSec, setSoundEndSec] = useState(0);
+
+  useFocusEffect(
+    useCallback(() => {
+      pauseReelFeedPlayback();
+    }, [])
+  );
 
   useEffect(() => {
+    if (!user?.id) {
+      setGroups([]);
+      return;
+    }
     let alive = true;
     api.groups
       .list()
@@ -107,7 +127,7 @@ export default function PostReelScreen() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [user?.id]);
 
   const generateThumbnail = useCallback(async (uri: string, timeMs = 500): Promise<string | null> => {
     try {
@@ -130,6 +150,7 @@ export default function PostReelScreen() {
   );
 
   const singleVideo = items.length === 1 && items[0].mediaType === 'video' ? items[0] : null;
+  const singleImage = items.length === 1 && items[0].mediaType === 'image' ? items[0] : null;
 
   const assetToDraft = useCallback(async (asset: ImagePicker.ImagePickerAsset): Promise<MediaDraft | null> => {
     const isImage = asset.type === 'image' || isImageMime(asset.mimeType);
@@ -227,14 +248,6 @@ export default function PostReelScreen() {
     }
   }, [assetToDraft]);
 
-  const editNativeCrop = useCallback(() => {
-    if (Platform.OS === 'web') {
-      Alert.alert('Edit on mobile', 'Crop and trim are available in the iOS/Android app.');
-      return;
-    }
-    void pickMedia();
-  }, [pickMedia]);
-
   const handleVideoChange = useCallback((patch: Partial<ReelVideoEditState>) => {
     setItems((prev) => {
       if (prev.length !== 1 || prev[0].mediaType !== 'video') return prev;
@@ -242,23 +255,12 @@ export default function PostReelScreen() {
     });
   }, []);
 
-  const handlePickThumbnailFrame = useCallback(
-    async (timeSec: number) => {
-      if (!singleVideo) return;
-      const thumb = await generateThumbnail(singleVideo.uri, Math.max(200, Math.floor(timeSec * 1000)));
-      setThumbUri(thumb);
-      if (thumb) {
-        setItems((prev) =>
-          prev.map((item) =>
-            item.id === singleVideo.id && item.mediaType === 'video'
-              ? { ...item, thumbUri: thumb }
-              : item
-          )
-        );
-      }
-    },
-    [generateThumbnail, singleVideo]
-  );
+  const handleImageChange = useCallback((patch: Partial<Extract<MediaDraft, { mediaType: 'image' }>>) => {
+    setItems((prev) => {
+      if (prev.length !== 1 || prev[0].mediaType !== 'image') return prev;
+      return [{ ...prev[0], ...patch }];
+    });
+  }, []);
 
   const removeItem = useCallback((id: string) => {
     setItems((prev) => prev.filter((i) => i.id !== id));
@@ -270,6 +272,9 @@ export default function PostReelScreen() {
     setCaption('');
     setVisibility('public');
     setGroupId(null);
+    setSelectedSound(null);
+    setSoundStartSec(0);
+    setSoundEndSec(0);
   }, []);
 
   const upload = useCallback(async () => {
@@ -299,6 +304,13 @@ export default function PostReelScreen() {
         caption,
         visibility,
         group_id: visibility === 'group' && groupId ? groupId : undefined,
+        ...(selectedSound && (singleVideo || singleImage)
+          ? {
+              sound_id: selectedSound.id,
+              sound_start_sec: soundStartSec,
+              original_audio_volume: 0,
+            }
+          : {}),
       });
       reset();
       navigation.goBack();
@@ -308,7 +320,61 @@ export default function PostReelScreen() {
     } finally {
       setIsQueuing(false);
     }
-  }, [items, thumbUri, caption, visibility, groupId, reset, navigation]);
+  }, [items, thumbUri, caption, visibility, groupId, selectedSound, soundStartSec, singleVideo, singleImage, reset, navigation]);
+
+  if (singleImage) {
+    return (
+      <PostReelImageComposer
+        image={singleImage}
+        caption={caption}
+        visibility={visibility}
+        groupId={groupId}
+        groups={groups}
+        selectedSound={selectedSound}
+        soundStartSec={soundStartSec}
+        soundEndSec={soundEndSec}
+        isQueuing={isQueuing}
+        onImageChange={handleImageChange}
+        onCaptionChange={setCaption}
+        onVisibilityChange={setVisibility}
+        onGroupIdChange={setGroupId}
+        onSoundChange={setSelectedSound}
+        onSoundStartChange={setSoundStartSec}
+        onSoundEndChange={setSoundEndSec}
+        onPost={() => void upload()}
+        onClose={() => navigation.goBack()}
+        onReplaceMedia={() => void pickMedia()}
+      />
+    );
+  }
+
+  if (singleVideo) {
+    return (
+      <PostReelVideoComposer
+        video={singleVideo}
+        thumbUri={thumbUri}
+        caption={caption}
+        visibility={visibility}
+        groupId={groupId}
+        groups={groups}
+        selectedSound={selectedSound}
+        soundStartSec={soundStartSec}
+        soundEndSec={soundEndSec}
+        isQueuing={isQueuing}
+        onVideoChange={handleVideoChange}
+        onThumbChange={setThumbUri}
+        onCaptionChange={setCaption}
+        onVisibilityChange={setVisibility}
+        onGroupIdChange={setGroupId}
+        onSoundChange={setSelectedSound}
+        onSoundStartChange={setSoundStartSec}
+        onSoundEndChange={setSoundEndSec}
+        onPost={() => void upload()}
+        onClose={() => navigation.goBack()}
+        onReplaceMedia={() => void pickMedia()}
+      />
+    );
+  }
 
   return (
     <KeyboardAvoidingView
@@ -378,21 +444,6 @@ export default function PostReelScreen() {
                   </TouchableOpacity>
                 )}
               </View>
-            ) : singleVideo ? (
-              <>
-                <ReelVideoEditor
-                  video={singleVideo}
-                  onChange={handleVideoChange}
-                  onEditNative={editNativeCrop}
-                  onPickThumbnailFrame={handlePickThumbnailFrame}
-                />
-                {thumbUri && (
-                  <View style={styles.thumbRow}>
-                    <Image source={{ uri: thumbUri }} style={styles.thumbPreview} />
-                    <Text style={styles.thumbTextHint}>Cover thumbnail</Text>
-                  </View>
-                )}
-              </>
             ) : null}
 
             <TouchableOpacity
@@ -574,6 +625,17 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   changeBtnRowText: { color: '#1e90ff', fontSize: 13, fontWeight: '600' },
+  soundRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    backgroundColor: '#161616',
+    borderRadius: 12,
+  },
+  soundRowText: { flex: 1, color: '#fff', fontSize: 14, fontWeight: '600' },
   thumbRow: {
     flexDirection: 'row',
     alignItems: 'center',

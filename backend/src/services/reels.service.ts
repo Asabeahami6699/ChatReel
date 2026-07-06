@@ -24,7 +24,21 @@ export type ReelRow = {
   moderation_status: ModerationStatus;
   moderation_reason: string | null;
   moderation_score: number | null;
+  sound_id: string | null;
+  sound_start_sec: number | null;
+  original_audio_volume: number | null;
   created_at: string;
+};
+
+export type ReelSoundSummary = {
+  id: string;
+  title: string;
+  artist: string | null;
+  audio_url: string;
+  preview_url: string | null;
+  duration_sec: number | null;
+  cover_url: string | null;
+  usage_count: number;
 };
 
 export type ReelMediaRow = {
@@ -55,6 +69,7 @@ export type EnrichedReel = ReelRow & {
   liked_by_me: boolean;
   playback_url: string;
   media?: ReelMediaRow[];
+  sound?: ReelSoundSummary | null;
 };
 
 function withCdnMediaRow(row: ReelMediaRow): ReelMediaRow {
@@ -146,8 +161,11 @@ export async function enrichReels(
 
   const reelIds = reels.map((r) => r.id);
   const authorIds = Array.from(new Set(reels.map((r) => r.author_id)));
+  const soundIds = Array.from(
+    new Set(reels.map((r) => r.sound_id).filter((id): id is string => Boolean(id)))
+  );
 
-  const [authorsRes, likesRes] = await Promise.all([
+  const [authorsRes, likesRes, soundsRes] = await Promise.all([
     supabaseAdmin
       .from('profiles')
       .select('id, user_id, display_name, email, avatar_url')
@@ -157,10 +175,17 @@ export async function enrichReels(
       .select('reel_id')
       .eq('user_id', viewerProfileId)
       .in('reel_id', reelIds),
+    soundIds.length
+      ? supabaseAdmin
+          .from('reel_sounds')
+          .select('id, title, artist, audio_url, preview_url, duration_sec, cover_url, usage_count')
+          .in('id', soundIds)
+      : Promise.resolve({ data: [], error: null }),
   ]);
 
   if (authorsRes.error) throw new Error(authorsRes.error.message);
   if (likesRes.error) throw new Error(likesRes.error.message);
+  if (soundsRes.error) throw new Error(soundsRes.error.message);
 
   const authorById = new Map<string, AuthorProfile>();
   for (const a of (authorsRes.data ?? []) as AuthorProfile[]) {
@@ -168,6 +193,11 @@ export async function enrichReels(
   }
 
   const likedSet = new Set((likesRes.data ?? []).map((l) => l.reel_id as string));
+
+  const soundById = new Map<string, ReelSoundSummary>();
+  for (const s of (soundsRes.data ?? []) as ReelSoundSummary[]) {
+    soundById.set(s.id, s);
+  }
 
   const { data: mediaRows, error: mediaErr } = await supabaseAdmin
     .from('reel_media')
@@ -195,6 +225,7 @@ export async function enrichReels(
       author: authorById.get(r.author_id) ?? null,
       liked_by_me: likedSet.has(r.id),
       media: mediaByReel.get(r.id),
+      sound: r.sound_id ? soundById.get(r.sound_id) ?? null : null,
     })
   );
 }

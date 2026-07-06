@@ -20,6 +20,114 @@ export type ReelTrimOptions = {
   trimEndSec?: number;
 };
 
+export type ReelSoundMixOptions = {
+  soundId: string;
+  soundStartSec?: number;
+  originalAudioVolume?: number;
+};
+
+type ResolvedSoundMix = {
+  audioUrl: string;
+  soundStartSec: number;
+  originalAudioVolume: number;
+};
+
+async function loadSoundMixOptions(reelId: string): Promise<ResolvedSoundMix | null> {
+  const { data, error } = await supabaseAdmin
+    .from('reels')
+    .select('sound_id, sound_start_sec, original_audio_volume')
+    .eq('id', reelId)
+    .maybeSingle();
+  if (error || !data?.sound_id) return null;
+
+  const { data: sound, error: soundErr } = await supabaseAdmin
+    .from('reel_sounds')
+    .select('audio_url')
+    .eq('id', data.sound_id)
+    .eq('is_active', true)
+    .maybeSingle();
+  if (soundErr || !sound?.audio_url) return null;
+
+  return {
+    audioUrl: sound.audio_url as string,
+    soundStartSec: Number(data.sound_start_sec ?? 0),
+    originalAudioVolume: Number(data.original_audio_volume ?? 1),
+  };
+}
+
+async function downloadToFile(url: string, destPath: string): Promise<void> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Download failed (${res.status})`);
+  await fs.writeFile(destPath, Buffer.from(await res.arrayBuffer()));
+}
+
+async function mixSoundIntoVideo(
+  inputPath: string,
+  outputPath: string,
+  sound: ResolvedSoundMix,
+  trim?: ReelTrimOptions
+): Promise<void> {
+  const tmpSound = path.join(path.dirname(outputPath), 'sound.mp3');
+  await downloadToFile(sound.audioUrl, tmpSound);
+
+  const trimStart = trim?.trimStartSec ?? 0;
+  const trimEnd = trim?.trimEndSec;
+  const trimDuration =
+    trimEnd != null && trimEnd > trimStart ? trimEnd - trimStart : undefined;
+
+  const origVol = Math.max(0, Math.min(1, sound.originalAudioVolume));
+  const soundStart = Math.max(0, sound.soundStartSec);
+
+  let filterComplex: string;
+  if (origVol <= 0.001) {
+    filterComplex =
+      trimDuration != null
+        ? `[1:a]atrim=duration=${trimDuration},asetpts=PTS-STARTPTS[aout]`
+        : `[1:a]asetpts=PTS-STARTPTS[aout]`;
+  } else {
+    const soundChain =
+      trimDuration != null
+        ? `[1:a]atrim=duration=${trimDuration},asetpts=PTS-STARTPTS,volume=1[a1]`
+        : `[1:a]asetpts=PTS-STARTPTS,volume=1[a1]`;
+    filterComplex = `[0:a]volume=${origVol}[a0];${soundChain};[a0][a1]amix=inputs=2:duration=first:dropout_transition=0[aout]`;
+  }
+
+  const videoInputOpts: string[] = [];
+  if (trimStart > 0) videoInputOpts.push('-ss', String(trimStart));
+  if (trimDuration != null) videoInputOpts.push('-t', String(trimDuration));
+
+  const soundInputOpts: string[] = [];
+  if (soundStart > 0) soundInputOpts.push('-ss', String(soundStart));
+
+  await new Promise<void>((resolve, reject) => {
+    const cmd = ffmpeg(inputPath);
+    if (videoInputOpts.length) cmd.inputOptions(videoInputOpts);
+    cmd
+      .input(tmpSound)
+      .inputOptions(soundInputOpts)
+      .complexFilter(filterComplex)
+      .outputOptions([
+        '-map',
+        '0:v:0',
+        '-map',
+        '[aout]',
+        '-c:v',
+        'libx264',
+        '-profile:v',
+        'baseline',
+        '-c:a',
+        'aac',
+        '-shortest',
+      ])
+      .output(outputPath)
+      .on('end', () => resolve())
+      .on('error', (err) => reject(err))
+      .run();
+  });
+
+  await fs.rm(tmpSound, { force: true }).catch(() => undefined);
+}
+
 export async function transcodeReelToHls(
   reelId: string,
   videoUrl: string,
@@ -65,6 +173,19 @@ export async function transcodeReelToHls(
       console.warn('[reels] dimension probe failed:', probeErr);
     }
 
+    const soundMix = await loadSoundMixOptions(reelId);
+    let encodeInputPath = inputPath;
+    if (soundMix) {
+      const mixedPath = path.join(tmpDir, 'mixed.mp4');
+      try {
+        await mixSoundIntoVideo(inputPath, mixedPath, soundMix, trim);
+        encodeInputPath = mixedPath;
+        trim = undefined;
+      } catch (mixErr) {
+        console.error('[reels] sound mix failed, continuing with original audio:', mixErr);
+      }
+    }
+
     const outDir = path.join(tmpDir, 'hls');
     await fs.mkdir(outDir);
     const playlistPath = path.join(outDir, 'index.m3u8');
@@ -93,7 +214,7 @@ export async function transcodeReelToHls(
     if (trimDuration != null) outputOpts.unshift('-t', String(trimDuration));
 
     await new Promise<void>((resolve, reject) => {
-      const cmd = ffmpeg(inputPath);
+      const cmd = ffmpeg(encodeInputPath);
       if (inputOpts.length) cmd.inputOptions(inputOpts);
       cmd
         .videoCodec('libx264')

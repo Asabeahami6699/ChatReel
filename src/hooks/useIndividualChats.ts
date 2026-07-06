@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
-import { api } from '../lib/api';
+import { api, ApiError } from '../lib/api';
 import { useAuth } from './useAuth';
 import { useCurrentProfileId } from './useCurrentProfileId';
 import { useFriendshipsRealtime } from './useFriendshipsRealtime';
@@ -94,7 +94,9 @@ export const useIndividualChats = (searchQuery: string = '') => {
       setChats(formatted as IndividualChat[]);
       setIsDataStale(false);
     } catch (err) {
-      console.error('useIndividualChats error:', err);
+      if (!(err instanceof ApiError && err.isAuthError)) {
+        console.error('useIndividualChats error:', err);
+      }
       const cachedChats = await loadChatsFromStorage();
       if (cachedChats) setChats(cachedChats);
     } finally {

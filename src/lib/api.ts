@@ -11,6 +11,18 @@ export type ReelAuthorDTO = {
   avatar_url: string | null;
 };
 
+export type ReelSoundDTO = {
+  id: string;
+  title: string;
+  artist: string | null;
+  audio_url: string;
+  preview_url: string | null;
+  duration_sec: number | null;
+  cover_url: string | null;
+  usage_count: number;
+  uploaded_by?: string | null;
+};
+
 export type ReelMediaDTO = {
   id: string;
   reel_id: string;
@@ -51,6 +63,10 @@ export type ReelDTO = {
   author: ReelAuthorDTO | null;
   liked_by_me: boolean;
   media?: ReelMediaDTO[];
+  sound?: ReelSoundDTO | null;
+  sound_id?: string | null;
+  sound_start_sec?: number | null;
+  original_audio_volume?: number | null;
 };
 
 export type ReelCommentDTO = {
@@ -169,11 +185,33 @@ export type LiveKitTokenDTO = {
 
 export class ApiError extends Error {
   status: number;
+  /** True when the session is invalid and the user should sign in again. */
+  isAuthError: boolean;
 
   constructor(message: string, status: number) {
     super(sanitizeApiErrorMessage(message, status));
     this.status = status;
+    this.isAuthError = status === 401 || status === 403;
   }
+}
+
+type AuthExpiredListener = () => void;
+const authExpiredListeners = new Set<AuthExpiredListener>();
+
+/** Register a callback when API calls fail auth after refresh (session dead). */
+export function onAuthExpired(listener: AuthExpiredListener): () => void {
+  authExpiredListeners.add(listener);
+  return () => authExpiredListeners.delete(listener);
+}
+
+function notifyAuthExpired(): void {
+  authExpiredListeners.forEach((fn) => {
+    try {
+      fn();
+    } catch {
+      /* ignore */
+    }
+  });
 }
 
 /** Hide auth/token internals from UI copy. */
@@ -228,17 +266,23 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   };
 
   let token = auth ? await getAccessToken() : null;
+  let sentToken = Boolean(token);
   let { res, data } = await doFetch(token);
 
   if (auth && res.status === 401 && path !== '/api/auth/refresh') {
     const session = await ensureSupabaseSession();
     token = session?.access_token ?? null;
     if (token) {
+      sentToken = true;
       ({ res, data } = await doFetch(token));
     }
   }
 
   if (!res.ok) {
+    // Only wipe local session when we had a token and the server rejected it as invalid.
+    if (auth && res.status === 401 && path !== '/api/auth/refresh' && sentToken) {
+      notifyAuthExpired();
+    }
     throw new ApiError(data.error ?? `Request failed (${res.status})`, res.status);
   }
 
@@ -536,6 +580,27 @@ export const api = {
     byUser: (profileId: string, limit = 30) =>
       apiRequest<{ reels: ReelDTO[] }>(`/api/reels/user/${profileId}?limit=${limit}`),
     get: (id: string) => apiRequest<{ reel: ReelDTO }>(`/api/reels/${id}`),
+    sounds: (params?: { q?: string; trending?: boolean; mine?: boolean; limit?: number }) => {
+      const search = new URLSearchParams();
+      if (params?.q) search.set('q', params.q);
+      if (params?.trending) search.set('trending', '1');
+      if (params?.mine) search.set('mine', '1');
+      if (params?.limit) search.set('limit', String(params.limit));
+      const qs = search.toString();
+      return apiRequest<{ sounds: ReelSoundDTO[] }>(`/api/reels/sounds${qs ? `?${qs}` : ''}`);
+    },
+    sound: (id: string) => apiRequest<{ sound: ReelSoundDTO }>(`/api/reels/sounds/${id}`),
+    soundReels: (id: string, params?: { cursor?: string; limit?: number }) => {
+      const search = new URLSearchParams();
+      if (params?.cursor) search.set('cursor', params.cursor);
+      if (params?.limit) search.set('limit', String(params.limit));
+      const qs = search.toString();
+      return apiRequest<{ sound: ReelSoundDTO; reels: ReelDTO[]; next_cursor: string | null }>(
+        `/api/reels/sounds/${id}/reels${qs ? `?${qs}` : ''}`
+      );
+    },
+    createSound: (data: { audio_url: string; title: string; artist?: string; duration_sec?: number }) =>
+      apiRequest<{ sound: ReelSoundDTO }>('/api/reels/sounds', { method: 'POST', body: data }),
     create: (data: {
       video_url?: string;
       thumbnail_url?: string;
@@ -547,6 +612,9 @@ export const api = {
       height?: number;
       trim_start_sec?: number;
       trim_end_sec?: number;
+      sound_id?: string;
+      sound_start_sec?: number;
+      original_audio_volume?: number;
       media?: Array<{
         media_url: string;
         media_type: 'image' | 'video';

@@ -54,7 +54,11 @@ export function ReelMediaSlide({
       onReady(slideKey);
       onPlaybackStatus(
         slideKey,
-        { isLoaded: true, positionMillis: 0, durationMillis: 5000 },
+        {
+          isLoaded: true,
+          positionMillis: 0,
+          durationMillis: Math.max(1000, Math.round((reel.duration ?? 15) * 1000)),
+        },
         isActiveSlide
       );
     }

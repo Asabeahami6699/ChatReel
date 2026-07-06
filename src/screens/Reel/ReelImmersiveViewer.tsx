@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
 import { USE_NATIVE_DRIVER } from '../../lib/animation';
 import { api, ApiError, type ReelDTO } from '../../lib/api';
 import type { ReelPlayerHandle, ReelPlaybackStatus } from '../../components/ReelPlayer';
@@ -25,9 +26,11 @@ import ReelProfileSheet from './ReelProfileSheet';
 import { useReelVideoPrefetch } from './useReelVideoPrefetch';
 import { REEL_ACTION_RAIL_WIDTH, REEL_BOTTOM_INSET, REEL_PHONE_MAX_WIDTH, getReelFrameDimensions } from './reelVideoLayout';
 import { ExpandableCaption } from './ExpandableCaption';
+import { ReelSoundStrip } from './ReelSoundStrip';
 import { ReelBrandBadge } from './ReelBrandBadge';
 import { ReelEndScreen } from './ReelEndScreen';
 import { REEL_ACCENT, REEL_END_SCREEN_MS, reelBottomLayout } from './reelTheme';
+import { registerReelFeedPauseHandler } from '../../lib/reelPlaybackBridge';
 
 type Props = {
   reels: ReelDTO[];
@@ -56,6 +59,7 @@ export function ReelImmersiveViewer({
   disableProfileNavigation = false,
 }: Props) {
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation<any>();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const { frameWidth: reelWidth, frameHeight: reelHeight, usePhoneFrame } = useMemo(
     () => getReelFrameDimensions(windowWidth, windowHeight),
@@ -131,6 +135,27 @@ export function ReelImmersiveViewer({
       if (endScreenTimerRef.current) clearTimeout(endScreenTimerRef.current);
     };
   }, []);
+
+  const pauseAllVideos = useCallback(async () => {
+    await Promise.all(
+      Object.values(videos.current).map(async (player) => {
+        if (!player) return;
+        try {
+          await player.pauseAsync();
+        } catch {
+          /* ignore */
+        }
+      })
+    );
+    setIsPlaying(false);
+  }, []);
+
+  useEffect(() => {
+    const unregisterPause = registerReelFeedPauseHandler(() => {
+      void pauseAllVideos();
+    });
+    return () => unregisterPause();
+  }, [pauseAllVideos]);
 
   const playActiveReel = useCallback(async (reelId: string | null) => {
     activeReelIdRef.current = reelId;
@@ -328,7 +353,7 @@ export function ReelImmersiveViewer({
   const renderReel = useCallback(
     ({ item, index }: { item: ReelDTO; index: number }) => {
       const isCurrent = index === currentIndex;
-      const avatar = item.author?.avatar_url ?? null;
+      const authorHandle = authorLabel(item);
       const isLiked = item.liked_by_me;
 
       return (
@@ -391,27 +416,12 @@ export function ReelImmersiveViewer({
             <View style={[styles.captionContainer, { marginBottom: metaBottom, paddingRight: REEL_ACTION_RAIL_WIDTH + 8 }]}>
               <View style={styles.userInfo}>
                 {disableProfileNavigation ? (
-                  <>
-                    {avatar ? (
-                      <Image source={{ uri: avatar }} style={styles.avatar} />
-                    ) : (
-                      <View style={[styles.avatar, styles.avatarFallback]}>
-                        <Text style={styles.avatarFallbackText}>{authorLabel(item).charAt(0).toUpperCase()}</Text>
-                      </View>
-                    )}
-                  </>
+                  <Text style={styles.username}>@{authorLabel(item)}</Text>
                 ) : (
                   <TouchableOpacity onPress={() => setOpenProfile(item)}>
-                    {avatar ? (
-                      <Image source={{ uri: avatar }} style={styles.avatar} />
-                    ) : (
-                      <View style={[styles.avatar, styles.avatarFallback]}>
-                        <Text style={styles.avatarFallbackText}>{authorLabel(item).charAt(0).toUpperCase()}</Text>
-                      </View>
-                    )}
+                    <Text style={styles.username}>@{authorLabel(item)}</Text>
                   </TouchableOpacity>
                 )}
-                <Text style={styles.username}>@{authorLabel(item)}</Text>
               </View>
               {!!item.caption && (
                 <ExpandableCaption
@@ -421,12 +431,11 @@ export function ReelImmersiveViewer({
                   maxWidth={Math.round(reelWidth * 0.7)}
                 />
               )}
-              <View style={styles.musicContainer}>
-                <Ionicons name="musical-notes" size={14} color="rgba(255,255,255,0.85)" />
-                <Text style={styles.music} numberOfLines={1}>
-                  Original audio · @{authorLabel(item)}
-                </Text>
-              </View>
+              <ReelSoundStrip
+                reel={item}
+                authorHandle={authorLabel(item)}
+                onPressSound={(soundId) => navigation.navigate('ReelSound', { soundId })}
+              />
             </View>
           </View>
 

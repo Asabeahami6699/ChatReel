@@ -7,6 +7,9 @@ const CACHE_DIR = `${FileSystem.cacheDirectory ?? ''}reels-cache/`;
 const PREFETCH_AHEAD = 4;
 const MAX_CONCURRENT = 3;
 
+/** Web browsers stream HLS/MP4 with range requests; full blob prefetch hits QUIC/CDN errors. */
+const WEB_FILE_PREFETCH = Platform.OS !== 'web';
+
 type CacheEntry = { localUri: string; blobUrl?: string };
 
 type ReelLike = Pick<
@@ -54,6 +57,11 @@ function mp4CacheUrl(reel: ReelLike): string | null {
 }
 
 async function downloadReel(id: string, url: string): Promise<string> {
+  if (!WEB_FILE_PREFETCH) {
+    // Let the video element stream from the CDN on web.
+    return url;
+  }
+
   const existing = memory.get(id);
   if (existing) return existing.localUri;
 
@@ -63,15 +71,6 @@ async function downloadReel(id: string, url: string): Promise<string> {
   const task = (async () => {
     await acquireSlot();
     try {
-      if (Platform.OS === 'web') {
-        const res = await fetch(url, { cache: 'force-cache' });
-        if (!res.ok) throw new Error(`Prefetch failed (${res.status})`);
-        const blob = await res.blob();
-        const blobUrl = URL.createObjectURL(blob);
-        memory.set(id, { localUri: blobUrl, blobUrl });
-        return blobUrl;
-      }
-
       await ensureCacheDir();
       const path = `${CACHE_DIR}${id}.mp4`;
       const info = await FileSystem.getInfoAsync(path);
@@ -119,6 +118,8 @@ export function scheduleReelPrefetch(
   currentIndex: number,
   onCached: (reelId: string, localUri: string) => void
 ) {
+  if (!WEB_FILE_PREFETCH) return;
+
   const tasks: Array<{ id: string; url: string; priority: number }> = [];
 
   const addTask = (reel: ReelLike | undefined, priority: number) => {
@@ -152,6 +153,7 @@ export function prefetchReelNow(
   reel: ReelLike,
   onCached: (reelId: string, localUri: string) => void
 ) {
+  if (!WEB_FILE_PREFETCH) return;
   const url = mp4CacheUrl(reel);
   if (!url) return;
   if (memory.has(reel.id) || inFlight.has(reel.id)) return;

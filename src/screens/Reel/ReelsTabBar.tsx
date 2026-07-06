@@ -5,6 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { ReelsTabParamList } from '../../navigation/reelsNavigation';
 import { rootNavigationRef } from '../../navigation/rootNavigation';
+import { openPostReelCompose } from '../../lib/reelPlaybackBridge';
 import { REEL_TAB_BAR_HEIGHT, REEL_PHONE_MAX_WIDTH } from './reelVideoLayout';
 import { REEL_ACCENT } from './reelTheme';
 
@@ -59,6 +60,7 @@ export default function ReelsTabBar({
   const sidebarW = collapsed ? DESKTOP_SIDEBAR_COLLAPSED : DESKTOP_SIDEBAR_EXPANDED;
 
   const openUpload = () => {
+    openPostReelCompose();
     if (rootNavigationRef.isReady()) rootNavigationRef.navigate('PostReel');
   };
 

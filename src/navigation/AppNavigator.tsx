@@ -39,10 +39,18 @@ import JoinGroupScreen from '../screens/Group/JoinGroupScreen';
 import { IncomingCallOverlay } from '../components/IncomingCallOverlay';
 import { useChatSettings } from '../context/ChatSettingsContext';
 import { ReelsMainTabFocusContext } from '../context/ReelsMainTabFocusContext';
+import { blurActiveElementOnWeb } from '../lib/webFocus';
 
 // === NAVIGATORS ===
 const Tab = createMaterialTopTabNavigator();
 const Stack = createNativeStackNavigator();
+
+/** Inactive tab panels get aria-hidden; blur so focus isn't trapped on a hidden Pressable. */
+const tabScreenListeners = {
+  state: () => {
+    blurActiveElementOnWeb();
+  },
+};
 
 /* ------------------------------------------------------------------
  *  Web-only wrapper – shows the selected chat on the right panel
@@ -149,6 +157,7 @@ const MainTabNavigator = () => {
     <Tab.Navigator
       initialRouteName="Chats"
       tabBarPosition="bottom"
+      screenListeners={tabScreenListeners}
       screenOptions={{
         tabBarShowLabel: true,
         tabBarActiveTintColor: theme.tabActive,
@@ -256,6 +265,7 @@ const WebDesktopMain = () => {
           tabBarPosition="bottom"
           screenListeners={{
             state: (e) => {
+              blurActiveElementOnWeb();
               const state = e.data.state;
               if (!state?.routes?.length) return;
               const name = state.routes[state.index]?.name;

@@ -32,6 +32,7 @@ import {
   registerBeforeChatNavigate,
   unregisterBeforeChatNavigate,
 } from '../../navigation/chatNavigationBridge';
+import { openPostReelCompose, registerReelFeedPauseHandler } from '../../lib/reelPlaybackBridge';
 import ReelCommentSheet from './ReelCommentSheet';
 import ReelShareSheet from './ReelShareSheet';
 import ReelProfileSheet from './ReelProfileSheet';
@@ -49,6 +50,7 @@ import { reelTabBarOffset } from './ReelsTabBar';
 import { useReelsMainTabFocused } from '../../context/ReelsMainTabFocusContext';
 import { useReelFeedMode } from './ReelFeedModeContext';
 import { ExpandableCaption } from './ExpandableCaption';
+import { ReelSoundStrip } from './ReelSoundStrip';
 import { ReelBrandBadge } from './ReelBrandBadge';
 import { ReelEndScreen } from './ReelEndScreen';
 import { REEL_ACCENT, REEL_END_SCREEN_MS, reelBottomLayout } from './reelTheme';
@@ -219,8 +221,12 @@ export default function ReelsScreen() {
     registerBeforeChatNavigate(() => {
       void pauseAllVideos();
     });
+    const unregisterPause = registerReelFeedPauseHandler(() => {
+      void pauseAllVideos();
+    });
     return () => {
       unregisterBeforeChatNavigate();
+      unregisterPause();
       if (endScreenTimerRef.current) clearTimeout(endScreenTimerRef.current);
     };
   }, [pauseAllVideos]);
@@ -781,17 +787,8 @@ export default function ReelsScreen() {
             >
               <View style={styles.userInfo}>
                 <TouchableOpacity onPress={() => setOpenProfile(item)}>
-                  {avatar ? (
-                    <Image source={{ uri: avatar }} style={styles.avatar} />
-                  ) : (
-                    <View style={[styles.avatar, styles.avatarFallback]}>
-                      <Text style={styles.avatarFallbackText}>
-                        {authorLabel(item).charAt(0).toUpperCase()}
-                      </Text>
-                    </View>
-                  )}
+                  <Text style={styles.username}>@{authorLabel(item)}</Text>
                 </TouchableOpacity>
-                <Text style={styles.username}>@{authorLabel(item)}</Text>
                 {item.visibility !== 'public' && (
                   <View style={styles.visibilityPill}>
                     <Ionicons
@@ -816,10 +813,11 @@ export default function ReelsScreen() {
               />
               )}
               <View style={styles.musicContainer}>
-                <Ionicons name="musical-notes" size={14} color="rgba(255,255,255,0.85)" />
-                <Text style={styles.music} numberOfLines={1}>
-                  Original audio · @{authorLabel(item)}
-                </Text>
+                <ReelSoundStrip
+                  reel={item}
+                  authorHandle={authorLabel(item)}
+                  onPressSound={(soundId) => navigation.navigate('ReelSound', { soundId })}
+                />
               </View>
             </View>
           </View>
@@ -1065,7 +1063,10 @@ export default function ReelsScreen() {
             ) : (
               <TouchableOpacity
                 style={styles.retryButton}
-                onPress={() => navigation.navigate('PostReel' as never)}
+                onPress={() => {
+                  openPostReelCompose();
+                  navigation.navigate('PostReel' as never);
+                }}
               >
                 <Text style={styles.retryButtonText}>Post the first reel</Text>
               </TouchableOpacity>

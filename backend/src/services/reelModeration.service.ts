@@ -49,7 +49,16 @@ const VIDEO_SYNC_MODELS = 'nudity-2.1,gore-2.0,offensive,weapon,recreational_dru
 
 /** Fast local block for obvious caption terms (runs before Sightengine). */
 const CAPTION_BLOCKLIST =
-  /\b(porn|porno|xxx|nsfw|nude|naked|nudes|onlyfans|sex\s*tape|hentai|x\s*rated)\b/i;
+  /\b(porn|porno|xxx|nsfw|onlyfans|sex\s*tape|hentai|x\s*rated)\b/i;
+
+/** Legitimate context where partial nudity / swimwear / education is expected. */
+const EDUCATIONAL_CONTEXT =
+  /\b(educational|education|documentary|medical|anatomy|health|science|tutorial|learn|lecture|class|fitness|workout|yoga|art|artist|fashion|swimwear|swimsuit|bikini|beach|model|photoshoot|runway|breast\s*cancer|self[\s-]?exam|maternity|pregnancy|breastfeeding|nursing|dermatolog|skin\s*care|spa|wellness)\b/i;
+
+function captionHasEducationalContext(caption?: string | null): boolean {
+  if (!caption?.trim()) return false;
+  return EDUCATIONAL_CONTEXT.test(caption.trim());
+}
 
 function explicitScore(nudity?: NudityPayload): number {
   if (!nudity) return 0;
@@ -71,7 +80,10 @@ function weaponScore(payload?: VisualPayload): number {
   return Math.max(...Object.values(classes), 0);
 }
 
-function evaluateVisualPayload(payload: VisualPayload): ModerationDecision {
+function evaluateVisualPayload(
+  payload: VisualPayload,
+  opts?: { educationalContext?: boolean }
+): ModerationDecision {
   const explicit = explicitScore(payload.nudity);
   const suggestive = suggestiveScore(payload.nudity);
   const gore = payload.gore?.prob ?? 0;
@@ -80,7 +92,9 @@ function evaluateVisualPayload(payload: VisualPayload): ModerationDecision {
   const weapon = weaponScore(payload);
 
   const score = Math.max(explicit, suggestive, gore, offensive, drugs, weapon);
+  const educational = opts?.educationalContext ?? false;
 
+  // Hard reject: explicit sexual content, gore, weapons, drugs
   if (
     explicit >= env.reelModeration.rejectThreshold ||
     gore >= 0.65 ||
@@ -94,15 +108,34 @@ function evaluateVisualPayload(payload: VisualPayload): ModerationDecision {
     };
   }
 
+  // Educational / fashion / swimwear: allow suggestive scores when explicit nudity is low
+  if (educational && explicit < 0.45 && suggestive < 0.95) {
+    return { status: 'approved', score, reason: null };
+  }
+
+  // Fashion / swimwear without explicit nudity — approve (common false-positive case)
+  if (explicit < 0.3 && offensive < 0.75) {
+    return { status: 'approved', score, reason: null };
+  }
+
+  // Very suggestive with low explicit — flag for review, don't reject
+  if (explicit < 0.25 && suggestive >= 0.88) {
+    return {
+      status: 'flagged',
+      score,
+      reason: 'Suggestive imagery — visible to you while under review',
+    };
+  }
+
   if (
     explicit >= env.reelModeration.flagThreshold ||
-    suggestive >= 0.72 ||
+    (suggestive >= 0.92 && explicit >= 0.15) ||
     offensive >= 0.8
   ) {
     return {
       status: 'flagged',
       score,
-      reason: 'Borderline content — hidden pending review',
+      reason: 'Borderline content — hidden from others pending review',
     };
   }
 
@@ -131,15 +164,18 @@ function evaluateTextPayload(payload: TextCheckPayload): ModerationDecision {
   return { status: 'approved', score: 0, reason: null };
 }
 
-function evaluateVideoSyncPayload(payload: VideoSyncPayload): ModerationDecision {
+function evaluateVideoSyncPayload(
+  payload: VideoSyncPayload,
+  opts?: { educationalContext?: boolean }
+): ModerationDecision {
   let decision: ModerationDecision = { status: 'approved', score: 0, reason: null };
 
   for (const frame of payload.data?.frames ?? []) {
-    decision = mergeDecisions(decision, evaluateVisualPayload(frame));
+    decision = mergeDecisions(decision, evaluateVisualPayload(frame, opts));
     if (decision.status === 'rejected') break;
   }
 
-  return mergeDecisions(decision, evaluateVisualPayload(payload));
+  return mergeDecisions(decision, evaluateVisualPayload(payload, opts));
 }
 
 function mergeDecisions(current: ModerationDecision, next: ModerationDecision): ModerationDecision {
@@ -180,29 +216,40 @@ async function sightengineFormRequest(
   return json;
 }
 
-async function checkImageBuffer(buffer: Buffer, filename: string): Promise<ModerationDecision> {
+async function checkImageBuffer(
+  buffer: Buffer,
+  filename: string,
+  opts?: { educationalContext?: boolean }
+): Promise<ModerationDecision> {
   const payload = (await sightengineFormRequest(
     'check.json',
     { models: IMAGE_MODELS },
     { buffer, filename, mime: 'image/jpeg' }
   )) as VisualPayload;
-  return evaluateVisualPayload(payload);
+  return evaluateVisualPayload(payload, opts);
 }
 
-async function checkImageUrl(url: string): Promise<ModerationDecision> {
+async function checkImageUrl(
+  url: string,
+  opts?: { educationalContext?: boolean }
+): Promise<ModerationDecision> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Thumbnail fetch failed (${res.status})`);
   const buffer = Buffer.from(await res.arrayBuffer());
-  return checkImageBuffer(buffer, 'thumb.jpg');
+  return checkImageBuffer(buffer, 'thumb.jpg', opts);
 }
 
-async function checkVideoSync(buffer: Buffer, filename: string): Promise<ModerationDecision> {
+async function checkVideoSync(
+  buffer: Buffer,
+  filename: string,
+  opts?: { educationalContext?: boolean }
+): Promise<ModerationDecision> {
   const payload = (await sightengineFormRequest(
     'video/check-sync.json',
     { models: VIDEO_SYNC_MODELS },
     { buffer, filename, mime: 'video/mp4' }
   )) as VideoSyncPayload;
-  return evaluateVideoSyncPayload(payload);
+  return evaluateVideoSyncPayload(payload, opts);
 }
 
 export async function checkCaption(caption: string): Promise<ModerationDecision> {
@@ -262,14 +309,15 @@ async function extractVideoFrames(videoPath: string, maxFrames: number): Promise
 
 async function checkVideoFile(
   videoPath: string,
-  durationSec?: number | null
+  durationSec?: number | null,
+  opts?: { educationalContext?: boolean }
 ): Promise<ModerationDecision> {
   const buffer = await fs.readFile(videoPath);
   const effectiveDuration = durationSec ?? 120;
 
   if (effectiveDuration <= 55 && buffer.length <= 48 * 1024 * 1024) {
     try {
-      return await checkVideoSync(buffer, 'reel.mp4');
+      return await checkVideoSync(buffer, 'reel.mp4', opts);
     } catch (err) {
       console.warn('[moderation] video sync failed, falling back to frames:', err);
     }
@@ -279,7 +327,7 @@ async function checkVideoFile(
   const frames = await extractVideoFrames(videoPath, 12);
   for (const framePath of frames) {
     const frameBuffer = await fs.readFile(framePath);
-    const next = await checkImageBuffer(frameBuffer, path.basename(framePath));
+    const next = await checkImageBuffer(frameBuffer, path.basename(framePath), opts);
     decision = mergeDecisions(decision, next);
     if (decision.status === 'rejected') break;
   }
@@ -378,6 +426,8 @@ export async function moderateReelById(
   }
 
   let decision: ModerationDecision = { status: 'approved', score: 0, reason: null };
+  const educationalContext = captionHasEducationalContext(reel.caption as string | null);
+  const visualOpts = { educationalContext };
 
   try {
     if (reel.caption && typeof reel.caption === 'string' && reel.caption.trim()) {
@@ -392,17 +442,23 @@ export async function moderateReelById(
     }
 
     if (reel.thumbnail_url) {
-      decision = mergeDecisions(decision, await checkImageUrl(reel.thumbnail_url as string));
+      decision = mergeDecisions(
+        decision,
+        await checkImageUrl(reel.thumbnail_url as string, visualOpts)
+      );
     }
 
     const isImageReel = reel.transcode_status === 'skipped';
     if (localVideoPath) {
       decision = mergeDecisions(
         decision,
-        await checkVideoFile(localVideoPath, reel.duration as number | null)
+        await checkVideoFile(localVideoPath, reel.duration as number | null, visualOpts)
       );
     } else if (isImageReel) {
-      decision = mergeDecisions(decision, await checkImageUrl(reel.video_url as string));
+      decision = mergeDecisions(
+        decision,
+        await checkImageUrl(reel.video_url as string, visualOpts)
+      );
     } else {
       const res = await fetch(reel.video_url as string);
       if (!res.ok) throw new Error(`Video fetch failed (${res.status})`);
@@ -412,7 +468,7 @@ export async function moderateReelById(
         await fs.writeFile(videoPath, Buffer.from(await res.arrayBuffer()));
         decision = mergeDecisions(
           decision,
-          await checkVideoFile(videoPath, reel.duration as number | null)
+          await checkVideoFile(videoPath, reel.duration as number | null, visualOpts)
         );
       } finally {
         await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
@@ -446,7 +502,7 @@ export function scheduleReelModeration(reelId: string): void {
 export async function assertCaptionAllowed(caption?: string | null): Promise<void> {
   if (!caption?.trim()) return;
   const decision = await checkCaption(caption.trim());
-  if (decision.status === 'rejected' || decision.status === 'flagged') {
+  if (decision.status === 'rejected') {
     throw new Error(decision.reason ?? 'Caption violates community guidelines');
   }
 }

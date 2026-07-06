@@ -67,3 +67,17 @@ export async function releasePlayer(player: AudioPlayer | null): Promise<void> {
     /* ignore */
   }
 }
+
+/** Seek works on web via seekTo(); currentTime is read-only there. */
+export async function seekPlaybackPlayer(player: AudioPlayer, seconds: number): Promise<void> {
+  const sec = Math.max(0, seconds);
+  if (typeof player.seekTo === 'function') {
+    await player.seekTo(sec);
+    return;
+  }
+  try {
+    player.currentTime = sec;
+  } catch {
+    /* ignore */
+  }
+}

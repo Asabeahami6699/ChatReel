@@ -4,7 +4,7 @@ import type { ReelDTO } from './api';
 import { getReelGridThumbnail } from './reelThumbnails';
 import { isImageReelUrl } from './reelPlayback';
 
-const MAX_CONCURRENT = 4;
+const MAX_CONCURRENT = 6;
 
 async function webCaptureThumb(url: string): Promise<string | null> {
   if (typeof document === 'undefined') return null;

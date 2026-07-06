@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 import { api } from '../lib/api';
+import { ensureSupabaseSession } from '../lib/ensureSupabaseSession';
 import { useAuth } from './useAuth';
 
 /** Keeps profiles.status / last_seen_at in sync while the app is open. */
@@ -35,7 +36,11 @@ export function usePresenceSync() {
     return () => {
       sub.remove();
       if (timeout) clearTimeout(timeout);
-      void api.profiles.updateMe({ status: 'Offline' }).catch(() => undefined);
+      void (async () => {
+        const session = await ensureSupabaseSession();
+        if (!session?.access_token) return;
+        await api.profiles.updateMe({ status: 'Offline' }).catch(() => undefined);
+      })();
     };
   }, [user?.id]);
 }

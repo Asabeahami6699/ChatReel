@@ -56,10 +56,15 @@ module.exports = {
       foregroundImage: './assets/favIconChat.png',
       backgroundColor: '#4f46e5',
     },
+    permissions: ['READ_MEDIA_AUDIO', 'READ_EXTERNAL_STORAGE'],
   },
   ios: {
     bundleIdentifier: 'com.chatapp',
     icon: './assets/favIconChat.png',
+    infoPlist: {
+      NSAppleMusicUsageDescription:
+        'Allow ChatReel to browse music on your device for reel sounds.',
+    },
   },
   plugins: [
     [
@@ -90,6 +95,14 @@ module.exports = {
       {
         photosPermission: 'Allow ChatReel to access your photos.',
         cameraPermission: 'Allow ChatReel to access your camera.',
+      },
+    ],
+    [
+      'expo-media-library',
+      {
+        photosPermission: 'Allow ChatReel to access your media library.',
+        savePhotosPermission: 'Allow ChatReel to save media to your library.',
+        isAccessMediaLocationEnabled: false,
       },
     ],
     [

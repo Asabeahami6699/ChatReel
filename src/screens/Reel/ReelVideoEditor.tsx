@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -8,9 +9,20 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { ReelPlayer, type ReelPlaybackStatus, type ReelPlayerHandle } from '../../components/ReelPlayer';
-import Slider from '@react-native-community/slider';
 import { Ionicons } from '@expo/vector-icons';
-import { fitMediaInBounds } from './reelVideoLayout';
+import {
+  configurePlaybackAudio,
+  createPlaybackPlayer,
+  releasePlayer,
+  seekPlaybackPlayer,
+  type AudioPlayer,
+} from '../../lib/appAudio';
+import { ReelTrimTimeline } from './ReelTrimTimeline';
+import {
+  getReelFilterOverlay,
+  REEL_FILTER_PRESETS,
+  type ReelFilterId,
+} from './reelFilters';
 
 export type ReelVideoEditState = {
   uri: string;
@@ -21,6 +33,7 @@ export type ReelVideoEditState = {
   duration?: number;
   trimStartSec: number;
   trimEndSec: number;
+  filterId?: ReelFilterId;
 };
 
 type Props = {
@@ -28,14 +41,31 @@ type Props = {
   onChange: (patch: Partial<ReelVideoEditState>) => void;
   onEditNative: () => void;
   onPickThumbnailFrame: (timeSec: number) => void;
+  overlaySound?: { url: string; startSec: number; endSec?: number } | null;
+  immersive?: boolean;
+  showTrimControls?: boolean;
+  showFilterControls?: boolean;
+  /** Full-screen final preview — loops trimmed clip with sound/filter. */
+  previewMode?: boolean;
+  /** Pause video + overlay (e.g. while editing music on another tab). */
+  forcePaused?: boolean;
 };
 
 const MIN_TRIM_GAP = 0.5;
 
-/** Slider requires strictly min < max. */
-function sliderRange(min: number, max: number, minGap = 0.01): { min: number; max: number } {
-  if (max > min) return { min, max };
-  return { min, max: min + minGap };
+function mapSoundOffset(
+  overlay: { startSec: number; endSec?: number },
+  posSec: number,
+  trimStart: number
+): number {
+  const clipOffset = Math.max(0, posSec - trimStart);
+  const segStart = overlay.startSec;
+  const segEnd = overlay.endSec;
+  if (segEnd != null && segEnd > segStart) {
+    const segLen = segEnd - segStart;
+    return segStart + (clipOffset % segLen);
+  }
+  return segStart + clipOffset;
 }
 
 export function ReelVideoEditor({
@@ -43,9 +73,16 @@ export function ReelVideoEditor({
   onChange,
   onEditNative,
   onPickThumbnailFrame,
+  overlaySound = null,
+  immersive = false,
+  showTrimControls = true,
+  showFilterControls = false,
+  previewMode = false,
+  forcePaused = false,
 }: Props) {
-  const { width: windowWidth } = useWindowDimensions();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const playerRef = useRef<ReelPlayerHandle>(null);
+  const soundPlayerRef = useRef<AudioPlayer | null>(null);
   const durationSyncedRef = useRef(false);
   const [isPlaying, setIsPlaying] = useState(true);
   const [isMuted, setIsMuted] = useState(false);
@@ -53,23 +90,32 @@ export function ReelVideoEditor({
   const [loadedDurationSec, setLoadedDurationSec] = useState<number | null>(
     video.duration && video.duration > 0 ? video.duration : null
   );
-  const [displaySize, setDisplaySize] = useState(() => {
-    const w = video.width && video.height ? video.width : 9;
-    const h = video.width && video.height ? video.height : 16;
-    return fitMediaInBounds(w, h, Math.max(280, windowWidth - 32), 480);
-  });
 
-  useEffect(() => {
-    const w = video.width && video.height ? video.width : 9;
-    const h = video.width && video.height ? video.height : 16;
-    setDisplaySize(fitMediaInBounds(w, h, Math.max(280, windowWidth - 32), 480));
-  }, [video.width, video.height, windowWidth]);
+  const filterId = video.filterId ?? 'none';
+  const filterOverlay = getReelFilterOverlay(filterId);
 
   useEffect(() => {
     durationSyncedRef.current = false;
     setLoadedDurationSec(video.duration && video.duration > 0 ? video.duration : null);
-    setPositionSec(video.trimStartSec);
-  }, [video.uri, video.duration, video.trimStartSec]);
+    setPositionSec(0);
+  }, [video.uri]);
+
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      await releasePlayer(soundPlayerRef.current);
+      soundPlayerRef.current = null;
+      if (!overlaySound?.url) return;
+      await configurePlaybackAudio();
+      if (!alive) return;
+      soundPlayerRef.current = createPlaybackPlayer(overlaySound.url);
+    })();
+    return () => {
+      alive = false;
+      void releasePlayer(soundPlayerRef.current);
+      soundPlayerRef.current = null;
+    };
+  }, [overlaySound?.url, overlaySound?.startSec, overlaySound?.endSec]);
 
   const duration = loadedDurationSec ?? 0;
   const trimReady = duration > MIN_TRIM_GAP;
@@ -80,30 +126,52 @@ export function ReelVideoEditor({
     ? Math.max(0, Math.min(video.trimStartSec, trimEnd - MIN_TRIM_GAP))
     : 0;
 
-  const scrubRange = sliderRange(trimStart, trimEnd);
-  const trimStartRange = sliderRange(0, Math.max(MIN_TRIM_GAP, trimEnd - MIN_TRIM_GAP));
-  const trimEndRange = sliderRange(
-    Math.min(trimStart + MIN_TRIM_GAP, duration - 0.01),
-    duration
+  const syncOverlaySound = useCallback(
+    async (playing: boolean, posSec: number) => {
+      const sp = soundPlayerRef.current;
+      if (!overlaySound || !sp) return;
+      const offset = mapSoundOffset(overlaySound, posSec, trimStart);
+      if (playing) {
+        await seekPlaybackPlayer(sp, offset);
+        sp.play();
+      } else {
+        sp.pause();
+      }
+    },
+    [overlaySound, trimStart]
   );
 
-  const seekTo = useCallback(async (sec: number) => {
-    const clamped = Math.max(trimStart, Math.min(sec, trimEnd));
-    setPositionSec(clamped);
-    await playerRef.current?.setPositionAsync(clamped * 1000);
-  }, [trimStart, trimEnd]);
+  useEffect(() => {
+    if (!forcePaused) return;
+    setIsPlaying(false);
+    void playerRef.current?.pauseAsync();
+    void syncOverlaySound(false, positionSec);
+  }, [forcePaused, positionSec, syncOverlaySound]);
+
+  const seekTo = useCallback(
+    async (sec: number) => {
+      const clamped = Math.max(trimStart, Math.min(sec, trimEnd));
+      setPositionSec(clamped);
+      await playerRef.current?.setPositionAsync(clamped * 1000);
+      if (isPlaying) await syncOverlaySound(true, clamped);
+    },
+    [trimStart, trimEnd, isPlaying, syncOverlaySound]
+  );
 
   const togglePlay = useCallback(async () => {
+    if (forcePaused) return;
     const ref = playerRef.current;
     if (!ref) return;
     if (isPlaying) {
       await ref.pauseAsync();
       setIsPlaying(false);
+      await syncOverlaySound(false, positionSec);
     } else {
       await ref.playAsync();
       setIsPlaying(true);
+      await syncOverlaySound(true, positionSec);
     }
-  }, [isPlaying]);
+  }, [forcePaused, isPlaying, positionSec, syncOverlaySound]);
 
   const onPlaybackStatus = useCallback(
     (status: ReelPlaybackStatus) => {
@@ -117,14 +185,6 @@ export function ReelVideoEditor({
         (video.width !== status.videoWidth || video.height !== status.videoHeight)
       ) {
         onChange({ width: status.videoWidth, height: status.videoHeight });
-        setDisplaySize(
-          fitMediaInBounds(
-            status.videoWidth,
-            status.videoHeight,
-            Math.max(280, windowWidth - 32),
-            480
-          )
-        );
       }
 
       const durSec =
@@ -135,10 +195,11 @@ export function ReelVideoEditor({
         setLoadedDurationSec(durSec);
         if (!durationSyncedRef.current) {
           durationSyncedRef.current = true;
+          const hasTrim = video.trimEndSec > MIN_TRIM_GAP;
           onChange({
             duration: durSec,
-            trimStartSec: 0,
-            trimEndSec: durSec,
+            trimStartSec: hasTrim ? video.trimStartSec : 0,
+            trimEndSec: hasTrim ? Math.min(video.trimEndSec, durSec) : durSec,
           });
         }
       }
@@ -148,19 +209,29 @@ export function ReelVideoEditor({
       if (!trimReady) return;
       if (status.didJustFinish || pos >= trimEnd - 0.05) {
         void seekTo(trimStart).then(() => {
-          if (isPlaying) void playerRef.current?.playAsync();
+          if (isPlaying) {
+            void playerRef.current?.playAsync();
+            void syncOverlaySound(true, trimStart);
+          }
         });
       }
     },
-    [trimStart, trimEnd, trimReady, isPlaying, seekTo, onChange, video.width, video.height, windowWidth]
+    [trimStart, trimEnd, trimReady, isPlaying, seekTo, syncOverlaySound, onChange, video.width, video.height, video.trimStartSec, video.trimEndSec]
   );
 
+  const previewHeight = previewMode
+    ? Math.max(280, windowHeight * 0.72)
+    : immersive
+      ? Math.max(220, windowHeight * (showTrimControls || showFilterControls ? 0.48 : 0.58))
+      : Math.min(480, windowWidth * 1.35);
+
   return (
-    <View style={styles.wrap}>
+    <View style={[styles.wrap, (immersive || previewMode) && styles.wrapImmersive]}>
       <View
         style={[
           styles.previewWrap,
-          { width: displaySize.width, height: displaySize.height, alignSelf: 'center' },
+          (immersive || previewMode) && styles.previewWrapImmersive,
+          { width: immersive || previewMode ? '100%' : windowWidth - 32, height: previewHeight },
         ]}
       >
         <TouchableOpacity activeOpacity={1} onPress={() => void togglePlay()} style={styles.videoTap}>
@@ -168,13 +239,16 @@ export function ReelVideoEditor({
             ref={playerRef}
             source={video.uri}
             style={styles.preview}
-            contentFit="contain"
+            contentFit={immersive || previewMode ? 'cover' : 'contain'}
             isLooping={false}
-            shouldPlay={isPlaying}
-            isMuted={isMuted}
+            shouldPlay={isPlaying && !forcePaused}
+            isMuted={overlaySound ? true : isMuted}
             progressUpdateIntervalMillis={200}
             onPlaybackStatusUpdate={onPlaybackStatus}
           />
+          {filterOverlay ? (
+            <View style={[styles.filterOverlay, { backgroundColor: filterOverlay }]} pointerEvents="none" />
+          ) : null}
           {!isPlaying && (
             <View style={styles.playOverlay}>
               <Ionicons name="play" size={48} color="rgba(255,255,255,0.9)" />
@@ -186,109 +260,105 @@ export function ReelVideoEditor({
           <TouchableOpacity style={styles.toolBtn} onPress={() => void togglePlay()}>
             <Ionicons name={isPlaying ? 'pause' : 'play'} size={18} color="#fff" />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.toolBtn} onPress={() => setIsMuted((m) => !m)}>
-            <Ionicons name={isMuted ? 'volume-mute' : 'volume-high'} size={18} color="#fff" />
-          </TouchableOpacity>
-          {Platform.OS !== 'web' && (
+          {!overlaySound ? (
+            <TouchableOpacity style={styles.toolBtn} onPress={() => setIsMuted((m) => !m)}>
+              <Ionicons name={isMuted ? 'volume-mute' : 'volume-high'} size={18} color="#fff" />
+            </TouchableOpacity>
+          ) : null}
+          {Platform.OS !== 'web' && !immersive ? (
             <TouchableOpacity style={styles.toolBtn} onPress={onEditNative}>
               <Ionicons name="crop" size={18} color="#fff" />
               <Text style={styles.toolBtnText}>Crop</Text>
             </TouchableOpacity>
-          )}
+          ) : null}
         </View>
       </View>
 
-      <Text style={styles.hint}>Tap video to play or pause</Text>
+      {!immersive ? <Text style={styles.hint}>Tap video to play or pause</Text> : null}
+
+      {showFilterControls ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterRow}
+          style={styles.filterScroll}
+        >
+          {REEL_FILTER_PRESETS.map((preset) => {
+            const active = filterId === preset.id;
+            return (
+              <TouchableOpacity
+                key={preset.id}
+                style={[styles.filterChip, active && styles.filterChipActive]}
+                onPress={() => onChange({ filterId: preset.id })}
+              >
+                <View
+                  style={[
+                    styles.filterSwatch,
+                    active && { borderColor: '#1e90ff' },
+                  ]}
+                >
+                  <View style={[StyleSheet.absoluteFill, { backgroundColor: '#444' }]} />
+                  {preset.overlay ? (
+                    <View style={[StyleSheet.absoluteFill, { backgroundColor: preset.overlay }]} />
+                  ) : null}
+                </View>
+                <Text style={[styles.filterLabel, active && styles.filterLabelActive]}>{preset.label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      ) : null}
 
       {!trimReady ? (
-        <Text style={styles.loadingHint}>Loading video duration…</Text>
-      ) : (
-        <>
-      <View style={styles.sliderBlock}>
-        <Text style={styles.sliderLabel}>
-          Scrub · {formatTime(positionSec)} / {formatTime(duration)}
-        </Text>
-        <Slider
-          style={styles.slider}
-          minimumValue={scrubRange.min}
-          maximumValue={scrubRange.max}
-          value={Math.max(scrubRange.min, Math.min(positionSec, scrubRange.max))}
-          onSlidingStart={() => void playerRef.current?.pauseAsync().then(() => setIsPlaying(false))}
-          onSlidingComplete={(v) => void seekTo(v)}
-          minimumTrackTintColor="#1e90ff"
-          maximumTrackTintColor="#444"
-          thumbTintColor="#fff"
-        />
-      </View>
-
-      <View style={styles.sliderBlock}>
-        <Text style={styles.sliderLabel}>
-          Trim start · {formatTime(trimStart)}
-        </Text>
-        <Slider
-          style={styles.slider}
-          minimumValue={trimStartRange.min}
-          maximumValue={trimStartRange.max}
-          value={Math.max(trimStartRange.min, Math.min(trimStart, trimStartRange.max))}
-          onValueChange={(v) => {
-            onChange({ trimStartSec: v });
-            void seekTo(v);
+        !immersive && !previewMode ? <Text style={styles.loadingHint}>Loading video duration…</Text> : null
+      ) : showTrimControls && !previewMode ? (
+        <ReelTrimTimeline
+          duration={duration}
+          trimStart={trimStart}
+          trimEnd={trimEnd}
+          position={positionSec}
+          onTrimStartChange={(v) => onChange({ trimStartSec: v })}
+          onTrimEndChange={(v) => onChange({ trimEndSec: v })}
+          onTrimStartComplete={(v) => void seekTo(v)}
+          onScrubStart={() => void playerRef.current?.pauseAsync().then(() => setIsPlaying(false))}
+          onScrubMove={(v) => {
+            setPositionSec(v);
+            void playerRef.current?.setPositionAsync(v * 1000);
           }}
-          minimumTrackTintColor="#4caf50"
-          maximumTrackTintColor="#444"
-          thumbTintColor="#fff"
+          onScrubComplete={(v) => void seekTo(v)}
         />
-      </View>
+      ) : null}
 
-      <View style={styles.sliderBlock}>
-        <Text style={styles.sliderLabel}>
-          Trim end · {formatTime(trimEnd)}
-        </Text>
-        <Slider
-          style={styles.slider}
-          minimumValue={trimEndRange.min}
-          maximumValue={trimEndRange.max}
-          value={Math.max(trimEndRange.min, Math.min(trimEnd, trimEndRange.max))}
-          onValueChange={(v) => onChange({ trimEndSec: v })}
-          minimumTrackTintColor="#ff9800"
-          maximumTrackTintColor="#444"
-          thumbTintColor="#fff"
-        />
-      </View>
-        </>
-      )}
+      {previewMode ? (
+        <Text style={styles.previewHint}>Previewing your trimmed clip — tap video to play or pause</Text>
+      ) : null}
 
-      <TouchableOpacity
-        style={styles.thumbFrameBtn}
-        onPress={() => onPickThumbnailFrame(positionSec)}
-      >
-        <Ionicons name="image-outline" size={16} color="#1e90ff" />
-        <Text style={styles.thumbFrameBtnText}>Use current frame as cover</Text>
-      </TouchableOpacity>
+      {!previewMode && !immersive ? (
+        <TouchableOpacity style={styles.thumbFrameBtn} onPress={() => onPickThumbnailFrame(positionSec)}>
+          <Text style={styles.thumbFrameBtnText}>Use current frame as cover</Text>
+        </TouchableOpacity>
+      ) : null}
     </View>
   );
 }
 
-function formatTime(sec: number): string {
-  const s = Math.max(0, Math.floor(sec));
-  const m = Math.floor(s / 60);
-  const r = s % 60;
-  return `${m}:${String(r).padStart(2, '0')}`;
-}
-
 const styles = StyleSheet.create({
   wrap: { marginBottom: 8 },
+  wrapImmersive: { marginBottom: 0, flex: 1 },
   previewWrap: {
     backgroundColor: '#000',
     borderRadius: 16,
     overflow: 'hidden',
     justifyContent: 'center',
     alignItems: 'center',
+    alignSelf: 'center',
   },
+  previewWrapImmersive: { borderRadius: 0, alignSelf: 'stretch' },
   videoTap: { width: '100%', height: '100%' },
   preview: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
+  filterOverlay: { ...StyleSheet.absoluteFillObject },
   playOverlay: {
-    ...StyleSheet.absoluteFill,
+    ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: 'rgba(0,0,0,0.25)',
@@ -312,15 +382,22 @@ const styles = StyleSheet.create({
   toolBtnText: { color: '#fff', fontSize: 12, fontWeight: '600' },
   hint: { color: '#888', fontSize: 12, marginTop: 8, marginBottom: 4 },
   loadingHint: { color: '#9eb4c7', fontSize: 12, marginTop: 10, marginBottom: 4 },
-  sliderBlock: { marginTop: 10 },
-  sliderLabel: { color: '#aaa', fontSize: 12, marginBottom: 2 },
-  slider: { width: '100%', height: 36 },
-  thumbFrameBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 12,
-    alignSelf: 'flex-start',
+  filterScroll: { marginTop: 10, maxHeight: 88 },
+  filterRow: { gap: 10, paddingHorizontal: 4, paddingBottom: 4 },
+  filterChip: { alignItems: 'center', width: 64 },
+  filterChipActive: {},
+  filterSwatch: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: 'transparent',
+    marginBottom: 4,
   },
+  filterLabel: { color: '#888', fontSize: 11, fontWeight: '600' },
+  filterLabelActive: { color: '#fff' },
+  previewHint: { color: '#aaa', fontSize: 12, marginTop: 10, textAlign: 'center' },
+  thumbFrameBtn: { marginTop: 12, alignSelf: 'flex-start' },
   thumbFrameBtnText: { color: '#1e90ff', fontSize: 13, fontWeight: '600' },
 });

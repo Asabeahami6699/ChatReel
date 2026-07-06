@@ -1,20 +1,17 @@
 import { useCallback, type Dispatch, type SetStateAction } from 'react';
-import type { ReelDTO } from '../../lib/api';
+import { useReelProfileStore } from '../../stores/reelProfileStore';
 
-/** Adjust grid + immersive viewer state after a reel is deleted. */
+/** Adjust grid + immersive viewer state after reels are deleted. */
 export function useReelGridDeleteHandlers(
-  setPosts: Dispatch<SetStateAction<ReelDTO[]>>,
-  setGeneratedThumbs: Dispatch<SetStateAction<Record<string, string>>>,
+  profileId: string,
   setImmersiveIndex: Dispatch<SetStateAction<number | null>>
 ) {
-  return useCallback(
+  const removeReels = useReelProfileStore((s) => s.removeReels);
+
+  const removeOne = useCallback(
     (reelId: string, index: number) => {
-      setPosts((prev) => prev.filter((r) => r.id !== reelId));
-      setGeneratedThumbs((prev) => {
-        const next = { ...prev };
-        delete next[reelId];
-        return next;
-      });
+      if (!profileId) return;
+      removeReels(profileId, [reelId]);
       setImmersiveIndex((cur) => {
         if (cur == null) return null;
         if (cur === index) return null;
@@ -22,6 +19,17 @@ export function useReelGridDeleteHandlers(
         return cur;
       });
     },
-    [setPosts, setGeneratedThumbs, setImmersiveIndex]
+    [profileId, removeReels, setImmersiveIndex]
   );
+
+  const removeMany = useCallback(
+    (reelIds: string[]) => {
+      if (!profileId) return;
+      removeReels(profileId, reelIds);
+      setImmersiveIndex(null);
+    },
+    [profileId, removeReels, setImmersiveIndex]
+  );
+
+  return { removeOne, removeMany };
 }

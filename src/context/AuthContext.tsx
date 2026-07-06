@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
-import { api } from '../lib/api';
+import { api, onAuthExpired } from '../lib/api';
 import { sessionStorage } from '../lib/sessionStorage';
 import { ensureSupabaseSession } from '../lib/ensureSupabaseSession';
 import { clearSupabaseSession } from '../lib/supabase';
@@ -52,6 +52,17 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     restoreSession();
+  }, []);
+
+  useEffect(() => {
+    return onAuthExpired(() => {
+      void (async () => {
+        await sessionStorage.clear();
+        await clearSupabaseSession();
+        setSession(null);
+        setUser(null);
+      })();
+    });
   }, []);
 
   const persistSession = async (newSession: Session | null) => {

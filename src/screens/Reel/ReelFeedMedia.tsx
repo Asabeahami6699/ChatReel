@@ -10,6 +10,7 @@ import type { ReelDTO } from '../../lib/api';
 import { getReelMediaItems } from '../../lib/reelPlayback';
 import type { ReelPlaybackStatus, ReelPlayerHandle } from '../../components/ReelPlayer';
 import { ReelMediaSlide } from './ReelMediaSlide';
+import { useReelSoundPlayback } from '../../hooks/useReelSoundPlayback';
 
 type Props = {
   reel: ReelDTO;
@@ -49,6 +50,14 @@ export function ReelFeedMedia({
   const mediaItems = getReelMediaItems(reel);
   const isCurrentReel = reelIndex === currentReelIndex;
   const [mediaIndex, setMediaIndex] = useState(0);
+
+  useReelSoundPlayback(reel, {
+    active: isCurrentReel,
+    playing: isPlaying,
+    muted: isMuted,
+    focused: isFocused,
+  });
+
   const mediaIndexRef = useRef(0);
   const listRef = useRef<FlatList>(null);
   const onMediaIndexChangeRef = useRef(onMediaIndexChange);

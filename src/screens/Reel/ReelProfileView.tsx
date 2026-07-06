@@ -1,7 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  FlatList,
   Image,
   Modal,
   Platform,
@@ -18,18 +17,15 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { ReelImmersiveViewer } from './ReelImmersiveViewer';
 import { api, ApiError, type ReelDTO } from '../../lib/api';
-import { generateReelGridThumbnails } from '../../lib/generateReelGridThumbnails';
 import { rootNavigationRef } from '../../navigation/rootNavigation';
+import { openPostReelCompose } from '../../lib/reelPlaybackBridge';
 import type { ReelsStackParamList } from '../../navigation/reelsNavigation';
 import { REEL_ACCENT } from './reelTheme';
 import { reelTabBarOffset } from './ReelsTabBar';
 import { REEL_PHONE_MAX_WIDTH } from './reelVideoLayout';
-import { ReelProfileGridItem } from './ReelProfileGridItem';
+import { ReelProfileGrid } from './ReelProfileGrid';
 import { useReelGridDeleteHandlers } from './useReelGridDelete';
-
-const GRID_COLS = 3;
-const GRID_GAP = 4;
-const GRID_PAD = 6;
+import { useReelProfilePosts } from './useReelProfilePosts';
 
 type Props = {
   profileId: string;
@@ -57,10 +53,6 @@ export default function ReelProfileView({ profileId, isSelf = false, showBack = 
   const { width: windowWidth } = useWindowDimensions();
   const usePhoneLayout = Platform.OS === 'web' && windowWidth > REEL_PHONE_MAX_WIDTH + 64;
   const contentWidth = usePhoneLayout ? REEL_PHONE_MAX_WIDTH : windowWidth;
-  const { tileWidth, tileHeight } = useMemo(() => {
-    const tw = Math.floor((contentWidth - GRID_PAD * 2 - GRID_GAP * (GRID_COLS - 1)) / GRID_COLS);
-    return { tileWidth: tw, tileHeight: Math.round(tw * 1.15) };
-  }, [contentWidth]);
   const bottomPad = reelTabBarOffset(insets.bottom, usePhoneLayout);
   const navigation = useNavigation<NativeStackNavigationProp<ReelsStackParamList>>();
 
@@ -69,17 +61,25 @@ export default function ReelProfileView({ profileId, isSelf = false, showBack = 
     email?: string | null;
     avatar_url?: string | null;
   } | null>(null);
-  const [posts, setPosts] = useState<ReelDTO[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    posts,
+    setPosts,
+    loading: postsLoading,
+    refreshing,
+    error,
+    setError,
+    refresh,
+    thumbs,
+  } = useReelProfilePosts(profileId, 48);
+  const [profileLoading, setProfileLoading] = useState(true);
+  const loading = (postsLoading && posts.length === 0) || profileLoading;
   const [followState, setFollowState] = useState<'none' | 'pending' | 'following'>('none');
   const [friendshipId, setFriendshipId] = useState<string | null>(null);
   const [followBusy, setFollowBusy] = useState(false);
-  const [generatedThumbs, setGeneratedThumbs] = useState<Record<string, string>>({});
   const [immersiveIndex, setImmersiveIndex] = useState<number | null>(null);
   const [followerCount, setFollowerCount] = useState(0);
   const [followersLoading, setFollowersLoading] = useState(true);
-  const handleReelDeleted = useReelGridDeleteHandlers(setPosts, setGeneratedThumbs, setImmersiveIndex);
+  const { removeOne, removeMany } = useReelGridDeleteHandlers(profileId, setImmersiveIndex);
 
   const username =
     profile?.display_name?.trim() || profile?.email?.split('@')[0] || 'unknown';
@@ -94,27 +94,27 @@ export default function ReelProfileView({ profileId, isSelf = false, showBack = 
 
   useEffect(() => {
     let alive = true;
-    setLoading(true);
-    Promise.all([loadProfile(), api.reels.byUser(profileId, 48)])
-      .then(([, reelsRes]) => {
+    setProfileLoading(true);
+    loadProfile()
+      .then(() => {
         if (!alive) return;
-        setPosts(reelsRes.reels);
-        if (!isSelf && reelsRes.reels[0]?.author) {
-          setProfile(reelsRes.reels[0].author);
+        if (!isSelf) {
+          return api.reels.byUser(profileId, 1).then((reelsRes) => {
+            if (reelsRes.reels[0]?.author) setProfile(reelsRes.reels[0].author);
+          });
         }
-        setError(null);
       })
       .catch((err) => {
         if (!alive) return;
         setError(err instanceof ApiError ? err.message : 'Failed to load profile');
       })
       .finally(() => {
-        if (alive) setLoading(false);
+        if (alive) setProfileLoading(false);
       });
     return () => {
       alive = false;
     };
-  }, [profileId, isSelf, loadProfile]);
+  }, [profileId, isSelf, loadProfile, setError]);
 
   useEffect(() => {
     let alive = true;
@@ -164,16 +164,6 @@ export default function ReelProfileView({ profileId, isSelf = false, showBack = 
     };
   }, [profileId, isSelf]);
 
-  useEffect(() => {
-    let cancelled = false;
-    void generateReelGridThumbnails(posts, generatedThumbs, (id, uri) => {
-      if (!cancelled) setGeneratedThumbs((prev) => ({ ...prev, [id]: uri }));
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [posts]);
-
   const totalLikes = posts.reduce((sum, r) => sum + r.like_count, 0);
   const totalViews = posts.reduce((sum, r) => sum + r.view_count, 0);
 
@@ -200,6 +190,7 @@ export default function ReelProfileView({ profileId, isSelf = false, showBack = 
   };
 
   const openPostReel = () => {
+    openPostReelCompose();
     if (rootNavigationRef.isReady()) rootNavigationRef.navigate('PostReel');
   };
 
@@ -217,11 +208,18 @@ export default function ReelProfileView({ profileId, isSelf = false, showBack = 
         )}
         <Text style={styles.username}>@{username}</Text>
         {isSelf ? (
-          <TouchableOpacity style={styles.uploadBtn} onPress={openPostReel}>
-            <Ionicons name="add" size={18} color="#fff" />
-          </TouchableOpacity>
+          <View style={styles.headerActions}>
+            <TouchableOpacity style={styles.iconBtn} onPress={refresh} disabled={refreshing}>
+              <Ionicons name="refresh" size={20} color={refreshing ? '#666' : '#fff'} />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.uploadBtn} onPress={openPostReel}>
+              <Ionicons name="add" size={18} color="#fff" />
+            </TouchableOpacity>
+          </View>
         ) : (
-          <View style={styles.backBtn} />
+          <TouchableOpacity style={styles.iconBtn} onPress={refresh} disabled={refreshing}>
+            <Ionicons name="refresh" size={20} color={refreshing ? '#666' : '#fff'} />
+          </TouchableOpacity>
         )}
       </View>
 
@@ -276,33 +274,17 @@ export default function ReelProfileView({ profileId, isSelf = false, showBack = 
           <ActivityIndicator color="#fff" />
         </View>
       ) : (
-        <FlatList
-          data={posts}
-          key={`profile-grid-${contentWidth}`}
-          keyExtractor={(r) => r.id}
-          numColumns={GRID_COLS}
-          contentContainerStyle={{ paddingBottom: bottomPad + 16 }}
-          columnWrapperStyle={styles.gridRow}
-          showsVerticalScrollIndicator={false}
-          renderItem={({ item, index }) => (
-            <ReelProfileGridItem
-              reel={item}
-              index={index}
-              width={tileWidth}
-              height={tileHeight}
-              thumbUri={generatedThumbs[item.id]}
-              canDelete={isSelf}
-              onOpen={() => setImmersiveIndex(index)}
-              onDeleted={handleReelDeleted}
-              style={styles.gridItem}
-            />
-          )}
-          ListEmptyComponent={
-            <View style={styles.empty}>
-              <Ionicons name="film-outline" size={36} color="#666" />
-              <Text style={styles.emptyText}>{isSelf ? 'Post your first reel' : 'No reels yet'}</Text>
-            </View>
-          }
+        <ReelProfileGrid
+          posts={posts}
+          canDelete={isSelf}
+          contentWidth={contentWidth}
+          bottomPad={bottomPad}
+          generatedThumbs={thumbs}
+          onOpen={setImmersiveIndex}
+          onDeleted={removeOne}
+          onDeletedMany={removeMany}
+          refreshing={refreshing}
+          onRefresh={refresh}
         />
       )}
 
@@ -341,6 +323,8 @@ const styles = StyleSheet.create({
     paddingBottom: 10,
   },
   backBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  iconBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   username: { color: '#fff', fontWeight: '700', fontSize: 17 },
   uploadBtn: {
     width: 36,
@@ -372,31 +356,6 @@ const styles = StyleSheet.create({
   statNumber: { color: '#fff', fontSize: 17, fontWeight: 'bold' },
   statLabel: { color: '#888', fontSize: 11, marginTop: 2 },
   loaderBox: { padding: 32, alignItems: 'center' },
-  gridContainer: {},
-  gridRow: {
-    paddingHorizontal: GRID_PAD,
-    marginBottom: GRID_GAP,
-    justifyContent: 'space-between',
-  },
-  gridItem: {
-    borderRadius: 6,
-    overflow: 'hidden',
-    backgroundColor: '#1a1a1a',
-  },
-  gridImage: { width: '100%', height: '100%' },
-  gridPlaceholder: { justifyContent: 'center', alignItems: 'center', backgroundColor: '#222' },
-  gridOverlay: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    flexDirection: 'row',
-    paddingHorizontal: 6,
-    paddingVertical: 5,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-  },
-  gridStat: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  gridStatText: { color: '#fff', fontSize: 10, fontWeight: '700' },
   empty: { paddingVertical: 48, alignItems: 'center' },
   emptyText: { color: '#888', marginTop: 10 },
   error: { color: '#f87171', textAlign: 'center', marginBottom: 8 },

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, StatusBar, StyleSheet, View } from 'react-native';
 import { api } from '../../lib/api';
+import { useReelProfileStore } from '../../stores/reelProfileStore';
 import ReelProfileView from './ReelProfileView';
 
 export default function ReelAccountScreen() {
@@ -11,7 +12,11 @@ export default function ReelAccountScreen() {
     api.profiles
       .me()
       .then((res) => {
-        if (alive) setProfileId((res.profile as { id?: string }).id ?? null);
+        const id = (res.profile as { id?: string }).id ?? null;
+        if (alive) {
+          setProfileId(id);
+          if (id) void useReelProfileStore.getState().ensureLoaded(id, 48);
+        }
       })
       .catch(() => {
         if (alive) setProfileId(null);

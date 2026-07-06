@@ -1,6 +1,7 @@
 import type { ReelDTO } from './api';
 import { api } from './api';
 import { prefetchReelNow } from '../screens/Reel/reelVideoCache';
+import { sessionStorage } from './sessionStorage';
 
 export type ReelsFeedCacheKey = 'feed' | 'following';
 
@@ -49,6 +50,9 @@ export function scheduleReelsFeedPrefetch(delayMs = 1800) {
     const timer = setTimeout(() => {
       void (async () => {
         try {
+          const session = await sessionStorage.load();
+          if (!session?.access_token) return;
+
           const { reels, next_cursor } = await api.reels.feed({ limit: 15 });
           if (reels.length > 0) {
             setCache('feed', reels, next_cursor ?? null);

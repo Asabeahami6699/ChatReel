@@ -8,6 +8,7 @@ import ReelInboxScreen from '../screens/Reel/ReelInboxScreen';
 import ReelAccountScreen from '../screens/Reel/ReelAccountScreen';
 import ReelCreatorProfileScreen from '../screens/Reel/ReelCreatorProfileScreen';
 import ReelDetailScreen from '../screens/Reel/ReelDetailScreen';
+import ReelSoundScreen from '../screens/Reel/ReelSoundScreen';
 import ReelsTabBar from '../screens/Reel/ReelsTabBar';
 import { ReelFeedModeProvider, useReelFeedMode } from '../screens/Reel/ReelFeedModeContext';
 import type { ReelsStackParamList, ReelsTabParamList } from './reelsNavigation';
@@ -68,6 +69,7 @@ export default function ReelsNavigator() {
             component={ReelDetailScreen}
             options={{ presentation: 'fullScreenModal' }}
           />
+          <Stack.Screen name="ReelSound" component={ReelSoundScreen} />
         </Stack.Navigator>
       </NavigationContainer>
     </NavigationIndependentTree>

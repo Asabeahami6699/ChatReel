@@ -159,6 +159,7 @@ function hashtagOverlap(a: string | null, b: string | null): number {
 }
 
 function audioKey(reel: ReelRow): string {
+  if (reel.sound_id) return `sound:${reel.sound_id}`;
   return `original:${reel.author_id}`;
 }
 
@@ -180,6 +181,16 @@ function sigmoid(x: number): number {
 function computeFreshness(createdAt: string, now: Date): number {
   const ageHours = Math.max(0, (now.getTime() - new Date(createdAt).getTime()) / 3_600_000);
   return Math.exp(-ageHours / 36);
+}
+
+/** Strong boost so newly posted reels surface in For You before they gather engagement. */
+function newReelBoost(createdAt: string, now: Date): number {
+  const ageHours = Math.max(0, (now.getTime() - new Date(createdAt).getTime()) / 3_600_000);
+  if (ageHours < 1) return 1.2;
+  if (ageHours < 6) return 0.9;
+  if (ageHours < 24) return 0.6;
+  if (ageHours < 72) return 0.3;
+  return 0;
 }
 
 function computeTrendingScore(reel: ReelRow, now: Date): number {
@@ -265,10 +276,14 @@ function personalizationBoost(reel: ReelCandidate, interest: UserInterestProfile
 function applyPenalties(
   reel: ReelCandidate,
   interest: UserInterestProfile,
-  seenCreatorCounts: Map<string, number>
+  seenCreatorCounts: Map<string, number>,
+  now: Date
 ): number {
   let penalty = 0;
-  if (interest.watchedReelIds.has(reel.id)) penalty += 0.45;
+  const ageHours = Math.max(0, (now.getTime() - new Date(reel.created_at).getTime()) / 3_600_000);
+  if (interest.watchedReelIds.has(reel.id)) {
+    penalty += ageHours < 48 ? 0.08 : 0.45;
+  }
   if (interest.likedReelIds.has(reel.id)) penalty += 0.15;
   if (interest.notInterestedReelIds.has(reel.id)) penalty += 10;
   if (interest.skippedEarlyReelIds.has(reel.id)) penalty += 0.35;
@@ -550,6 +565,40 @@ export async function fetchCandidateReels(params: FetchCandidatesParams): Promis
   return visible.slice(0, targetCount);
 }
 
+/** Latest approved reels for injecting at the top of the first feed page. */
+export async function fetchFreshReelsForFeed(params: {
+  profileId: string;
+  friendIds: string[];
+  viewerAuthUserId: string;
+  limit?: number;
+  maxAgeHours?: number;
+}): Promise<ReelRow[]> {
+  const limit = params.limit ?? 6;
+  const maxAgeHours = params.maxAgeHours ?? 72;
+  const since = new Date(Date.now() - maxAgeHours * 3_600_000).toISOString();
+  const visibility = visibilityFilterClause(params.profileId, params.friendIds);
+
+  const { data, error } = await supabaseAdmin
+    .from('reels')
+    .select('*')
+    .eq('moderation_status', 'approved')
+    .or(visibility)
+    .gte('created_at', since)
+    .order('created_at', { ascending: false })
+    .limit(limit * 2);
+
+  if (error) throw new Error(error.message);
+
+  const rows = (data ?? []) as ReelRow[];
+  const visible = await filterVisibleReels(
+    rows,
+    params.profileId,
+    new Set(params.friendIds),
+    params.viewerAuthUserId
+  );
+  return visible.slice(0, limit);
+}
+
 /* -------------------------------------------------------------------------- */
 /*  Ranking + diversity                                                       */
 /* -------------------------------------------------------------------------- */
@@ -568,7 +617,10 @@ export function scoreCandidates(
       const metrics = computeReelQualityMetrics(reel, interest, now);
       let score = weightedScore(metrics);
       score += personalizationBoost(reel, interest);
-      score -= applyPenalties(reel, interest, seenCreators);
+      score += newReelBoost(reel.created_at, now);
+      if (reel.sources.has('recent')) score += 0.25;
+      if (reel.sources.has('unwatched')) score += 0.15;
+      score -= applyPenalties(reel, interest, seenCreators, now);
       const bucket = classifyBucket(reel, metrics, interest);
       return { reel, finalScore: score, bucket, metrics };
     });

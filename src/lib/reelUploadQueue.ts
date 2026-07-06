@@ -4,6 +4,9 @@ import { isImageMime } from './reelPlayback';
 import { probeVideoDimensions } from './videoDimensions';
 import { notifyRealtimeTopic } from './realtimeHub';
 
+/** Default display length for photo reels with music (seconds). */
+const IMAGE_REEL_CLIP_SEC = 15;
+
 export type ReelUploadVisibility = 'public' | 'friends' | 'private' | 'group';
 
 export type ReelUploadMediaItem = {
@@ -36,6 +39,9 @@ export type ReelUploadDraft = {
   caption?: string;
   visibility: ReelUploadVisibility;
   group_id?: string;
+  sound_id?: string;
+  sound_start_sec?: number;
+  original_audio_volume?: number;
 };
 
 export type ReelUploadStatus = 'queued' | 'uploading' | 'publishing' | 'done' | 'error';
@@ -58,6 +64,15 @@ const taskDrafts = new Map<string, ReelUploadDraft>();
 const queue: Array<{ id: string; draft: ReelUploadDraft }> = [];
 const listeners = new Set<Listener>();
 /** Run multiple reel uploads in parallel — no waiting for the previous post to finish. */
+
+function soundPublishFields(draft: ReelUploadDraft) {
+  if (!draft.sound_id) return {};
+  return {
+    sound_id: draft.sound_id,
+    sound_start_sec: draft.sound_start_sec ?? 0,
+    original_audio_volume: draft.original_audio_volume ?? 0,
+  };
+}
 const MAX_PARALLEL_UPLOADS = 3;
 let activeUploads = 0;
 
@@ -87,13 +102,14 @@ const MODERATION_TIMEOUT_MS = 90_000;
 async function waitForReelModeration(
   reelId: string,
   onStage: (stage: string) => void
-): Promise<'approved' | 'rejected' | 'pending'> {
+): Promise<'approved' | 'rejected' | 'flagged' | 'pending'> {
   const deadline = Date.now() + MODERATION_TIMEOUT_MS;
   while (Date.now() < deadline) {
     const { reel } = await api.reels.get(reelId);
-    const status = reel.moderation_status;
+    const status = reel.moderation_status ?? 'pending';
     if (status === 'approved') return 'approved';
-    if (status === 'rejected' || status === 'flagged') return 'rejected';
+    if (status === 'rejected') return 'rejected';
+    if (status === 'flagged') return 'flagged';
     onStage('Reviewing content...');
     await new Promise((resolve) => setTimeout(resolve, MODERATION_POLL_MS));
   }
@@ -110,7 +126,12 @@ async function finalizePublishedReel(id: string, reelId: string) {
   notifyRealtimeTopic('reels');
   updateTask(id, {
     status: 'done',
-    stage: mod === 'pending' ? 'Under review' : 'Posted',
+    stage:
+      mod === 'approved'
+        ? 'Posted'
+        : mod === 'flagged'
+          ? 'Posted — under review'
+          : 'Under review',
     progress: 100,
     reelId,
   });
@@ -203,7 +224,9 @@ async function processOne(item: { id: string; draft: ReelUploadDraft }) {
       video_url: imageUrl,
       thumbnail_url: imageUrl,
       caption: caption?.trim() || undefined,
+      duration: IMAGE_REEL_CLIP_SEC,
       ...publishVisibility,
+      ...soundPublishFields(draft),
       width: video.width,
       height: video.height,
     });
@@ -271,6 +294,7 @@ async function processOne(item: { id: string; draft: ReelUploadDraft }) {
     caption: caption?.trim() || undefined,
     duration: effectiveDuration,
     ...publishVisibility,
+    ...soundPublishFields(draft),
     width,
     height,
     trim_start_sec: trimStartSec > 0 ? trimStartSec : undefined,

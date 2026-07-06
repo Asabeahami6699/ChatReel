@@ -1,8 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useCurrentProfileId } from '../../hooks/useCurrentProfileId';
 import {
   ActivityIndicator,
-  FlatList,
   Image,
   Modal,
   Platform,
@@ -17,15 +16,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { ReelImmersiveViewer } from './ReelImmersiveViewer';
 import { api, ApiError, type ReelDTO } from '../../lib/api';
-import { generateReelGridThumbnails } from '../../lib/generateReelGridThumbnails';
 import { REEL_ACCENT } from './reelTheme';
 import { REEL_PHONE_MAX_WIDTH } from './reelVideoLayout';
-import { ReelProfileGridItem } from './ReelProfileGridItem';
+import { ReelProfileGrid } from './ReelProfileGrid';
 import { useReelGridDeleteHandlers } from './useReelGridDelete';
-
-const GRID_COLS = 3;
-const GRID_GAP = 4;
-const GRID_PAD = 6;
+import { useReelProfilePosts } from './useReelProfilePosts';
+import { openPostReelCompose } from '../../lib/reelPlaybackBridge';
 
 interface Props {
   reel: ReelDTO;
@@ -39,52 +35,36 @@ export default function ReelProfileSheet({ reel, onClose, onFollowStateChange }:
   const { width: windowWidth } = useWindowDimensions();
   const usePhoneLayout = Platform.OS === 'web' && windowWidth > REEL_PHONE_MAX_WIDTH + 64;
   const contentWidth = usePhoneLayout ? REEL_PHONE_MAX_WIDTH : windowWidth;
-  const { tileWidth, tileHeight } = useMemo(() => {
-    const tw = Math.floor((contentWidth - GRID_PAD * 2 - GRID_GAP * (GRID_COLS - 1)) / GRID_COLS);
-    return { tileWidth: tw, tileHeight: Math.round(tw * 1.15) };
-  }, [contentWidth]);
+  const bottomPad = insets.bottom;
 
-  const [posts, setPosts] = useState<ReelDTO[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const author = reel.author;
+  const myProfileId = useCurrentProfileId();
+  const canDeleteReels = Boolean(author?.id && myProfileId && author.id === myProfileId);
+
   const [followState, setFollowState] = useState<'none' | 'pending' | 'following'>('none');
   const [friendshipId, setFriendshipId] = useState<string | null>(null);
   const [followBusy, setFollowBusy] = useState(false);
-  const [generatedThumbs, setGeneratedThumbs] = useState<Record<string, string>>({});
   const [immersiveIndex, setImmersiveIndex] = useState<number | null>(null);
   const [followerCount, setFollowerCount] = useState(0);
   const [followersLoading, setFollowersLoading] = useState(true);
-  const myProfileId = useCurrentProfileId();
-  const handleReelDeleted = useReelGridDeleteHandlers(setPosts, setGeneratedThumbs, setImmersiveIndex);
 
-  const author = reel.author;
-  const canDeleteReels = Boolean(author?.id && myProfileId && author.id === myProfileId);
+  const profileId = author?.id;
+  const {
+    posts,
+    setPosts,
+    loading: postsLoading,
+    refreshing,
+    error,
+    setError,
+    refresh,
+    thumbs,
+  } = useReelProfilePosts(profileId, 24);
+  const loading = postsLoading && posts.length === 0;
+  const { removeOne, removeMany } = useReelGridDeleteHandlers(profileId ?? '', setImmersiveIndex);
+
   const username =
     author?.display_name?.trim() || author?.email?.split('@')[0] || 'unknown';
   const avatar = author?.avatar_url ?? null;
-
-  useEffect(() => {
-    let alive = true;
-    if (!author?.id) return;
-    setLoading(true);
-    api.reels
-      .byUser(author.id, 24)
-      .then((res) => {
-        if (!alive) return;
-        setPosts(res.reels);
-        setError(null);
-      })
-      .catch((err) => {
-        if (!alive) return;
-        setError(err instanceof ApiError ? err.message : 'Failed to load profile');
-      })
-      .finally(() => {
-        if (alive) setLoading(false);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [author?.id]);
 
   useEffect(() => {
     let alive = true;
@@ -107,16 +87,6 @@ export default function ReelProfileSheet({ reel, onClose, onFollowStateChange }:
       alive = false;
     };
   }, [author?.id]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void generateReelGridThumbnails(posts, generatedThumbs, (id, uri) => {
-      if (!cancelled) setGeneratedThumbs((prev) => ({ ...prev, [id]: uri }));
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [posts]);
 
   useEffect(() => {
     let alive = true;
@@ -200,16 +170,22 @@ export default function ReelProfileSheet({ reel, onClose, onFollowStateChange }:
           <Text style={styles.username} numberOfLines={1}>
             @{username}
           </Text>
-          <View style={styles.headerSide}>
-            <TouchableOpacity
-              style={styles.uploadBtn}
-              onPress={() => {
-                onClose();
-                navigation.navigate('PostReel');
-              }}
-            >
-              <Ionicons name="add" size={18} color="#fff" />
+          <View style={[styles.headerSide, styles.headerSideRight]}>
+            <TouchableOpacity style={styles.iconBtn} onPress={refresh} disabled={refreshing}>
+              <Ionicons name="refresh" size={20} color={refreshing ? '#666' : '#fff'} />
             </TouchableOpacity>
+            {canDeleteReels && (
+              <TouchableOpacity
+                style={styles.uploadBtn}
+                onPress={() => {
+                  onClose();
+                  openPostReelCompose();
+                  navigation.navigate('PostReel');
+                }}
+              >
+                <Ionicons name="add" size={18} color="#fff" />
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 
@@ -259,33 +235,17 @@ export default function ReelProfileSheet({ reel, onClose, onFollowStateChange }:
             <ActivityIndicator color="#fff" />
           </View>
         ) : (
-          <FlatList
-            data={posts}
-            key={`profile-sheet-grid-${contentWidth}`}
-            keyExtractor={(r) => r.id}
-            numColumns={GRID_COLS}
-            contentContainerStyle={{ paddingBottom: insets.bottom + 16 }}
-            columnWrapperStyle={styles.gridRow}
-            showsVerticalScrollIndicator={false}
-            renderItem={({ item, index }) => (
-              <ReelProfileGridItem
-                reel={item}
-                index={index}
-                width={tileWidth}
-                height={tileHeight}
-                thumbUri={generatedThumbs[item.id]}
-                canDelete={canDeleteReels}
-                onOpen={() => setImmersiveIndex(index)}
-                onDeleted={handleReelDeleted}
-                style={styles.gridItem}
-              />
-            )}
-            ListEmptyComponent={
-              <View style={styles.empty}>
-                <Ionicons name="film-outline" size={36} color="#666" />
-                <Text style={styles.emptyText}>No reels yet</Text>
-              </View>
-            }
+          <ReelProfileGrid
+            posts={posts}
+            canDelete={canDeleteReels}
+            contentWidth={contentWidth}
+            bottomPad={bottomPad}
+            generatedThumbs={thumbs}
+            onOpen={setImmersiveIndex}
+            onDeleted={removeOne}
+            onDeletedMany={removeMany}
+            refreshing={refreshing}
+            onRefresh={refresh}
           />
         )}
 
@@ -347,6 +307,8 @@ const styles = StyleSheet.create({
     paddingBottom: 10,
   },
   headerSide: { width: 36, alignItems: 'center', justifyContent: 'center' },
+  headerSideRight: { flexDirection: 'row', gap: 4, width: 'auto' as const, minWidth: 36 },
+  iconBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   closeBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   uploadBtn: {
     width: 36,
@@ -379,32 +341,5 @@ const styles = StyleSheet.create({
   statNumber: { color: '#fff', fontSize: 17, fontWeight: 'bold' },
   statLabel: { color: '#888', fontSize: 11, marginTop: 2 },
   loaderBox: { padding: 32, alignItems: 'center' },
-  gridRow: {
-    paddingHorizontal: GRID_PAD,
-    marginBottom: GRID_GAP,
-    justifyContent: 'space-between',
-  },
-  gridItem: {
-    borderRadius: 6,
-    overflow: 'hidden',
-    backgroundColor: '#1a1a1a',
-  },
-  gridImage: { width: '100%', height: '100%' },
-  gridOverlay: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 6,
-    paddingVertical: 5,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-  },
-  gridStat: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  gridStatText: { color: '#fff', fontSize: 10, fontWeight: '700' },
-  empty: { paddingVertical: 48, alignItems: 'center' },
-  emptyText: { color: '#888', marginTop: 10 },
   error: { color: '#f87171', textAlign: 'center', marginBottom: 8 },
 });

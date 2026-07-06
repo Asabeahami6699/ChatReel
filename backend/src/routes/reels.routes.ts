@@ -18,6 +18,7 @@ import {
 import { sendPushToUserSafe, getAuthUserIdByProfileId } from '../services/push.service';
 import { isReelHlsEnabled, queueReelHlsTranscode } from '../services/reelTranscode.service';
 import { assertCaptionAllowed, scheduleReelModeration } from '../services/reelModeration.service';
+import { assertReelSoundActive, createReelSound, getReelSoundById, listReelSounds } from '../services/reelSounds.service';
 import { probeVideoDimensionsFromUrl } from '../lib/videoProbe';
 
 const router = Router();
@@ -43,6 +44,9 @@ const createReelSchema = z.object({
   height: z.number().int().min(1).optional(),
   trim_start_sec: z.number().min(0).optional(),
   trim_end_sec: z.number().min(0).optional(),
+  sound_id: z.string().uuid().optional(),
+  sound_start_sec: z.number().min(0).optional(),
+  original_audio_volume: z.number().min(0).max(1).optional(),
   media: z
     .array(
       z.object({
@@ -95,7 +99,7 @@ router.get(
     const friendSet = await getAcceptedFriendIds(profileId);
     const friendIds = Array.from(friendSet);
 
-    const { fetchCandidateReels, recommendReelsForUser } = await import(
+    const { fetchCandidateReels, fetchFreshReelsForFeed, recommendReelsForUser } = await import(
       '../services/reelRecommendation.service'
     );
 
@@ -110,7 +114,23 @@ router.get(
     const ranked = await recommendReelsForUser(profileId, candidates, {
       limit: Math.min(limit * 2, 30),
     });
-    const page = ranked.slice(0, limit);
+
+    let page = ranked.slice(0, limit);
+
+    // First page: prepend newest approved reels so uploads appear quickly in For You.
+    if (!cursor) {
+      const fresh = await fetchFreshReelsForFeed({
+        profileId,
+        friendIds,
+        viewerAuthUserId: req.userId!,
+        limit: 5,
+        maxAgeHours: 72,
+      });
+      const onPage = new Set(page.map((r) => r.id));
+      const inject = fresh.filter((r) => !onPage.has(r.id));
+      page = [...inject, ...page].slice(0, limit);
+    }
+
     const enriched = await enrichReels(page, profileId);
     const nextCursor = ranked.length > limit ? ranked[limit - 1].created_at : null;
 
@@ -387,6 +407,139 @@ router.get(
 );
 
 /* -------------------------------------------------------------------------- */
+/*  GET /sounds — browse / search sound library                               */
+/* -------------------------------------------------------------------------- */
+router.get(
+  '/sounds',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const q = typeof req.query.q === 'string' ? req.query.q : undefined;
+    const trending = req.query.trending === '1' || req.query.trending === 'true';
+    const mine = req.query.mine === '1' || req.query.mine === 'true';
+    const limit = Math.min(Number(req.query.limit ?? 30), 50);
+
+    let sounds;
+    if (mine) {
+      const profileId = await getProfileIdByUserId(req.userId!);
+      if (!profileId) {
+        return res.json({ sounds: [] });
+      }
+      sounds = await listReelSounds({ q, limit, uploadedByProfileId: profileId });
+    } else {
+      sounds = await listReelSounds({ q, trending, limit });
+    }
+    return res.json({ sounds });
+  })
+);
+
+const createSoundSchema = z.object({
+  audio_url: z.string().url().min(1),
+  title: z.string().min(1).max(120),
+  artist: z.string().max(120).optional(),
+  duration_sec: z.number().min(0).optional(),
+});
+
+/* -------------------------------------------------------------------------- */
+/*  POST /sounds — upload custom audio to the library                           */
+/* -------------------------------------------------------------------------- */
+router.post(
+  '/sounds',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const body = createSoundSchema.parse(req.body);
+    try {
+      assertReelsBucketUrl(body.audio_url);
+    } catch (e) {
+      return res.status(400).json({ error: (e as Error).message });
+    }
+
+    const profileId = await getProfileIdByUserId(req.userId!);
+    if (!profileId) return res.status(404).json({ error: 'Profile not found' });
+
+    const { data: profile } = await supabaseAdmin
+      .from('profiles')
+      .select('display_name, email')
+      .eq('id', profileId)
+      .maybeSingle();
+
+    const artist =
+      body.artist?.trim() ||
+      profile?.display_name?.trim() ||
+      profile?.email?.split('@')[0] ||
+      'You';
+
+    const sound = await createReelSound({
+      title: body.title,
+      artist,
+      audio_url: body.audio_url,
+      duration_sec: body.duration_sec,
+      uploaded_by: profileId,
+    });
+
+    return res.status(201).json({ sound });
+  })
+);
+
+/* -------------------------------------------------------------------------- */
+/*  GET /sounds/:soundId — sound detail                                       */
+/* -------------------------------------------------------------------------- */
+router.get(
+  '/sounds/:soundId',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const soundId = z.string().uuid().parse(req.params.soundId);
+    const sound = await getReelSoundById(soundId);
+    if (!sound) return res.status(404).json({ error: 'Sound not found' });
+    return res.json({ sound });
+  })
+);
+
+/* -------------------------------------------------------------------------- */
+/*  GET /sounds/:soundId/reels — reels using this sound                       */
+/* -------------------------------------------------------------------------- */
+router.get(
+  '/sounds/:soundId/reels',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const soundId = z.string().uuid().parse(req.params.soundId);
+    const profileId = await getProfileIdByUserId(req.userId!);
+    if (!profileId) return res.status(404).json({ error: 'Profile not found' });
+
+    const sound = await getReelSoundById(soundId);
+    if (!sound) return res.status(404).json({ error: 'Sound not found' });
+
+    const limit = Math.min(Number(req.query.limit ?? 20), 30);
+    const cursor = req.query.cursor as string | undefined;
+    const friendSet = await getAcceptedFriendIds(profileId);
+
+    let query = supabaseAdmin
+      .from('reels')
+      .select('*')
+      .eq('sound_id', soundId)
+      .eq('moderation_status', 'approved')
+      .order('created_at', { ascending: false })
+      .limit(limit + 1);
+
+    if (cursor) query = query.lt('created_at', cursor);
+
+    const { data, error } = await query;
+    if (error) return res.status(500).json({ error: error.message });
+
+    const visible = await filterVisibleReels(
+      (data ?? []) as ReelRow[],
+      profileId,
+      friendSet,
+      req.userId!
+    );
+    const page = visible.slice(0, limit);
+    const enriched = await enrichReels(page, profileId);
+    const nextCursor = visible.length > limit ? visible[limit - 1].created_at : null;
+
+    return res.json({ sound, reels: enriched, next_cursor: nextCursor });
+  })
+);
+
+/* -------------------------------------------------------------------------- */
 /*  GET /:id — single reel                                                    */
 /* -------------------------------------------------------------------------- */
 router.get(
@@ -469,6 +622,17 @@ router.post(
       if (!member) return res.status(403).json({ error: 'Not a member of this group' });
     }
 
+    if (body.sound_id) {
+      if (mediaItems.length > 1) {
+        return res.status(400).json({ error: 'Sounds are only supported on single-media reels' });
+      }
+      try {
+        await assertReelSoundActive(body.sound_id);
+      } catch (e) {
+        return res.status(400).json({ error: (e as Error).message });
+      }
+    }
+
     let width = primary.width ?? body.width ?? null;
     let height = primary.height ?? body.height ?? null;
     if ((!width || !height) && primary.media_type === 'video') {
@@ -498,6 +662,10 @@ router.post(
         group_id: body.visibility === 'group' ? body.group_id ?? null : null,
         width,
         height,
+        sound_id: body.sound_id ?? null,
+        sound_start_sec: body.sound_start_sec ?? 0,
+        original_audio_volume:
+          body.original_audio_volume ?? (body.sound_id ? 0 : 1),
         transcode_status: primary.media_type === 'image' ? 'skipped' : 'pending',
         moderation_status: 'pending',
       })
