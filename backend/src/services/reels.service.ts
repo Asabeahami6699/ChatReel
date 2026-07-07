@@ -27,8 +27,20 @@ export type ReelRow = {
   sound_id: string | null;
   sound_start_sec: number | null;
   original_audio_volume: number | null;
+  sound_volume: number | null;
+  scheduled_publish_at: string | null;
   created_at: string;
 };
+
+/** Scheduled reels stay hidden from others until publish time; authors always see their own. */
+export function isReelSchedulePublished(
+  reel: Pick<ReelRow, 'scheduled_publish_at' | 'author_id'>,
+  viewerProfileId: string
+): boolean {
+  if (!reel.scheduled_publish_at) return true;
+  if (reel.author_id === viewerProfileId) return true;
+  return new Date(reel.scheduled_publish_at).getTime() <= Date.now();
+}
 
 export type ReelSoundSummary = {
   id: string;
@@ -110,12 +122,17 @@ export async function getAcceptedFriendIds(profileId: string): Promise<Set<strin
 
 /** Whether `viewerProfileId` is allowed to see `reel`. */
 export async function canViewReel(
-  reel: Pick<ReelRow, 'author_id' | 'visibility' | 'group_id' | 'moderation_status'>,
+  reel: Pick<
+    ReelRow,
+    'author_id' | 'visibility' | 'group_id' | 'moderation_status' | 'scheduled_publish_at'
+  >,
   viewerProfileId: string,
   friendIds: Set<string>,
   viewerAuthUserId?: string
 ): Promise<boolean> {
   if (reel.author_id === viewerProfileId) return true;
+
+  if (!isReelSchedulePublished(reel, viewerProfileId)) return false;
 
   const moderation = reel.moderation_status ?? 'approved';
   if (moderation !== 'approved') return false;

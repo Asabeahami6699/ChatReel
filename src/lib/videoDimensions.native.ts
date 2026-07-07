@@ -43,3 +43,36 @@ export async function probeVideoDimensions(
     });
   });
 }
+
+/** True when expo-video reports at least one audio track. */
+export async function probeVideoHasAudio(uri: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const player = createVideoPlayer(uri);
+
+    const finish = (hasAudio: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      sourceSub.remove();
+      statusSub.remove();
+      try {
+        player.pause();
+      } catch {
+        /* ignore */
+      }
+      resolve(hasAudio);
+    };
+
+    const timer = setTimeout(() => finish(true), 8000);
+
+    const sourceSub = player.addListener('sourceLoad', (payload) => {
+      const tracks = payload.availableAudioTracks ?? [];
+      finish(tracks.length > 0);
+    });
+
+    const statusSub = player.addListener('statusChange', ({ status }) => {
+      if (status === 'error') finish(false);
+    });
+  });
+}

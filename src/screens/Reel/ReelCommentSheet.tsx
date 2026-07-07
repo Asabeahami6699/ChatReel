@@ -15,6 +15,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useReelComments } from '../../hooks/useReelComments';
 import type { ReelCommentDTO } from '../../lib/api';
+import { REEL_ACCENT } from './reelTheme';
 
 interface Props {
   reelId: string;
@@ -66,6 +67,7 @@ export default function ReelCommentSheet({
     loadMore,
     setDraft,
     setReplyTo,
+    toggleLike,
   } = useReelComments(reelId);
 
   const replyTo = useMemo(
@@ -151,6 +153,20 @@ export default function ReelCommentSheet({
               </TouchableOpacity>
             )}
           </View>
+          <TouchableOpacity
+            style={styles.likeCol}
+            onPress={() => void toggleLike(c.id)}
+            hitSlop={10}
+          >
+            <Ionicons
+              name={c.liked_by_me ? 'heart' : 'heart-outline'}
+              size={16}
+              color={c.liked_by_me ? REEL_ACCENT : '#aaa'}
+            />
+            <Text style={[styles.likeCount, c.liked_by_me && styles.likeCountActive]}>
+              {(c.like_count ?? 0) > 0 ? c.like_count : ''}
+            </Text>
+          </TouchableOpacity>
         </View>
       </TouchableOpacity>
     );
@@ -264,16 +280,21 @@ const styles = StyleSheet.create({
   commentList: { flex: 1, paddingHorizontal: 16 },
   commentItem: { flexDirection: 'row', marginVertical: 12 },
   replyItem: { marginLeft: 28, marginVertical: 6 },
+  commentItem: { flexDirection: 'row', marginVertical: 12, alignItems: 'flex-start' },
+  replyItem: { marginLeft: 28, marginVertical: 6 },
   commentAvatar: { width: 36, height: 36, borderRadius: 18, marginRight: 12 },
   replyAvatar: { width: 28, height: 28, borderRadius: 14 },
   avatarFallback: { backgroundColor: '#1976d2', justifyContent: 'center', alignItems: 'center' },
   avatarFallbackText: { color: '#fff', fontWeight: '700', fontSize: 12 },
-  commentContent: { flex: 1 },
+  commentContent: { flex: 1, paddingRight: 8 },
   commentHeader: { flexDirection: 'row', alignItems: 'center' },
   commentUser: { color: '#fff', fontWeight: '600', fontSize: 14 },
   commentTime: { color: '#888', fontSize: 12, marginLeft: 8 },
   replyTo: { color: '#888', fontSize: 11, marginTop: 2 },
   commentText: { color: '#fff', marginTop: 4, lineHeight: 18 },
+  likeCol: { alignItems: 'center', justifyContent: 'center', minWidth: 36, paddingTop: 2 },
+  likeCount: { color: '#aaa', fontSize: 11, fontWeight: '600', marginTop: 2, minHeight: 14 },
+  likeCountActive: { color: REEL_ACCENT },
   replyBtn: { marginTop: 6 },
   replyBtnText: { color: '#9eb4c7', fontSize: 12, fontWeight: '600' },
   replyBanner: {

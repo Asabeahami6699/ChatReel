@@ -32,7 +32,7 @@ import {
   registerBeforeChatNavigate,
   unregisterBeforeChatNavigate,
 } from '../../navigation/chatNavigationBridge';
-import { openPostReelCompose, registerReelFeedPauseHandler } from '../../lib/reelPlaybackBridge';
+import { openPostReelCompose, registerReelFeedPauseHandler, useReelPlaybackGateActive } from '../../lib/reelPlaybackBridge';
 import ReelCommentSheet from './ReelCommentSheet';
 import ReelShareSheet from './ReelShareSheet';
 import ReelProfileSheet from './ReelProfileSheet';
@@ -62,18 +62,13 @@ function ActionIcon({
   name,
   size = 28,
   color = '#fff',
-  active,
 }: {
   name: keyof typeof Ionicons.glyphMap;
   size?: number;
   color?: string;
   active?: boolean;
 }) {
-  return (
-    <View style={[styles.actionIconWrap, active && styles.actionIconWrapActive]}>
-      <Ionicons name={name} size={size} color={color} />
-    </View>
-  );
+  return <Ionicons name={name} size={size} color={color} />;
 }
 
 function formatCount(n: number): string {
@@ -187,6 +182,13 @@ export default function ReelsScreen() {
   const [openComments, setOpenComments] = useState<ReelDTO | null>(null);
   const [openShare, setOpenShare] = useState<ReelDTO | null>(null);
   const [openProfile, setOpenProfile] = useState<ReelDTO | null>(null);
+
+  const gateActive = useReelPlaybackGateActive();
+  const sheetOpen = Boolean(openComments || openShare || openProfile);
+  const mediaShouldPlay = isPlaying && isFocused && !sheetOpen && !gateActive;
+  const mediaShouldPlayRef = useRef(mediaShouldPlay);
+  mediaShouldPlayRef.current = mediaShouldPlay;
+
   const [followedAuthorIds, setFollowedAuthorIds] = useState<Set<string>>(new Set());
   const [followBusyAuthorIds, setFollowBusyAuthorIds] = useState<Set<string>>(new Set());
   const [endScreenReelId, setEndScreenReelId] = useState<string | null>(null);
@@ -195,7 +197,7 @@ export default function ReelsScreen() {
 
   const { progressBottom, metaBottom } = reelBottomLayout();
 
-  const pauseAllVideos = useCallback(async () => {
+  const pausePlayers = useCallback(async () => {
     await Promise.all(
       Object.values(videos.current).map(async (player) => {
         if (!player) return;
@@ -206,7 +208,25 @@ export default function ReelsScreen() {
         }
       })
     );
+  }, []);
+
+  const pauseAllVideos = useCallback(async () => {
+    await pausePlayers();
     setIsPlaying(false);
+  }, [pausePlayers]);
+
+  const openSheet = useCallback(
+    (setter: (reel: ReelDTO) => void, reel: ReelDTO) => {
+      void pausePlayers();
+      setter(reel);
+    },
+    [pausePlayers]
+  );
+
+  const closeSheets = useCallback(() => {
+    setOpenComments(null);
+    setOpenShare(null);
+    setOpenProfile(null);
   }, []);
 
   useFocusEffect(
@@ -267,7 +287,7 @@ export default function ReelsScreen() {
         next.add(reelId);
         return next;
       });
-      if (reelId === activeReelIdRef.current) {
+      if (reelId === activeReelIdRef.current && mediaShouldPlayRef.current) {
         const key = activePlayerKey(reelId);
         void (key ? videos.current[key] : null)?.playAsync();
       }
@@ -490,38 +510,27 @@ export default function ReelsScreen() {
     [animateHeart, toggleLike, togglePlayPause]
   );
 
-  // Pause every video when screen blurs.
+  // Pause when screen blurs, a sheet opens, or a global gate is active.
   useEffect(() => {
-    if (!isFocused) {
-      void pauseAllVideos();
-    } else if (activeReelIdRef.current) {
-      void playActiveReel(activeReelIdRef.current);
-      setIsPlaying(true);
+    if (!isFocused || sheetOpen || gateActive) {
+      void pausePlayers();
+      return;
     }
-  }, [isFocused, pauseAllVideos, playActiveReel]);
+    if (isPlaying && activeReelIdRef.current) {
+      void playActiveReel(activeReelIdRef.current);
+    }
+  }, [isFocused, sheetOpen, gateActive, isPlaying, pausePlayers, playActiveReel]);
 
   // Keep playback in sync when play state toggles.
   useEffect(() => {
-    if (!isFocused || !activeReelIdRef.current) return;
+    if (!mediaShouldPlay || !activeReelIdRef.current) return;
     if (isPlaying) {
       void playActiveReel(activeReelIdRef.current);
     } else {
       const v = getActivePlayer(activeReelIdRef.current);
       void v?.pauseAsync();
     }
-  }, [isPlaying, isFocused, playActiveReel, getActivePlayer]);
-
-  // Pause when a sheet is open
-  useEffect(() => {
-    if (openComments || openShare || openProfile) {
-      const v = getActivePlayer(activeReelIdRef.current);
-      void v?.pauseAsync();
-      setIsPlaying(false);
-    } else if (isFocused && activeReelIdRef.current) {
-      void playActiveReel(activeReelIdRef.current);
-      setIsPlaying(true);
-    }
-  }, [openComments, openShare, openProfile, isFocused, playActiveReel]);
+  }, [isPlaying, mediaShouldPlay, playActiveReel, getActivePlayer]);
 
   useEffect(() => {
     void refreshFollowedAuthors();
@@ -554,9 +563,11 @@ export default function ReelsScreen() {
       setEndScreenReelId(null);
       if (endScreenTimerRef.current) clearTimeout(endScreenTimerRef.current);
       if (prevId !== v.item.id) setBadgePlayCycle((c) => c + 1);
-      setIsPlaying(true);
-      setPlaybackIcon(null);
-      void playActiveReel(v.item.id);
+      if (mediaShouldPlayRef.current) {
+        setIsPlaying(true);
+        setPlaybackIcon(null);
+        void playActiveReel(v.item.id);
+      }
       if (prevId && prevId !== v.item.id) {
         releasePinRef.current(prevId);
       }
@@ -703,7 +714,7 @@ export default function ReelsScreen() {
               frameWidth={reelWidth}
               frameHeight={reelHeight}
               isFocused={isFocused}
-              isPlaying={isPlaying}
+              isPlaying={mediaShouldPlay}
               isMuted={isMuted}
               volume={isMuted ? 0 : volume}
               isReady={isReady}
@@ -786,7 +797,7 @@ export default function ReelsScreen() {
               ]}
             >
               <View style={styles.userInfo}>
-                <TouchableOpacity onPress={() => setOpenProfile(item)}>
+                <TouchableOpacity onPress={() => openSheet(setOpenProfile, item)}>
                   <Text style={styles.username}>@{authorLabel(item)}</Text>
                 </TouchableOpacity>
                 {item.visibility !== 'public' && (
@@ -830,7 +841,7 @@ export default function ReelsScreen() {
             ]}
           >
             <View style={styles.profileActionWrap}>
-              <TouchableOpacity style={styles.profileButton} onPress={() => setOpenProfile(item)}>
+              <TouchableOpacity style={styles.profileButton} onPress={() => openSheet(setOpenProfile, item)}>
                 {avatar ? (
                   <Image source={{ uri: avatar }} style={styles.profileAvatar} />
                 ) : (
@@ -859,13 +870,13 @@ export default function ReelsScreen() {
                 {formatCount(item.like_count)}
               </Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.actionButton} onPress={() => setOpenComments(item)}>
+            <TouchableOpacity style={styles.actionButton} onPress={() => openSheet(setOpenComments, item)}>
               <ActionIcon name="chatbubble-ellipses-outline" size={26} />
               <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>
                 {formatCount(item.comment_count)}
               </Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.actionButton} onPress={() => setOpenShare(item)}>
+            <TouchableOpacity style={styles.actionButton} onPress={() => openSheet(setOpenShare, item)}>
               <ActionIcon name="paper-plane-outline" size={24} />
               <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>Share</Text>
             </TouchableOpacity>
@@ -891,7 +902,8 @@ export default function ReelsScreen() {
       insets.bottom,
       isFocused,
       isMuted,
-      isPlaying,
+      mediaShouldPlay,
+      openSheet,
       progress,
       bufferedProgress,
       progressPan.panHandlers,
@@ -1144,19 +1156,19 @@ export default function ReelsScreen() {
         visible={!!openComments}
         animationType="slide"
         transparent
-        onRequestClose={() => setOpenComments(null)}
+        onRequestClose={closeSheets}
       >
         <View style={styles.modalBackdrop}>
           <TouchableOpacity
             style={StyleSheet.absoluteFill}
             activeOpacity={1}
-            onPress={() => setOpenComments(null)}
+            onPress={closeSheets}
           />
           <View style={[styles.sheetWrapper, { paddingBottom: insets.bottom }]}>
             {openComments && (
               <ReelCommentSheet
                 reelId={openComments.id}
-                onClose={() => setOpenComments(null)}
+                onClose={closeSheets}
                 onCommentAdded={() => applyLocalCommentChange(openComments.id, 1)}
                 onCommentRemoved={() => applyLocalCommentChange(openComments.id, -1)}
               />
@@ -1169,17 +1181,17 @@ export default function ReelsScreen() {
         visible={!!openShare}
         animationType="slide"
         transparent
-        onRequestClose={() => setOpenShare(null)}
+        onRequestClose={closeSheets}
       >
         <View style={styles.modalBackdrop}>
           <TouchableOpacity
             style={StyleSheet.absoluteFill}
             activeOpacity={1}
-            onPress={() => setOpenShare(null)}
+            onPress={closeSheets}
           />
           <View style={[styles.sheetWrapper, { paddingBottom: insets.bottom }]}>
             {openShare && (
-              <ReelShareSheet reel={openShare} onClose={() => setOpenShare(null)} />
+              <ReelShareSheet reel={openShare} onClose={closeSheets} />
             )}
           </View>
         </View>
@@ -1189,13 +1201,13 @@ export default function ReelsScreen() {
         visible={!!openProfile}
         animationType="slide"
         transparent
-        onRequestClose={() => setOpenProfile(null)}
+        onRequestClose={closeSheets}
       >
         <View style={[styles.modalBackdrop, usePhoneFrame && styles.modalBackdropCentered]}>
           <TouchableOpacity
             style={StyleSheet.absoluteFill}
             activeOpacity={1}
-            onPress={() => setOpenProfile(null)}
+            onPress={closeSheets}
           />
           <View
             style={[
@@ -1207,7 +1219,7 @@ export default function ReelsScreen() {
             {openProfile && (
               <ReelProfileSheet
                 reel={openProfile}
-                onClose={() => setOpenProfile(null)}
+                onClose={closeSheets}
                 onFollowStateChange={(authorId, state) => {
                   setFollowedAuthorIds((prev) => {
                     const next = new Set(prev);

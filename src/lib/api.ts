@@ -67,6 +67,8 @@ export type ReelDTO = {
   sound_id?: string | null;
   sound_start_sec?: number | null;
   original_audio_volume?: number | null;
+  sound_volume?: number | null;
+  scheduled_publish_at?: string | null;
 };
 
 export type ReelCommentDTO = {
@@ -76,6 +78,8 @@ export type ReelCommentDTO = {
   parent_id?: string | null;
   content: string;
   created_at: string;
+  like_count?: number;
+  liked_by_me?: boolean;
   author: ReelAuthorDTO | null;
   reply_count?: number;
 };
@@ -601,6 +605,12 @@ export const api = {
     },
     createSound: (data: { audio_url: string; title: string; artist?: string; duration_sec?: number }) =>
       apiRequest<{ sound: ReelSoundDTO }>('/api/reels/sounds', { method: 'POST', body: data }),
+    extractSound: (data: { video_url: string; title?: string; duration_sec?: number }) =>
+      apiRequest<{ sound: ReelSoundDTO }>('/api/reels/sounds/extract', { method: 'POST', body: data }),
+    deleteSound: (id: string) =>
+      apiRequest<{ ok: boolean }>(`/api/reels/sounds/${id}`, { method: 'DELETE' }),
+    download: (id: string) =>
+      apiRequest<{ download_url: string }>(`/api/reels/${id}/download`),
     create: (data: {
       video_url?: string;
       thumbnail_url?: string;
@@ -615,6 +625,8 @@ export const api = {
       sound_id?: string;
       sound_start_sec?: number;
       original_audio_volume?: number;
+      sound_volume?: number;
+      scheduled_publish_at?: string;
       media?: Array<{
         media_url: string;
         media_type: 'image' | 'video';
@@ -651,6 +663,14 @@ export const api = {
       }),
     deleteComment: (commentId: string) =>
       apiRequest<{ success: boolean }>(`/api/reels/comments/${commentId}`, {
+        method: 'DELETE',
+      }),
+    likeComment: (commentId: string) =>
+      apiRequest<{ success: boolean }>(`/api/reels/comments/${commentId}/like`, {
+        method: 'POST',
+      }),
+    unlikeComment: (commentId: string) =>
+      apiRequest<{ success: boolean }>(`/api/reels/comments/${commentId}/like`, {
         method: 'DELETE',
       }),
     fromMoment: (momentId: string, data?: { caption?: string }) =>

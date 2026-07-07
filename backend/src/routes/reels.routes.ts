@@ -16,12 +16,33 @@ import {
   ReelVisibility,
 } from '../services/reels.service';
 import { sendPushToUserSafe, getAuthUserIdByProfileId } from '../services/push.service';
-import { isReelHlsEnabled, queueReelHlsTranscode } from '../services/reelTranscode.service';
+import { isReelHlsEnabled, queueReelHlsTranscode, queueReelSoundMux } from '../services/reelTranscode.service';
 import { assertCaptionAllowed, scheduleReelModeration } from '../services/reelModeration.service';
-import { assertReelSoundActive, createReelSound, getReelSoundById, listReelSounds } from '../services/reelSounds.service';
+import { assertReelSoundActive, createReelSound, deactivateReelSoundForUser, getReelSoundById, listReelSounds } from '../services/reelSounds.service';
+import { extractSoundFromVideoUrl } from '../services/reelSoundExtract.service';
+import { buildWatermarkedReelDownload } from '../services/reelDownload.service';
 import { probeVideoDimensionsFromUrl } from '../lib/videoProbe';
 
 const router = Router();
+
+async function enrichCommentLikes<T extends { id: string }>(
+  comments: T[],
+  profileId: string
+): Promise<Array<T & { like_count?: number; liked_by_me?: boolean }>> {
+  if (!comments.length) return comments;
+  const ids = comments.map((c) => c.id);
+  const { data: likes } = await supabaseAdmin
+    .from('reel_comment_likes')
+    .select('comment_id')
+    .eq('user_id', profileId)
+    .in('comment_id', ids);
+  const likedSet = new Set((likes ?? []).map((l) => l.comment_id as string));
+  return comments.map((c) => ({
+    ...c,
+    liked_by_me: likedSet.has(c.id),
+    like_count: (c as { like_count?: number }).like_count ?? 0,
+  }));
+}
 
 const VISIBILITIES: ReelVisibility[] = ['public', 'friends', 'private', 'group'];
 
@@ -47,6 +68,8 @@ const createReelSchema = z.object({
   sound_id: z.string().uuid().optional(),
   sound_start_sec: z.number().min(0).optional(),
   original_audio_volume: z.number().min(0).max(1).optional(),
+  sound_volume: z.number().min(0).max(1).optional(),
+  scheduled_publish_at: z.string().min(1).optional(),
   media: z
     .array(
       z.object({
@@ -480,6 +503,68 @@ router.post(
   })
 );
 
+const extractSoundSchema = z.object({
+  video_url: z.string().url().min(1),
+  title: z.string().min(1).max(120).optional(),
+  duration_sec: z.number().min(0).optional(),
+});
+
+/* -------------------------------------------------------------------------- */
+/*  POST /sounds/extract — extract audio from a reels-bucket video              */
+/* -------------------------------------------------------------------------- */
+router.post(
+  '/sounds/extract',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const body = extractSoundSchema.parse(req.body);
+    try {
+      assertReelsBucketUrl(body.video_url);
+    } catch (e) {
+      return res.status(400).json({ error: (e as Error).message });
+    }
+
+    const profileId = await getProfileIdByUserId(req.userId!);
+    if (!profileId) return res.status(404).json({ error: 'Profile not found' });
+
+    const { data: profile } = await supabaseAdmin
+      .from('profiles')
+      .select('display_name, email')
+      .eq('id', profileId)
+      .maybeSingle();
+
+    const artist =
+      profile?.display_name?.trim() ||
+      profile?.email?.split('@')[0] ||
+      'You';
+
+    const sound = await extractSoundFromVideoUrl({
+      videoUrl: body.video_url,
+      profileId,
+      title: body.title?.trim() || 'Extracted audio',
+      artist,
+      durationSec: body.duration_sec,
+    });
+
+    return res.status(201).json({ sound });
+  })
+);
+
+/* -------------------------------------------------------------------------- */
+/*  DELETE /sounds/:soundId — remove your uploaded sound                        */
+/* -------------------------------------------------------------------------- */
+router.delete(
+  '/sounds/:soundId',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const soundId = z.string().uuid().parse(req.params.soundId);
+    const profileId = await getProfileIdByUserId(req.userId!);
+    if (!profileId) return res.status(404).json({ error: 'Profile not found' });
+
+    await deactivateReelSoundForUser(soundId, profileId);
+    return res.json({ ok: true });
+  })
+);
+
 /* -------------------------------------------------------------------------- */
 /*  GET /sounds/:soundId — sound detail                                       */
 /* -------------------------------------------------------------------------- */
@@ -536,6 +621,97 @@ router.get(
     const nextCursor = visible.length > limit ? visible[limit - 1].created_at : null;
 
     return res.json({ sound, reels: enriched, next_cursor: nextCursor });
+  })
+);
+
+/* -------------------------------------------------------------------------- */
+/*  POST/DELETE /comments/:commentId/like — must be before /:id routes        */
+/* -------------------------------------------------------------------------- */
+router.post(
+  '/comments/:commentId/like',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const commentId = z.string().uuid().parse(req.params.commentId);
+    const profileId = await getProfileIdByUserId(req.userId!);
+    if (!profileId) return res.status(404).json({ error: 'Profile not found' });
+
+    const { data: comment } = await supabaseAdmin
+      .from('reel_comments')
+      .select('id, reel_id')
+      .eq('id', commentId)
+      .maybeSingle();
+    if (!comment) return res.status(404).json({ error: 'Comment not found' });
+
+    const { data: reel } = await supabaseAdmin
+      .from('reels')
+      .select('id, author_id, visibility, scheduled_publish_at, moderation_status')
+      .eq('id', comment.reel_id)
+      .maybeSingle();
+    if (!reel) return res.status(404).json({ error: 'Reel not found' });
+    const friendSet = await getAcceptedFriendIds(profileId);
+    if (!(await canViewReel(reel as ReelRow, profileId, friendSet, req.userId!))) {
+      return res.status(403).json({ error: 'Not allowed' });
+    }
+
+    const { error } = await supabaseAdmin
+      .from('reel_comment_likes')
+      .upsert({ comment_id: commentId, user_id: profileId }, { onConflict: 'comment_id,user_id' });
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json({ success: true });
+  })
+);
+
+router.delete(
+  '/comments/:commentId/like',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const commentId = z.string().uuid().parse(req.params.commentId);
+    const profileId = await getProfileIdByUserId(req.userId!);
+    if (!profileId) return res.status(404).json({ error: 'Profile not found' });
+
+    const { error } = await supabaseAdmin
+      .from('reel_comment_likes')
+      .delete()
+      .eq('comment_id', commentId)
+      .eq('user_id', profileId);
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json({ success: true });
+  })
+);
+
+/* -------------------------------------------------------------------------- */
+/*  GET /:id/download — watermarked MP4 for saving/sharing                      */
+/* -------------------------------------------------------------------------- */
+router.get(
+  '/:id/download',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const id = z.string().uuid().parse(req.params.id);
+    const viewerProfileId = await getProfileIdByUserId(req.userId!);
+    if (!viewerProfileId) return res.status(404).json({ error: 'Profile not found' });
+
+    const { data, error } = await supabaseAdmin
+      .from('reels')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error) return res.status(500).json({ error: error.message });
+    if (!data) return res.status(404).json({ error: 'Reel not found' });
+
+    const friendSet = await getAcceptedFriendIds(viewerProfileId);
+    if (!(await canViewReel(data as ReelRow, viewerProfileId, friendSet, req.userId!))) {
+      return res.status(403).json({ error: 'Not allowed' });
+    }
+
+    const { data: author } = await supabaseAdmin
+      .from('profiles')
+      .select('display_name, email')
+      .eq('id', data.author_id)
+      .maybeSingle();
+
+    const { publicUrl } = await buildWatermarkedReelDownload(data as ReelRow, author);
+    return res.json({ download_url: publicUrl });
   })
 );
 
@@ -666,6 +842,8 @@ router.post(
         sound_start_sec: body.sound_start_sec ?? 0,
         original_audio_volume:
           body.original_audio_volume ?? (body.sound_id ? 0 : 1),
+        sound_volume: body.sound_volume ?? (body.sound_id ? 0.45 : 1),
+        scheduled_publish_at: body.scheduled_publish_at ?? null,
         transcode_status: primary.media_type === 'image' ? 'skipped' : 'pending',
         moderation_status: 'pending',
       })
@@ -698,17 +876,35 @@ router.post(
       for (const item of mediaItems) {
         if (item.media_type !== 'video') continue;
         if (mediaItems.length === 1) {
-          queueReelHlsTranscode(reelId, item.media_url, {
-            trimStartSec: item.trim_start_sec,
-            trimEndSec: item.trim_end_sec,
-          });
+          if (body.sound_id && !isReelHlsEnabled()) {
+            queueReelSoundMux(reelId, item.media_url, {
+              trimStartSec: item.trim_start_sec,
+              trimEndSec: item.trim_end_sec,
+            });
+          } else if (isReelHlsEnabled()) {
+            queueReelHlsTranscode(reelId, item.media_url, {
+              trimStartSec: item.trim_start_sec,
+              trimEndSec: item.trim_end_sec,
+            });
+          } else {
+            await supabaseAdmin.from('reels').update({ transcode_status: 'skipped' }).eq('id', reelId);
+          }
         }
       }
     } else if (primary.media_type === 'video') {
-      queueReelHlsTranscode(reelId, primary.media_url, {
-        trimStartSec: body.trim_start_sec,
-        trimEndSec: body.trim_end_sec,
-      });
+      if (body.sound_id && !isReelHlsEnabled()) {
+        queueReelSoundMux(reelId, primary.media_url, {
+          trimStartSec: body.trim_start_sec,
+          trimEndSec: body.trim_end_sec,
+        });
+      } else if (isReelHlsEnabled()) {
+        queueReelHlsTranscode(reelId, primary.media_url, {
+          trimStartSec: body.trim_start_sec,
+          trimEndSec: body.trim_end_sec,
+        });
+      } else {
+        await supabaseAdmin.from('reels').update({ transcode_status: 'skipped' }).eq('id', reelId);
+      }
     }
 
     const usesTranscodeModeration =
@@ -913,7 +1109,7 @@ router.get(
     const cursor = req.query.cursor as string | undefined;
 
     const selectCols =
-      `id, reel_id, user_id, parent_id, content, created_at,
+      `id, reel_id, user_id, parent_id, content, like_count, created_at,
        author:profiles!reel_comments_user_id_fkey(id, user_id, display_name, email, avatar_url)`;
 
     let parentQuery = supabaseAdmin
@@ -938,10 +1134,11 @@ router.get(
         if (cursor) fallback = fallback.lt('created_at', cursor);
         const { data, error } = await fallback;
         if (error) return res.status(500).json({ error: error.message });
-        const rows = (data ?? []) as unknown as Array<{ created_at: string }>;
+        const rows = (data ?? []) as unknown as Array<{ id: string; created_at: string }>;
         const next_cursor =
           rows.length === limit ? rows[rows.length - 1].created_at : null;
-        return res.json({ comments: data ?? [], next_cursor });
+        const enriched = await enrichCommentLikes(rows, profileId);
+        return res.json({ comments: enriched, next_cursor });
       }
       return res.status(500).json({ error: parentErr.message });
     }
@@ -966,7 +1163,11 @@ router.get(
       parents && parents.length === limit
         ? (parents[parents.length - 1].created_at as string)
         : null;
-    return res.json({ comments, next_cursor });
+    const enriched = await enrichCommentLikes(
+      comments as Array<{ id: string }>,
+      profileId
+    );
+    return res.json({ comments: enriched, next_cursor });
   })
 );
 
@@ -1015,7 +1216,7 @@ router.post(
         parent_id: body.parent_id ?? null,
       })
       .select(
-        `id, reel_id, user_id, parent_id, content, created_at,
+        `id, reel_id, user_id, parent_id, content, like_count, created_at,
          author:profiles!reel_comments_user_id_fkey(id, user_id, display_name, email, avatar_url)`
       )
       .single();
@@ -1030,20 +1231,22 @@ router.post(
       return res.status(500).json({ error: error.message });
     }
 
+    const [comment] = await enrichCommentLikes([data as { id: string }], profileId);
+
     if (reel.author_id !== profileId) {
       const authUserId = await getAuthUserIdByProfileId(reel.author_id as string);
       if (authUserId) {
-        const author = (data as { author?: { display_name?: string; email?: string } }).author;
+        const author = (comment as { author?: { display_name?: string; email?: string } }).author;
         const name = author?.display_name || author?.email?.split('@')[0] || 'Someone';
         sendPushToUserSafe(authUserId, {
           title: 'New comment',
           body: `${name}: ${body.content.slice(0, 80)}`,
-          data: { type: 'reel_comment', reel_id: reelId, comment_id: data.id },
+          data: { type: 'reel_comment', reel_id: reelId, comment_id: comment.id },
         });
       }
     }
 
-    return res.status(201).json({ comment: data });
+    return res.status(201).json({ comment });
   })
 );
 

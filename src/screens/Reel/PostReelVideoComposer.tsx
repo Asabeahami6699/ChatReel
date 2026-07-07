@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import Slider from '@react-native-community/slider';
 import { Ionicons } from '@expo/vector-icons';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -24,6 +25,7 @@ import {
   type AudioPlayer,
 } from '../../lib/appAudio';
 import { REEL_ACCENT } from './reelTheme';
+import { ReelSchedulePicker } from './ReelProfileMenuFloat';
 import { pauseReelFeedPlayback } from '../../lib/reelPlaybackBridge';
 
 type DockTab = 'edit' | 'filter' | 'sound' | 'details';
@@ -40,6 +42,10 @@ type Props = {
   selectedSound: ReelSoundDTO | null;
   soundStartSec: number;
   soundEndSec: number;
+  originalAudioVolume: number;
+  soundVolume: number;
+  scheduleEnabled: boolean;
+  scheduleDate: Date;
   isQueuing: boolean;
   onVideoChange: (patch: Partial<ReelVideoEditState>) => void;
   onThumbChange: (uri: string | null) => void;
@@ -49,9 +55,16 @@ type Props = {
   onSoundChange: (sound: ReelSoundDTO | null) => void;
   onSoundStartChange: (sec: number) => void;
   onSoundEndChange: (sec: number) => void;
+  onOriginalAudioVolumeChange: (v: number) => void;
+  onSoundVolumeChange: (v: number) => void;
+  onScheduleEnabledChange: (v: boolean) => void;
+  onScheduleDateChange: (d: Date) => void;
   onPost: () => void;
+  onSaveDraft: () => void;
   onClose: () => void;
   onReplaceMedia: () => void;
+  openSoundOnMount?: boolean;
+  onSoundPickerOpened?: () => void;
 };
 
 export function defaultSoundRange(
@@ -61,6 +74,35 @@ export function defaultSoundRange(
   const trackLen = sound.duration_sec ?? Math.max(clipLenSec + 30, 60);
   const end = Math.min(trackLen, Math.max(clipLenSec, 1));
   return { start: 0, end };
+}
+
+function VolumeSlider({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <View style={styles.volumeBlock}>
+      <Text style={styles.volumeLabel}>
+        {label} · {Math.round(value * 100)}%
+      </Text>
+      <Slider
+        style={styles.volumeSlider}
+        minimumValue={0}
+        maximumValue={1}
+        step={0.01}
+        value={value}
+        onValueChange={onChange}
+        minimumTrackTintColor={REEL_ACCENT}
+        maximumTrackTintColor="#333"
+        thumbTintColor="#fff"
+      />
+    </View>
+  );
 }
 
 export function PostReelVideoComposer({
@@ -73,6 +115,10 @@ export function PostReelVideoComposer({
   selectedSound,
   soundStartSec,
   soundEndSec,
+  originalAudioVolume,
+  soundVolume,
+  scheduleEnabled,
+  scheduleDate,
   isQueuing,
   onVideoChange,
   onThumbChange,
@@ -82,9 +128,16 @@ export function PostReelVideoComposer({
   onSoundChange,
   onSoundStartChange,
   onSoundEndChange,
+  onOriginalAudioVolumeChange,
+  onSoundVolumeChange,
+  onScheduleEnabledChange,
+  onScheduleDateChange,
   onPost,
+  onSaveDraft,
   onClose,
   onReplaceMedia,
+  openSoundOnMount = false,
+  onSoundPickerOpened,
 }: Props) {
   const insets = useSafeAreaInsets();
   const [dock, setDock] = useState<DockTab>('edit');
@@ -203,6 +256,13 @@ export function PostReelVideoComposer({
   );
 
   useEffect(() => {
+    if (!openSoundOnMount) return;
+    setDock('sound');
+    setSoundOpen(true);
+    onSoundPickerOpened?.();
+  }, [openSoundOnMount, onSoundPickerOpened]);
+
+  useEffect(() => {
     pauseReelFeedPlayback();
     return () => {
       stopSoundWatch();
@@ -229,6 +289,9 @@ export function PostReelVideoComposer({
           <Ionicons name="close" size={28} color="#fff" />
         </TouchableOpacity>
         <View style={styles.topActions}>
+          <TouchableOpacity style={styles.previewBtn} onPress={onSaveDraft} disabled={isQueuing}>
+            <Text style={styles.previewBtnText}>Save draft</Text>
+          </TouchableOpacity>
           <TouchableOpacity
             style={styles.previewBtn}
             onPress={() => setPreviewOpen(true)}
@@ -326,6 +389,16 @@ export function PostReelVideoComposer({
             <TouchableOpacity style={styles.changeSoundBtn} onPress={openSoundPicker}>
               <Text style={styles.changeSoundBtnText}>Change sound</Text>
             </TouchableOpacity>
+            <VolumeSlider
+              label="Your voice"
+              value={originalAudioVolume}
+              onChange={onOriginalAudioVolumeChange}
+            />
+            <VolumeSlider
+              label="Background music"
+              value={soundVolume}
+              onChange={onSoundVolumeChange}
+            />
           </View>
         ) : null}
 
@@ -398,6 +471,14 @@ export function PostReelVideoComposer({
                 })}
               </View>
             ) : null}
+
+            <Text style={styles.sectionLabel}>Schedule publish</Text>
+            <ReelSchedulePicker
+              enabled={scheduleEnabled}
+              value={scheduleDate}
+              onEnabledChange={onScheduleEnabledChange}
+              onChange={onScheduleDateChange}
+            />
           </View>
         ) : null}
       </ScrollView>
@@ -546,6 +627,9 @@ const styles = StyleSheet.create({
   soundPlayBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
   changeSoundBtn: { marginTop: 12, alignSelf: 'flex-start' },
   changeSoundBtnText: { color: REEL_ACCENT, fontSize: 13, fontWeight: '600' },
+  volumeBlock: { marginTop: 14 },
+  volumeLabel: { color: '#ccc', fontSize: 12, fontWeight: '600', marginBottom: 4 },
+  volumeSlider: { width: '100%', height: 36 },
   dock: {
     flexDirection: 'row',
     borderTopWidth: StyleSheet.hairlineWidth,

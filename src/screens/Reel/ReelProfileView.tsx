@@ -19,11 +19,14 @@ import { ReelImmersiveViewer } from './ReelImmersiveViewer';
 import { api, ApiError, type ReelDTO } from '../../lib/api';
 import { rootNavigationRef } from '../../navigation/rootNavigation';
 import { openPostReelCompose } from '../../lib/reelPlaybackBridge';
+import type { SavedReelComposeDraft } from '../../lib/reelComposeDraftStore';
+import { useReelPlaybackGate } from '../../hooks/useReelPlaybackGate';
 import type { ReelsStackParamList } from '../../navigation/reelsNavigation';
 import { REEL_ACCENT } from './reelTheme';
 import { reelTabBarOffset } from './ReelsTabBar';
 import { REEL_PHONE_MAX_WIDTH } from './reelVideoLayout';
 import { ReelProfileGrid } from './ReelProfileGrid';
+import { ReelProfileMenuFloat } from './ReelProfileMenuFloat';
 import { useReelGridDeleteHandlers } from './useReelGridDelete';
 import { useReelProfilePosts } from './useReelProfilePosts';
 
@@ -77,6 +80,7 @@ export default function ReelProfileView({ profileId, isSelf = false, showBack = 
   const [friendshipId, setFriendshipId] = useState<string | null>(null);
   const [followBusy, setFollowBusy] = useState(false);
   const [immersiveIndex, setImmersiveIndex] = useState<number | null>(null);
+  useReelPlaybackGate('profile-immersive', immersiveIndex != null);
   const [followerCount, setFollowerCount] = useState(0);
   const [followersLoading, setFollowersLoading] = useState(true);
   const { removeOne, removeMany } = useReelGridDeleteHandlers(profileId, setImmersiveIndex);
@@ -189,8 +193,8 @@ export default function ReelProfileView({ profileId, isSelf = false, showBack = 
     }
   };
 
-  const openPostReel = () => {
-    openPostReelCompose();
+  const openPostReel = (draft?: SavedReelComposeDraft) => {
+    openPostReelCompose(draft);
     if (rootNavigationRef.isReady()) rootNavigationRef.navigate('PostReel');
   };
 
@@ -208,14 +212,7 @@ export default function ReelProfileView({ profileId, isSelf = false, showBack = 
         )}
         <Text style={styles.username}>@{username}</Text>
         {isSelf ? (
-          <View style={styles.headerActions}>
-            <TouchableOpacity style={styles.iconBtn} onPress={refresh} disabled={refreshing}>
-              <Ionicons name="refresh" size={20} color={refreshing ? '#666' : '#fff'} />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.uploadBtn} onPress={openPostReel}>
-              <Ionicons name="add" size={18} color="#fff" />
-            </TouchableOpacity>
-          </View>
+          <View style={styles.iconBtn} />
         ) : (
           <TouchableOpacity style={styles.iconBtn} onPress={refresh} disabled={refreshing}>
             <Ionicons name="refresh" size={20} color={refreshing ? '#666' : '#fff'} />
@@ -261,11 +258,19 @@ export default function ReelProfileView({ profileId, isSelf = false, showBack = 
       )}
 
       {isSelf && (
-        <TouchableOpacity style={styles.followBtn} onPress={openPostReel}>
+        <TouchableOpacity style={styles.followBtn} onPress={() => openPostReel()}>
           <Ionicons name="videocam" size={16} color="#fff" />
           <Text style={styles.followText}>Post a reel</Text>
         </TouchableOpacity>
       )}
+
+      {isSelf ? (
+        <ReelProfileMenuFloat
+          topOffset={insets.top + 8}
+          onNewReel={() => openPostReel()}
+          onOpenDraft={(draft) => openPostReel(draft)}
+        />
+      ) : null}
 
       {error && <Text style={styles.error}>{error}</Text>}
 
@@ -334,10 +339,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  profileHeader: { flexDirection: 'row', paddingHorizontal: 20, paddingBottom: 16, alignItems: 'center' },
-  avatar: { width: 80, height: 80, borderRadius: 40, marginRight: 16 },
+  profileHeader: { flexDirection: 'row', paddingHorizontal: 16, paddingBottom: 12, alignItems: 'center' },
+  avatar: { width: 56, height: 56, borderRadius: 28, marginRight: 12 },
   avatarFallback: { backgroundColor: '#6366f1', justifyContent: 'center', alignItems: 'center' },
-  avatarFallbackText: { color: '#fff', fontSize: 28, fontWeight: '700' },
+  avatarFallbackText: { color: '#fff', fontSize: 20, fontWeight: '700' },
   stats: { flex: 1, flexDirection: 'row', justifyContent: 'space-around' },
   followBtn: {
     marginHorizontal: 20,
@@ -353,8 +358,8 @@ const styles = StyleSheet.create({
   followingBtn: { backgroundColor: '#334155' },
   followText: { color: '#fff', fontWeight: '700' },
   stat: { alignItems: 'center' },
-  statNumber: { color: '#fff', fontSize: 17, fontWeight: 'bold' },
-  statLabel: { color: '#888', fontSize: 11, marginTop: 2 },
+  statNumber: { color: '#fff', fontSize: 15, fontWeight: 'bold' },
+  statLabel: { color: '#888', fontSize: 10, marginTop: 2 },
   loaderBox: { padding: 32, alignItems: 'center' },
   empty: { paddingVertical: 48, alignItems: 'center' },
   emptyText: { color: '#888', marginTop: 10 },

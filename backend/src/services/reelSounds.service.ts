@@ -95,3 +95,23 @@ export async function createReelSound(input: {
   if (error) throw new Error(error.message);
   return data as ReelSoundRow;
 }
+
+export async function deactivateReelSoundForUser(
+  soundId: string,
+  profileId: string
+): Promise<void> {
+  const { data, error } = await supabaseAdmin
+    .from('reel_sounds')
+    .select('id, uploaded_by')
+    .eq('id', soundId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error('Sound not found');
+  if (data.uploaded_by !== profileId) throw new Error('Not allowed');
+
+  const { error: updateErr } = await supabaseAdmin
+    .from('reel_sounds')
+    .update({ is_active: false })
+    .eq('id', soundId);
+  if (updateErr) throw new Error(updateErr.message);
+}

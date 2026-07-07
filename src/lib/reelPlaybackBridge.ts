@@ -1,7 +1,13 @@
 /** Pause feed reels when opening compose / upload (PostReel modal stays over the feed). */
+import { useSyncExternalStore } from 'react';
+import type { SavedReelComposeDraft } from './reelComposeDraftStore';
+
 type PauseHandler = () => void;
 
 const pauseHandlers = new Set<PauseHandler>();
+const gateListeners = new Set<() => void>();
+const playbackGates = new Set<string>();
+let pendingComposeDraft: SavedReelComposeDraft | null = null;
 
 export function registerReelFeedPauseHandler(handler: PauseHandler): () => void {
   pauseHandlers.add(handler);
@@ -18,7 +24,45 @@ export function pauseReelFeedPlayback(): void {
   });
 }
 
+/** Block auto-resume while a modal / overlay is open. */
+export function setReelPlaybackGate(id: string, blocked: boolean): void {
+  if (blocked) {
+    if (!playbackGates.has(id)) {
+      playbackGates.add(id);
+      pauseReelFeedPlayback();
+      gateListeners.forEach((l) => l());
+    }
+    return;
+  }
+  if (playbackGates.delete(id)) {
+    gateListeners.forEach((l) => l());
+  }
+}
+
+export function isReelPlaybackGateActive(): boolean {
+  return playbackGates.size > 0;
+}
+
+export function useReelPlaybackGateActive(): boolean {
+  return useSyncExternalStore(
+    (onStoreChange) => {
+      gateListeners.add(onStoreChange);
+      return () => gateListeners.delete(onStoreChange);
+    },
+    () => playbackGates.size > 0,
+    () => false
+  );
+}
+
 /** Call before navigating to PostReel so background reels stop immediately. */
-export function openPostReelCompose(): void {
+export function openPostReelCompose(draft?: SavedReelComposeDraft): void {
+  pendingComposeDraft = draft ?? null;
+  setReelPlaybackGate('post-reel-nav', true);
   pauseReelFeedPlayback();
+}
+
+export function consumePendingComposeDraft(): SavedReelComposeDraft | null {
+  const draft = pendingComposeDraft;
+  pendingComposeDraft = null;
+  return draft;
 }

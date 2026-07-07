@@ -19,13 +19,16 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useAuth } from '../../hooks/useAuth';
 import { isImageMime } from '../../lib/reelPlayback';
-import { pauseReelFeedPlayback } from '../../lib/reelPlaybackBridge';
-import { enqueueReelUpload, type ReelUploadVisibility } from '../../lib/reelUploadQueue';
-import { probeVideoDimensions } from '../../lib/videoDimensions';
+import { pauseReelFeedPlayback, consumePendingComposeDraft, setReelPlaybackGate } from '../../lib/reelPlaybackBridge';
+import { enqueueReelUpload, type ReelUploadDraft, type ReelUploadVisibility } from '../../lib/reelUploadQueue';
+import { saveReelComposeDraft } from '../../lib/reelComposeDraftStore';
+import { probeVideoDimensions, probeVideoHasAudio } from '../../lib/videoDimensions';
+import { uploadReelExtractTemp } from '../../lib/reelUploader';
 import type { ReelVideoEditState } from './ReelVideoEditor';
 import { ReelPlayer } from '../../components/ReelPlayer';
 import { PostReelVideoComposer } from './PostReelVideoComposer';
 import { PostReelImageComposer } from './PostReelImageComposer';
+import { VideoAudioPrompt, type VideoAudioChoice } from './VideoAudioPrompt';
 import type { ReelFilterId } from './reelFilters';
 import { api, type ReelSoundDTO } from '../../lib/api';
 
@@ -97,10 +100,76 @@ export default function PostReelScreen() {
   const [selectedSound, setSelectedSound] = useState<ReelSoundDTO | null>(null);
   const [soundStartSec, setSoundStartSec] = useState(0);
   const [soundEndSec, setSoundEndSec] = useState(0);
+  const [originalAudioVolume, setOriginalAudioVolume] = useState(1);
+  const [soundVolume, setSoundVolume] = useState(0.45);
+  const [scheduleEnabled, setScheduleEnabled] = useState(false);
+  const [scheduleDate, setScheduleDate] = useState(() => {
+    const d = new Date();
+    d.setHours(d.getHours() + 2, 0, 0, 0);
+    return d;
+  });
+  const [audioPromptVisible, setAudioPromptVisible] = useState(false);
+  const [audioPromptBusy, setAudioPromptBusy] = useState(false);
+  const [openSoundOnMount, setOpenSoundOnMount] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
       pauseReelFeedPlayback();
+      setReelPlaybackGate('post-reel', true);
+      const saved = consumePendingComposeDraft();
+      if (saved) {
+        const { draft, sound } = saved;
+        setCaption(draft.caption ?? '');
+        setVisibility(draft.visibility);
+        setGroupId(draft.group_id ?? null);
+        setThumbUri(draft.thumbUri ?? null);
+        setSelectedSound(sound ?? null);
+        setSoundStartSec(draft.sound_start_sec ?? 0);
+        setOriginalAudioVolume(draft.original_audio_volume ?? 1);
+        setSoundVolume(draft.sound_volume ?? 0.45);
+        if (draft.scheduled_publish_at) {
+          setScheduleEnabled(true);
+          setScheduleDate(new Date(draft.scheduled_publish_at));
+        }
+        const media = draft.items?.[0] ?? draft.video;
+        if (media?.uri) {
+          if (media.mediaType === 'image' || isImageMime(media.mime)) {
+            setItems([
+              {
+                id: newId(),
+                mediaType: 'image',
+                uri: media.uri,
+                fileName: media.fileName,
+                mime: media.mime,
+                width: media.width,
+                height: media.height,
+              },
+            ]);
+          } else {
+            const dur = media.duration && media.duration > 0 ? media.duration : MAX_DURATION_SECONDS;
+            setItems([
+              {
+                id: newId(),
+                mediaType: 'video',
+                uri: media.uri,
+                fileName: media.fileName,
+                mime: media.mime,
+                width: media.width,
+                height: media.height,
+                duration: dur,
+                trimStartSec: media.trimStartSec ?? 0,
+                trimEndSec: media.trimEndSec ?? dur,
+                thumbUri: draft.thumbUri ?? null,
+              },
+            ]);
+          }
+        }
+      }
+
+      return () => {
+        setReelPlaybackGate('post-reel', false);
+        setReelPlaybackGate('post-reel-nav', false);
+      };
     }, [])
   );
 
@@ -147,6 +216,73 @@ export default function PostReelScreen() {
       return { ...draft, thumbUri: thumb };
     },
     [generateThumbnail]
+  );
+
+  const maybePromptVideoAudio = useCallback(async (draft: Extract<MediaDraft, { mediaType: 'video' }>) => {
+    const hasAudio = await probeVideoHasAudio(draft.uri);
+    if (hasAudio) setAudioPromptVisible(true);
+  }, []);
+
+  const handleAudioChoice = useCallback(
+    async (choice: VideoAudioChoice) => {
+      if (choice === 'keep') {
+        setAudioPromptVisible(false);
+        return;
+      }
+
+      if (choice === 'music') {
+        setAudioPromptVisible(false);
+        setOriginalAudioVolume(1);
+        setSoundVolume(0.45);
+        setOpenSoundOnMount(true);
+        return;
+      }
+
+      const video = items.length === 1 && items[0].mediaType === 'video' ? items[0] : null;
+      if (!video) {
+        setAudioPromptVisible(false);
+        return;
+      }
+
+      setAudioPromptBusy(true);
+      try {
+        const videoUrl = await uploadReelExtractTemp({
+          uri: video.uri,
+          fileName: video.fileName,
+          contentType: video.mime,
+        });
+        const { sound } = await api.reels.extractSound({
+          video_url: videoUrl,
+          title: 'Extracted audio',
+          duration_sec: video.duration,
+        });
+        setAudioPromptVisible(false);
+        Alert.alert(
+          'Audio extracted',
+          'Saved to My uploads. Use it as this reel’s music, or keep the video’s original sound?',
+          [
+            {
+              text: 'Use as music',
+              onPress: () => {
+                setSelectedSound(sound);
+                setOriginalAudioVolume(1);
+                setSoundVolume(0.45);
+                const end = Math.min(sound.duration_sec ?? video.duration, video.duration);
+                setSoundStartSec(0);
+                setSoundEndSec(end > 0 ? end : video.duration);
+              },
+            },
+            { text: 'Keep video sound', style: 'cancel' },
+          ]
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Could not extract audio';
+        Alert.alert('Extract failed', message);
+      } finally {
+        setAudioPromptBusy(false);
+      }
+    },
+    [items]
   );
 
   const singleVideo = items.length === 1 && items[0].mediaType === 'video' ? items[0] : null;
@@ -227,7 +363,10 @@ export default function PostReelScreen() {
     if (firstVideo?.mediaType === 'video') {
       setThumbUri(firstVideo.thumbUri ?? null);
     }
-  }, [assetToDraft]);
+    if (drafts.length === 1 && drafts[0].mediaType === 'video') {
+      void maybePromptVideoAudio(drafts[0]);
+    }
+  }, [assetToDraft, maybePromptVideoAudio]);
 
   const recordVideo = useCallback(async () => {
     const cam = await ImagePicker.requestCameraPermissionsAsync();
@@ -244,9 +383,12 @@ export default function PostReelScreen() {
     const draft = await assetToDraft(result.assets[0]);
     if (draft) {
       setItems([draft]);
-      if (draft.mediaType === 'video') setThumbUri(draft.thumbUri ?? null);
+      if (draft.mediaType === 'video') {
+        setThumbUri(draft.thumbUri ?? null);
+        void maybePromptVideoAudio(draft);
+      }
     }
-  }, [assetToDraft]);
+  }, [assetToDraft, maybePromptVideoAudio]);
 
   const handleVideoChange = useCallback((patch: Partial<ReelVideoEditState>) => {
     setItems((prev) => {
@@ -275,7 +417,77 @@ export default function PostReelScreen() {
     setSelectedSound(null);
     setSoundStartSec(0);
     setSoundEndSec(0);
+    setOriginalAudioVolume(1);
+    setSoundVolume(0.45);
+    setScheduleEnabled(false);
+    const d = new Date();
+    d.setHours(d.getHours() + 2, 0, 0, 0);
+    setScheduleDate(d);
+    setAudioPromptVisible(false);
+    setAudioPromptBusy(false);
+    setOpenSoundOnMount(false);
   }, []);
+
+  const buildUploadDraft = useCallback((): ReelUploadDraft | null => {
+    if (!items.length) return null;
+    let scheduled_publish_at: string | undefined;
+    if (scheduleEnabled) {
+      if (scheduleDate.getTime() > Date.now()) {
+        scheduled_publish_at = scheduleDate.toISOString();
+      }
+    }
+    return {
+      items: items.map((item) => ({
+        uri: item.uri,
+        fileName: item.fileName,
+        mime: item.mime,
+        mediaType: item.mediaType,
+        width: item.width,
+        height: item.height,
+        duration: item.mediaType === 'video' ? item.duration : undefined,
+        trimStartSec: item.mediaType === 'video' ? item.trimStartSec : undefined,
+        trimEndSec: item.mediaType === 'video' ? item.trimEndSec : undefined,
+        thumbUri:
+          item.mediaType === 'video' ? item.thumbUri ?? thumbUri : item.uri,
+      })),
+      thumbUri,
+      caption,
+      visibility,
+      group_id: visibility === 'group' && groupId ? groupId : undefined,
+      ...(selectedSound
+        ? {
+            sound_id: selectedSound.id,
+            sound_start_sec: soundStartSec,
+            original_audio_volume: originalAudioVolume,
+            sound_volume: soundVolume,
+          }
+        : {}),
+      ...(scheduled_publish_at ? { scheduled_publish_at } : {}),
+    };
+  }, [
+    items,
+    thumbUri,
+    caption,
+    visibility,
+    groupId,
+    selectedSound,
+    soundStartSec,
+    originalAudioVolume,
+    soundVolume,
+    scheduleEnabled,
+    scheduleDate,
+  ]);
+
+  const saveDraft = useCallback(async () => {
+    const draft = buildUploadDraft();
+    if (!draft) return;
+    try {
+      await saveReelComposeDraft(draft, caption, selectedSound);
+      Alert.alert('Draft saved', 'Open it later from your profile menu.');
+    } catch (err) {
+      Alert.alert('Could not save draft', err instanceof Error ? err.message : 'Try again');
+    }
+  }, [buildUploadDraft, caption, selectedSound]);
 
   const upload = useCallback(async () => {
     if (!items.length) return;
@@ -283,35 +495,17 @@ export default function PostReelScreen() {
       Alert.alert('Choose a group', 'Select which group can see this reel.');
       return;
     }
+    if (scheduleEnabled) {
+      if (scheduleDate.getTime() <= Date.now()) {
+        Alert.alert('Invalid schedule', 'Pick a future date and time.');
+        return;
+      }
+    }
+    const draft = buildUploadDraft();
+    if (!draft) return;
     setIsQueuing(true);
     try {
-      enqueueReelUpload({
-        items: items.map((item) => ({
-          uri: item.uri,
-          fileName: item.fileName,
-          mime: item.mime,
-          mediaType: item.mediaType,
-          width: item.width,
-          height: item.height,
-          duration: item.mediaType === 'video' ? item.duration : undefined,
-          trimStartSec: item.mediaType === 'video' ? item.trimStartSec : undefined,
-          trimEndSec: item.mediaType === 'video' ? item.trimEndSec : undefined,
-          thumbUri:
-            item.mediaType === 'video'
-              ? item.thumbUri ?? thumbUri
-              : item.uri,
-        })),
-        caption,
-        visibility,
-        group_id: visibility === 'group' && groupId ? groupId : undefined,
-        ...(selectedSound && (singleVideo || singleImage)
-          ? {
-              sound_id: selectedSound.id,
-              sound_start_sec: soundStartSec,
-              original_audio_volume: 0,
-            }
-          : {}),
-      });
+      await enqueueReelUpload(draft);
       reset();
       navigation.goBack();
     } catch (err) {
@@ -320,7 +514,7 @@ export default function PostReelScreen() {
     } finally {
       setIsQueuing(false);
     }
-  }, [items, thumbUri, caption, visibility, groupId, selectedSound, soundStartSec, singleVideo, singleImage, reset, navigation]);
+  }, [items.length, visibility, groupId, scheduleEnabled, scheduleDate, buildUploadDraft, reset, navigation]);
 
   if (singleImage) {
     return (
@@ -350,29 +544,54 @@ export default function PostReelScreen() {
 
   if (singleVideo) {
     return (
-      <PostReelVideoComposer
-        video={singleVideo}
-        thumbUri={thumbUri}
-        caption={caption}
-        visibility={visibility}
-        groupId={groupId}
-        groups={groups}
-        selectedSound={selectedSound}
-        soundStartSec={soundStartSec}
-        soundEndSec={soundEndSec}
-        isQueuing={isQueuing}
-        onVideoChange={handleVideoChange}
-        onThumbChange={setThumbUri}
-        onCaptionChange={setCaption}
-        onVisibilityChange={setVisibility}
-        onGroupIdChange={setGroupId}
-        onSoundChange={setSelectedSound}
-        onSoundStartChange={setSoundStartSec}
-        onSoundEndChange={setSoundEndSec}
-        onPost={() => void upload()}
-        onClose={() => navigation.goBack()}
-        onReplaceMedia={() => void pickMedia()}
-      />
+      <>
+        <PostReelVideoComposer
+          video={singleVideo}
+          thumbUri={thumbUri}
+          caption={caption}
+          visibility={visibility}
+          groupId={groupId}
+          groups={groups}
+          selectedSound={selectedSound}
+          soundStartSec={soundStartSec}
+          soundEndSec={soundEndSec}
+          originalAudioVolume={originalAudioVolume}
+          soundVolume={soundVolume}
+          scheduleEnabled={scheduleEnabled}
+          scheduleDate={scheduleDate}
+          isQueuing={isQueuing}
+          openSoundOnMount={openSoundOnMount}
+          onSoundPickerOpened={() => setOpenSoundOnMount(false)}
+          onVideoChange={handleVideoChange}
+          onThumbChange={setThumbUri}
+          onCaptionChange={setCaption}
+          onVisibilityChange={setVisibility}
+          onGroupIdChange={setGroupId}
+          onSoundChange={(sound) => {
+            setSelectedSound(sound);
+            if (sound) {
+              setOriginalAudioVolume((v) => (v <= 0 ? 1 : v));
+              setSoundVolume((v) => (v >= 1 ? 0.45 : v));
+            }
+          }}
+          onSoundStartChange={setSoundStartSec}
+          onSoundEndChange={setSoundEndSec}
+          onOriginalAudioVolumeChange={setOriginalAudioVolume}
+          onSoundVolumeChange={setSoundVolume}
+          onScheduleEnabledChange={setScheduleEnabled}
+          onScheduleDateChange={setScheduleDate}
+          onPost={() => void upload()}
+          onSaveDraft={() => void saveDraft()}
+          onClose={() => navigation.goBack()}
+          onReplaceMedia={() => void pickMedia()}
+        />
+        <VideoAudioPrompt
+          visible={audioPromptVisible}
+          busy={audioPromptBusy}
+          onChoose={(choice) => void handleAudioChoice(choice)}
+          onDismiss={() => setAudioPromptVisible(false)}
+        />
+      </>
     );
   }
 

@@ -1,26 +1,38 @@
 import React from 'react';
-import { Platform, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Image, Platform, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import { stripMediaFragment } from '../../lib/reelPlayback';
 
 type Props = {
   uri: string;
+  posterUri?: string | null;
   style?: StyleProp<ViewStyle>;
 };
 
-/** Web-only first-frame poster while the stream loads. */
-export function WebVideoPoster({ uri, style }: Props) {
-  if (Platform.OS !== 'web' || !uri) return null;
-  const src = uri.includes('#') ? uri : `${uri}#t=0.1`;
+/** Web-only poster while the stream loads (uses thumbnail — no `#t=` cache errors). */
+export function WebVideoPoster({ uri, posterUri, style }: Props) {
+  if (Platform.OS !== 'web') return null;
+  const thumb = posterUri ?? stripMediaFragment(uri);
+  if (!thumb) return null;
+
+  if (posterUri) {
+    return (
+      <View style={[styles.fill, style]} pointerEvents="none">
+        <Image source={{ uri: posterUri }} style={styles.img} resizeMode="cover" />
+      </View>
+    );
+  }
+
   return (
     <View style={[styles.fill, style]} pointerEvents="none">
       {React.createElement('video', {
-        src,
+        src: thumb,
         muted: true,
         playsInline: true,
         preload: 'metadata',
         style: {
           width: '100%',
           height: '100%',
-          objectFit: 'contain',
+          objectFit: 'cover',
           display: 'block',
           backgroundColor: '#000',
         },
@@ -30,7 +42,6 @@ export function WebVideoPoster({ uri, style }: Props) {
 }
 
 const styles = StyleSheet.create({
-  fill: {
-    ...StyleSheet.absoluteFill,
-  },
+  fill: { ...StyleSheet.absoluteFill },
+  img: { width: '100%', height: '100%' },
 });

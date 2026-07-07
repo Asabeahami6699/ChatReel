@@ -4,3 +4,8 @@ export async function probeVideoDimensions(
 ): Promise<{ width: number; height: number; duration?: number } | null> {
   return null;
 }
+
+/** Best-effort check for an audio track in a local video file. */
+export async function probeVideoHasAudio(_uri: string): Promise<boolean> {
+  return true;
+}

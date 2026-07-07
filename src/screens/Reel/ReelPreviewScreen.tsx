@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api, ApiError, type ReelDTO } from '../../lib/api';
 import type { RootStackParamList } from '../../navigation/rootNavigation';
 import { ReelMediaViewer } from './ReelMediaViewer';
+import { useReelPlaybackGate } from '../../hooks/useReelPlaybackGate';
 
 export default function ReelPreviewScreen() {
   const route = useRoute<RouteProp<RootStackParamList, 'ReelPreview'>>();
@@ -21,6 +22,8 @@ export default function ReelPreviewScreen() {
   const [reel, setReel] = useState<ReelDTO | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [shouldPlay, setShouldPlay] = useState(true);
+
+  useReelPlaybackGate('reel-preview', true);
 
   useFocusEffect(
     useCallback(() => {

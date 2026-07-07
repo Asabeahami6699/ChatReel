@@ -13,6 +13,7 @@ export function useReelComments(reelId: string | null) {
   const removeComment = useReelCommentsStore((s) => s.remove);
   const setDraft = useReelCommentsStore((s) => s.setDraft);
   const setReplyToId = useReelCommentsStore((s) => s.setReplyTo);
+  const toggleLikeComment = useReelCommentsStore((s) => s.toggleLike);
   const resetReel = useReelCommentsStore((s) => s.resetReel);
 
   const reload = useCallback(
@@ -47,6 +48,14 @@ export function useReelComments(reelId: string | null) {
       if (reelId) setReplyToId(reelId, commentId);
     },
     [reelId, setReplyToId]
+  );
+
+  const toggleLike = useCallback(
+    (commentId: string) => {
+      if (!reelId) return Promise.resolve();
+      return toggleLikeComment(reelId, commentId);
+    },
+    [reelId, toggleLikeComment]
   );
 
   const updateDraft = useCallback(
@@ -96,5 +105,6 @@ export function useReelComments(reelId: string | null) {
     remove,
     setDraft: updateDraft,
     setReplyTo,
+    toggleLike,
   };
 }

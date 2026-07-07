@@ -120,7 +120,7 @@ export function ReelEndScreen({ ownerName, durationMs = REEL_END_SCREEN_MS }: Pr
 const styles = StyleSheet.create({
   overlay: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(0,0,0,0.72)',
+    backgroundColor: '#000',
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 20,
@@ -129,10 +129,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 24,
     paddingVertical: 20,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.2)',
     maxWidth: '82%',
   },
   gif: {
@@ -152,9 +148,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 6,
     borderRadius: 20,
-    backgroundColor: 'rgba(0,122,255,0.35)',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(0,122,255,0.55)',
+    backgroundColor: 'rgba(255,255,255,0.12)',
     maxWidth: '100%',
   },
   owner: {

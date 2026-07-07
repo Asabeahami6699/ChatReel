@@ -22,6 +22,9 @@ import { ReelProfileGrid } from './ReelProfileGrid';
 import { useReelGridDeleteHandlers } from './useReelGridDelete';
 import { useReelProfilePosts } from './useReelProfilePosts';
 import { openPostReelCompose } from '../../lib/reelPlaybackBridge';
+import type { SavedReelComposeDraft } from '../../lib/reelComposeDraftStore';
+import { ReelProfileMenuFloat } from './ReelProfileMenuFloat';
+import { useReelPlaybackGate } from '../../hooks/useReelPlaybackGate';
 
 interface Props {
   reel: ReelDTO;
@@ -33,6 +36,7 @@ export default function ReelProfileSheet({ reel, onClose, onFollowStateChange }:
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
   const { width: windowWidth } = useWindowDimensions();
+  useReelPlaybackGate('profile-sheet', true);
   const usePhoneLayout = Platform.OS === 'web' && windowWidth > REEL_PHONE_MAX_WIDTH + 64;
   const contentWidth = usePhoneLayout ? REEL_PHONE_MAX_WIDTH : windowWidth;
   const bottomPad = insets.bottom;
@@ -45,6 +49,7 @@ export default function ReelProfileSheet({ reel, onClose, onFollowStateChange }:
   const [friendshipId, setFriendshipId] = useState<string | null>(null);
   const [followBusy, setFollowBusy] = useState(false);
   const [immersiveIndex, setImmersiveIndex] = useState<number | null>(null);
+  useReelPlaybackGate('profile-sheet-immersive', immersiveIndex != null);
   const [followerCount, setFollowerCount] = useState(0);
   const [followersLoading, setFollowersLoading] = useState(true);
 
@@ -174,18 +179,6 @@ export default function ReelProfileSheet({ reel, onClose, onFollowStateChange }:
             <TouchableOpacity style={styles.iconBtn} onPress={refresh} disabled={refreshing}>
               <Ionicons name="refresh" size={20} color={refreshing ? '#666' : '#fff'} />
             </TouchableOpacity>
-            {canDeleteReels && (
-              <TouchableOpacity
-                style={styles.uploadBtn}
-                onPress={() => {
-                  onClose();
-                  openPostReelCompose();
-                  navigation.navigate('PostReel');
-                }}
-              >
-                <Ionicons name="add" size={18} color="#fff" />
-              </TouchableOpacity>
-            )}
           </View>
         </View>
 
@@ -248,6 +241,22 @@ export default function ReelProfileSheet({ reel, onClose, onFollowStateChange }:
             onRefresh={refresh}
           />
         )}
+
+        {canDeleteReels ? (
+          <ReelProfileMenuFloat
+            topOffset={insets.top + 8}
+            onNewReel={() => {
+              onClose();
+              openPostReelCompose();
+              navigation.navigate('PostReel');
+            }}
+            onOpenDraft={(draft: SavedReelComposeDraft) => {
+              onClose();
+              openPostReelCompose(draft);
+              navigation.navigate('PostReel');
+            }}
+          />
+        ) : null}
 
         <Modal visible={immersiveIndex != null} animationType="slide" onRequestClose={() => setImmersiveIndex(null)}>
           {immersiveIndex != null && (
@@ -319,8 +328,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   username: { color: '#fff', fontWeight: '700', fontSize: 17, flex: 1, textAlign: 'center' },
-  profileHeader: { flexDirection: 'row', paddingHorizontal: 20, paddingBottom: 16, alignItems: 'center' },
-  avatar: { width: 80, height: 80, borderRadius: 40, marginRight: 16 },
+  profileHeader: { flexDirection: 'row', paddingHorizontal: 16, paddingBottom: 12, alignItems: 'center' },
+  avatar: { width: 56, height: 56, borderRadius: 28, marginRight: 12 },
   avatarFallback: { backgroundColor: '#6366f1', justifyContent: 'center', alignItems: 'center' },
   avatarFallbackText: { color: '#fff', fontSize: 28, fontWeight: '700' },
   stats: { flex: 1, flexDirection: 'row', justifyContent: 'space-around' },

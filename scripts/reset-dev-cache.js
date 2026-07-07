@@ -42,4 +42,4 @@ try {
   // adb not available
 }
 
-console.log('[reset] done — run: npm start -- --clear');
+console.log('[reset] done — stop all Metro terminals, then run: npm run android');

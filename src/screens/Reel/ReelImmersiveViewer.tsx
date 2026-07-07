@@ -30,7 +30,7 @@ import { ReelSoundStrip } from './ReelSoundStrip';
 import { ReelBrandBadge } from './ReelBrandBadge';
 import { ReelEndScreen } from './ReelEndScreen';
 import { REEL_ACCENT, REEL_END_SCREEN_MS, reelBottomLayout } from './reelTheme';
-import { registerReelFeedPauseHandler } from '../../lib/reelPlaybackBridge';
+import { registerReelFeedPauseHandler, useReelPlaybackGateActive } from '../../lib/reelPlaybackBridge';
 
 type Props = {
   reels: ReelDTO[];
@@ -74,6 +74,13 @@ export function ReelImmersiveViewer({
   const [openComments, setOpenComments] = useState<ReelDTO | null>(null);
   const [openShare, setOpenShare] = useState<ReelDTO | null>(null);
   const [openProfile, setOpenProfile] = useState<ReelDTO | null>(null);
+
+  const gateActive = useReelPlaybackGateActive();
+  const sheetOpen = Boolean(openComments || openShare || openProfile);
+  const mediaShouldPlay = isPlaying && !sheetOpen && !gateActive;
+  const mediaShouldPlayRef = useRef(mediaShouldPlay);
+  mediaShouldPlayRef.current = mediaShouldPlay;
+
   const [endScreenReelId, setEndScreenReelId] = useState<string | null>(null);
   const [badgePlayCycle, setBadgePlayCycle] = useState(0);
   const endScreenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -136,7 +143,7 @@ export function ReelImmersiveViewer({
     };
   }, []);
 
-  const pauseAllVideos = useCallback(async () => {
+  const pausePlayers = useCallback(async () => {
     await Promise.all(
       Object.values(videos.current).map(async (player) => {
         if (!player) return;
@@ -147,7 +154,25 @@ export function ReelImmersiveViewer({
         }
       })
     );
+  }, []);
+
+  const pauseAllVideos = useCallback(async () => {
+    await pausePlayers();
     setIsPlaying(false);
+  }, [pausePlayers]);
+
+  const openSheet = useCallback(
+    (setter: (reel: ReelDTO) => void, reel: ReelDTO) => {
+      void pausePlayers();
+      setter(reel);
+    },
+    [pausePlayers]
+  );
+
+  const closeSheets = useCallback(() => {
+    setOpenComments(null);
+    setOpenShare(null);
+    setOpenProfile(null);
   }, []);
 
   useEffect(() => {
@@ -317,14 +342,12 @@ export function ReelImmersiveViewer({
   }, [initialIndex]);
 
   useEffect(() => {
-    if (openComments || openShare || openProfile) {
-      void getActivePlayer(activeReelIdRef.current)?.pauseAsync();
-      setIsPlaying(false);
-    } else if (activeReelIdRef.current) {
+    if (sheetOpen || gateActive) {
+      void pausePlayers();
+    } else if (isPlaying && activeReelIdRef.current) {
       void playActiveReel(activeReelIdRef.current);
-      setIsPlaying(true);
     }
-  }, [openComments, openShare, openProfile, playActiveReel, getActivePlayer]);
+  }, [sheetOpen, gateActive, isPlaying, pausePlayers, playActiveReel]);
 
   const onViewableItemsChanged = useRef(
     ({ viewableItems }: { viewableItems: { index: number | null; item: ReelDTO }[] }) => {
@@ -337,8 +360,10 @@ export function ReelImmersiveViewer({
       setEndScreenReelId(null);
       if (endScreenTimerRef.current) clearTimeout(endScreenTimerRef.current);
       if (prevId !== v.item.id) setBadgePlayCycle((c) => c + 1);
-      setIsPlaying(true);
-      void playActiveReel(v.item.id);
+      if (mediaShouldPlayRef.current) {
+        setIsPlaying(true);
+        void playActiveReel(v.item.id);
+      }
       if (!viewedReelIds.current.has(v.item.id)) {
         viewedReelIds.current.add(v.item.id);
         api.reels.view(v.item.id).catch(() => undefined);
@@ -367,7 +392,7 @@ export function ReelImmersiveViewer({
               frameWidth={reelWidth}
               frameHeight={reelHeight}
               isFocused
-              isPlaying={isPlaying}
+              isPlaying={mediaShouldPlay}
               isMuted={isMuted}
               isReady={readyReelIds.has(item.id)}
               onReady={handleVideoReady}
@@ -418,7 +443,7 @@ export function ReelImmersiveViewer({
                 {disableProfileNavigation ? (
                   <Text style={styles.username}>@{authorLabel(item)}</Text>
                 ) : (
-                  <TouchableOpacity onPress={() => setOpenProfile(item)}>
+                  <TouchableOpacity onPress={() => openSheet(setOpenProfile, item)}>
                     <Text style={styles.username}>@{authorLabel(item)}</Text>
                   </TouchableOpacity>
                 )}
@@ -444,11 +469,11 @@ export function ReelImmersiveViewer({
               <Ionicons name={isLiked ? 'heart' : 'heart-outline'} size={26} color={isLiked ? REEL_ACCENT : '#fff'} />
               <Text style={styles.actionText}>{formatCount(item.like_count)}</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.actionButton} onPress={() => setOpenComments(item)}>
+            <TouchableOpacity style={styles.actionButton} onPress={() => openSheet(setOpenComments, item)}>
               <Ionicons name="chatbubble-ellipses-outline" size={26} color="#fff" />
               <Text style={styles.actionText}>{formatCount(item.comment_count)}</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.actionButton} onPress={() => setOpenShare(item)}>
+            <TouchableOpacity style={styles.actionButton} onPress={() => openSheet(setOpenShare, item)}>
               <Ionicons name="paper-plane-outline" size={24} color="#fff" />
               <Text style={styles.actionText}>Share</Text>
             </TouchableOpacity>
@@ -515,14 +540,14 @@ export function ReelImmersiveViewer({
       </TouchableOpacity>
       </View>
 
-      <Modal visible={!!openComments} animationType="slide" transparent onRequestClose={() => setOpenComments(null)}>
+      <Modal visible={!!openComments} animationType="slide" transparent onRequestClose={closeSheets}>
         <View style={styles.sheetBackdrop}>
-          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setOpenComments(null)} />
+          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={closeSheets} />
           <View style={styles.sheet}>
             {openComments && (
               <ReelCommentSheet
                 reelId={openComments.id}
-                onClose={() => setOpenComments(null)}
+                onClose={closeSheets}
                 onCommentAdded={() =>
                   patchReel(openComments.id, { comment_count: openComments.comment_count + 1 })
                 }
@@ -532,20 +557,20 @@ export function ReelImmersiveViewer({
         </View>
       </Modal>
 
-      <Modal visible={!!openShare} animationType="slide" transparent onRequestClose={() => setOpenShare(null)}>
+      <Modal visible={!!openShare} animationType="slide" transparent onRequestClose={closeSheets}>
         <View style={styles.sheetBackdrop}>
-          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setOpenShare(null)} />
+          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={closeSheets} />
           <View style={styles.sheet}>
-            {openShare && <ReelShareSheet reel={openShare} onClose={() => setOpenShare(null)} />}
+            {openShare && <ReelShareSheet reel={openShare} onClose={closeSheets} />}
           </View>
         </View>
       </Modal>
 
-      <Modal visible={!!openProfile && !disableProfileNavigation} animationType="slide" transparent onRequestClose={() => setOpenProfile(null)}>
+      <Modal visible={!!openProfile && !disableProfileNavigation} animationType="slide" transparent onRequestClose={closeSheets}>
         <View style={[styles.sheetBackdrop, usePhoneFrame && styles.sheetBackdropCentered]}>
-          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={() => setOpenProfile(null)} />
+          <TouchableOpacity style={StyleSheet.absoluteFill} onPress={closeSheets} />
           <View style={[styles.sheet, usePhoneFrame && styles.profileSheetPhone]}>
-            {openProfile && <ReelProfileSheet reel={openProfile} onClose={() => setOpenProfile(null)} />}
+            {openProfile && <ReelProfileSheet reel={openProfile} onClose={closeSheets} />}
           </View>
         </View>
       </Modal>

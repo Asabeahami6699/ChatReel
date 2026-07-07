@@ -3,6 +3,12 @@ import { uploadReelImage, uploadReelThumbnail, uploadReelVideo } from './reelUpl
 import { isImageMime } from './reelPlayback';
 import { probeVideoDimensions } from './videoDimensions';
 import { notifyRealtimeTopic } from './realtimeHub';
+import { loadReelUploadState, saveReelUploadState } from './reelUploadPersistence';
+import {
+  clearReelUploadMedia,
+  hasReelUploadMedia,
+  stashReelUploadDraft,
+} from './reelUploadMediaStore';
 
 /** Default display length for photo reels with music (seconds). */
 const IMAGE_REEL_CLIP_SEC = 15;
@@ -42,9 +48,18 @@ export type ReelUploadDraft = {
   sound_id?: string;
   sound_start_sec?: number;
   original_audio_volume?: number;
+  sound_volume?: number;
+  scheduled_publish_at?: string;
 };
 
 export type ReelUploadStatus = 'queued' | 'uploading' | 'publishing' | 'done' | 'error';
+
+export type ReelUploadCheckpoint = {
+  videoStoragePath?: string;
+  videoPublicUrl?: string;
+  thumbnailPublicUrl?: string;
+  reelId?: string;
+};
 
 export type ReelUploadTask = {
   id: string;
@@ -55,30 +70,64 @@ export type ReelUploadTask = {
   updatedAt: number;
   error?: string;
   reelId?: string;
+  resumable?: boolean;
 };
 
 type Listener = (tasks: ReelUploadTask[]) => void;
 
 const tasks = new Map<string, ReelUploadTask>();
 const taskDrafts = new Map<string, ReelUploadDraft>();
+const checkpoints = new Map<string, ReelUploadCheckpoint>();
 const queue: Array<{ id: string; draft: ReelUploadDraft }> = [];
 const listeners = new Set<Listener>();
-/** Run multiple reel uploads in parallel — no waiting for the previous post to finish. */
 
 function soundPublishFields(draft: ReelUploadDraft) {
   if (!draft.sound_id) return {};
   return {
     sound_id: draft.sound_id,
     sound_start_sec: draft.sound_start_sec ?? 0,
-    original_audio_volume: draft.original_audio_volume ?? 0,
+    original_audio_volume: draft.original_audio_volume ?? 1,
+    sound_volume: draft.sound_volume ?? 0.45,
   };
 }
+
+function schedulePublishFields(draft: ReelUploadDraft) {
+  if (!draft.scheduled_publish_at) return {};
+  return { scheduled_publish_at: draft.scheduled_publish_at };
+}
+
 const MAX_PARALLEL_UPLOADS = 3;
 let activeUploads = 0;
+let initPromise: Promise<void> | null = null;
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
 
 function emit() {
   const list = Array.from(tasks.values()).sort((a, b) => b.createdAt - a.createdAt);
   listeners.forEach((listener) => listener(list));
+  schedulePersist();
+}
+
+function schedulePersist() {
+  if (persistTimer) clearTimeout(persistTimer);
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    void persistQueueNow();
+  }, 400);
+}
+
+async function persistQueueNow() {
+  const snapshot: Parameters<typeof saveReelUploadState>[0] = {
+    tasks: Array.from(tasks.values()),
+    drafts: Object.fromEntries(taskDrafts.entries()),
+    checkpoints: Object.fromEntries(checkpoints.entries()),
+  };
+  await saveReelUploadState(snapshot);
+}
+
+function setCheckpoint(id: string, patch: Partial<ReelUploadCheckpoint>) {
+  const existing = checkpoints.get(id) ?? {};
+  checkpoints.set(id, { ...existing, ...patch });
+  schedulePersist();
 }
 
 function updateTask(id: string, patch: Partial<ReelUploadTask>) {
@@ -117,8 +166,9 @@ async function waitForReelModeration(
 }
 
 async function finalizePublishedReel(id: string, reelId: string) {
+  setCheckpoint(id, { reelId });
   setProgress(id, 92, 'Reviewing content...');
-  updateTask(id, { status: 'publishing', stage: 'Reviewing content...' });
+  updateTask(id, { status: 'publishing', stage: 'Reviewing content...', reelId });
   const mod = await waitForReelModeration(reelId, (stage) => setProgress(id, 94, stage));
   if (mod === 'rejected') {
     throw new Error('This reel did not meet our community guidelines.');
@@ -135,6 +185,10 @@ async function finalizePublishedReel(id: string, reelId: string) {
     progress: 100,
     reelId,
   });
+  await clearReelUploadMedia(id);
+  checkpoints.delete(id);
+  taskDrafts.delete(id);
+  await persistQueueNow();
 }
 
 function createTask(): ReelUploadTask {
@@ -146,6 +200,7 @@ function createTask(): ReelUploadTask {
     progress: 0,
     createdAt: Date.now(),
     updatedAt: Date.now(),
+    resumable: true,
   };
 }
 
@@ -160,7 +215,6 @@ function pumpWorkers() {
         updateTask(item.id, {
           status: 'error',
           stage: 'Failed',
-          progress: 0,
           error: message,
         });
       })
@@ -171,13 +225,27 @@ function pumpWorkers() {
   }
 }
 
+function pendingVideoPath(taskId: string, ext: string): string {
+  return `pending/${taskId}/video.${ext}`;
+}
+
+function pendingThumbPath(taskId: string): string {
+  return `pending/${taskId}/thumb.jpg`;
+}
+
 async function processOne(item: { id: string; draft: ReelUploadDraft }) {
   const { id, draft } = item;
+  const checkpoint = checkpoints.get(id) ?? {};
   const { caption, visibility, group_id: groupId } = draft;
   const publishVisibility =
     visibility === 'group' && groupId
       ? { visibility: 'group' as const, group_id: groupId }
       : { visibility };
+
+  if (checkpoint.reelId) {
+    await finalizePublishedReel(id, checkpoint.reelId);
+    return;
+  }
 
   if (draft.items && draft.items.length > 1) {
     await processCarouselUpload(id, draft);
@@ -204,18 +272,26 @@ async function processOne(item: { id: string; draft: ReelUploadDraft }) {
 
   const isImage = video.mediaType === 'image' || isImageMime(video.mime);
 
-  setProgress(id, 2, 'Preparing...');
+  setProgress(id, checkpoint.videoPublicUrl ? 78 : 2, 'Preparing...');
 
   if (isImage) {
     updateTask(id, { status: 'uploading', stage: 'Uploading photo...', progress: 5 });
-    const imageUrl = await uploadReelImage({
-      uri: video.uri,
-      fileName: video.fileName,
-      contentType: video.mime,
-      onProgress: (loaded, total) => {
-        if (total > 0) setProgress(id, 5 + (loaded / total) * 80, 'Uploading photo...');
-      },
-    });
+    const imageExt = 'jpg';
+    const imageUrl =
+      checkpoint.videoPublicUrl ??
+      (await uploadReelImage({
+        uri: video.uri,
+        fileName: video.fileName,
+        contentType: video.mime,
+        storagePath: `pending/${id}/image.${imageExt}`,
+        upsert: true,
+        onProgress: (loaded, total) => {
+          if (total > 0) setProgress(id, 5 + (loaded / total) * 80, 'Uploading photo...');
+        },
+      }));
+    if (!checkpoint.videoPublicUrl) {
+      setCheckpoint(id, { videoPublicUrl: imageUrl });
+    }
 
     setProgress(id, 90, 'Publishing reel...');
     updateTask(id, { status: 'publishing' });
@@ -227,6 +303,7 @@ async function processOne(item: { id: string; draft: ReelUploadDraft }) {
       duration: IMAGE_REEL_CLIP_SEC,
       ...publishVisibility,
       ...soundPublishFields(draft),
+      ...schedulePublishFields(draft),
       width: video.width,
       height: video.height,
     });
@@ -238,45 +315,85 @@ async function processOne(item: { id: string; draft: ReelUploadDraft }) {
   let width = video.width;
   let height = video.height;
   let duration = video.duration;
+  const ext = (video.fileName || video.uri).split('.').pop()?.toLowerCase() || 'mp4';
+  const videoStoragePath = checkpoint.videoStoragePath ?? pendingVideoPath(id, ext);
 
-  updateTask(id, { status: 'uploading', stage: 'Uploading video...', progress: 5 });
-
-  const probePromise =
-    !width || !height || !duration
-      ? probeVideoDimensions(video.uri).catch(() => null)
-      : Promise.resolve(null);
-
-  const videoPromise = uploadReelVideo({
-    uri: video.uri,
-    fileName: video.fileName,
-    contentType: video.mime,
-    onProgress: (loaded, total) => {
-      if (total > 0) {
-        const pct = 5 + (loaded / total) * 70;
-        setProgress(id, pct, 'Uploading video...');
-      }
-    },
+  updateTask(id, {
+    status: 'uploading',
+    stage: checkpoint.videoPublicUrl ? 'Resuming upload...' : 'Uploading video...',
+    progress: checkpoint.videoPublicUrl ? 75 : 5,
   });
 
-  const thumbPromise = thumbUri
-    ? uploadReelThumbnail({ uri: thumbUri }).catch(() => undefined)
-    : Promise.resolve<string | undefined>(undefined);
+  const needsProbe = !width || !height || !duration;
+  const probePromise = needsProbe
+    ? probeVideoDimensions(video.uri).catch(() => null)
+    : Promise.resolve(null);
 
-  const [probed, videoUrl, thumbnailUrl] = await Promise.all([
-    probePromise,
-    videoPromise,
-    thumbPromise,
-  ]);
+  let videoUrl = checkpoint.videoPublicUrl;
+  if (!videoUrl) {
+    const uploadPromise = uploadReelVideo({
+      uri: video.uri,
+      fileName: video.fileName,
+      contentType: video.mime,
+      storagePath: videoStoragePath,
+      upsert: true,
+      onProgress: (loaded, total) => {
+        if (total > 0) {
+          const pct = 5 + (loaded / total) * 70;
+          setProgress(id, pct, 'Uploading video...');
+        }
+      },
+    });
 
-  width = width ?? probed?.width;
-  height = height ?? probed?.height;
-  duration = duration ?? probed?.duration;
+    const thumbPromise = thumbUri
+      ? checkpoint.thumbnailPublicUrl
+        ? Promise.resolve(checkpoint.thumbnailPublicUrl)
+        : uploadReelThumbnail({
+            uri: thumbUri,
+            storagePath: pendingThumbPath(id),
+            upsert: true,
+          }).catch(() => undefined)
+      : Promise.resolve<string | undefined>(checkpoint.thumbnailPublicUrl);
+
+    const [probed, uploadedVideoUrl, thumbnailUrl] = await Promise.all([
+      probePromise,
+      uploadPromise,
+      thumbPromise,
+    ]);
+
+    videoUrl = uploadedVideoUrl;
+    setCheckpoint(id, {
+      videoStoragePath,
+      videoPublicUrl: videoUrl,
+      ...(thumbnailUrl ? { thumbnailPublicUrl: thumbnailUrl } : {}),
+    });
+
+    width = width ?? probed?.width;
+    height = height ?? probed?.height;
+    duration = duration ?? probed?.duration;
+  } else {
+    const probed = await probePromise;
+    width = width ?? probed?.width;
+    height = height ?? probed?.height;
+    duration = duration ?? probed?.duration;
+
+    if (thumbUri && !checkpoint.thumbnailPublicUrl) {
+      const thumbnailUrl = await uploadReelThumbnail({
+        uri: thumbUri,
+        storagePath: pendingThumbPath(id),
+        upsert: true,
+      }).catch(() => undefined);
+      if (thumbnailUrl) {
+        setCheckpoint(id, { thumbnailPublicUrl: thumbnailUrl });
+      }
+    }
+  }
+
+  const thumbnailUrl = checkpoints.get(id)?.thumbnailPublicUrl;
 
   const trimStartSec = video.trimStartSec ?? 0;
   const trimEndSec =
     video.trimEndSec ?? (typeof duration === 'number' ? duration : undefined);
-
-  if (thumbUri) setProgress(id, 78, 'Uploading video & thumbnail...');
 
   setProgress(id, 90, 'Publishing reel...');
   updateTask(id, { status: 'publishing' });
@@ -289,12 +406,13 @@ async function processOne(item: { id: string; draft: ReelUploadDraft }) {
       : safeDuration;
 
   const { reel }: { reel: ReelDTO } = await api.reels.create({
-    video_url: videoUrl,
+    video_url: videoUrl!,
     thumbnail_url: thumbnailUrl,
     caption: caption?.trim() || undefined,
     duration: effectiveDuration,
     ...publishVisibility,
     ...soundPublishFields(draft),
+    ...schedulePublishFields(draft),
     width,
     height,
     trim_start_sec: trimStartSec > 0 ? trimStartSec : undefined,
@@ -323,12 +441,15 @@ async function processCarouselUpload(id: string, draft: ReelUploadDraft) {
       const isImage = media.mediaType === 'image' || isImageMime(media.mime);
       const basePct = 5 + (i / total) * 80;
       const span = 80 / total;
+      const storagePath = `pending/${id}/media-${i}.${isImage ? 'jpg' : 'mp4'}`;
 
       if (isImage) {
         const imageUrl = await uploadReelImage({
           uri: media.uri,
           fileName: media.fileName,
           contentType: media.mime,
+          storagePath,
+          upsert: true,
           onProgress: (loaded, totalBytes) => {
             if (totalBytes > 0) {
               setProgress(id, basePct + (loaded / totalBytes) * span, `Uploading photo ${i + 1}/${total}...`);
@@ -352,6 +473,8 @@ async function processCarouselUpload(id: string, draft: ReelUploadDraft) {
           uri: media.uri,
           fileName: media.fileName,
           contentType: media.mime,
+          storagePath,
+          upsert: true,
           onProgress: (loaded, totalBytes) => {
             if (totalBytes > 0) {
               setProgress(id, basePct + (loaded / totalBytes) * span, `Uploading video ${i + 1}/${total}...`);
@@ -359,7 +482,11 @@ async function processCarouselUpload(id: string, draft: ReelUploadDraft) {
           },
         }),
         media.thumbUri
-          ? uploadReelThumbnail({ uri: media.thumbUri }).catch(() => undefined)
+          ? uploadReelThumbnail({
+              uri: media.thumbUri,
+              storagePath: `pending/${id}/thumb-${i}.jpg`,
+              upsert: true,
+            }).catch(() => undefined)
           : Promise.resolve<string | undefined>(undefined),
       ]);
 
@@ -396,17 +523,21 @@ async function processCarouselUpload(id: string, draft: ReelUploadDraft) {
   const { reel }: { reel: ReelDTO } = await api.reels.create({
     caption: draft.caption?.trim() || undefined,
     ...publishVisibility,
+    ...soundPublishFields(draft),
+    ...schedulePublishFields(draft),
     media: uploaded,
   });
 
   await finalizePublishedReel(id, reel.id);
 }
 
-export function enqueueReelUpload(draft: ReelUploadDraft): ReelUploadTask {
+export async function enqueueReelUpload(draft: ReelUploadDraft): Promise<ReelUploadTask> {
+  await initReelUploadQueue();
   const task = createTask();
   tasks.set(task.id, task);
-  taskDrafts.set(task.id, draft);
-  queue.push({ id: task.id, draft });
+  const persistentDraft = await stashReelUploadDraft(task.id, draft);
+  taskDrafts.set(task.id, persistentDraft);
+  queue.push({ id: task.id, draft: persistentDraft });
   emit();
   pumpWorkers();
   return task;
@@ -418,10 +549,11 @@ export function retryReelUploadTask(taskId: string): boolean {
   if (!task || !draft) return false;
   if (task.status !== 'error') return false;
 
+  const checkpoint = checkpoints.get(taskId);
   updateTask(taskId, {
     status: 'queued',
-    stage: 'Queued for retry',
-    progress: 0,
+    stage: checkpoint?.videoPublicUrl ? 'Resuming upload...' : 'Queued for retry',
+    progress: checkpoint?.videoPublicUrl ? 75 : checkpoint?.reelId ? 92 : 0,
     error: undefined,
   });
   queue.push({ id: taskId, draft });
@@ -438,4 +570,58 @@ export function subscribeReelUploadQueue(listener: Listener): () => void {
 
 export function getReelUploadQueueSnapshot(): ReelUploadTask[] {
   return Array.from(tasks.values()).sort((a, b) => b.createdAt - a.createdAt);
+}
+
+async function resumePersistedTasks() {
+  const state = await loadReelUploadState();
+  if (!state) return;
+
+  for (const task of state.tasks) {
+    if (task.status === 'done') continue;
+
+    const draft = state.drafts[task.id];
+    if (!draft) continue;
+
+    const mediaOk = await hasReelUploadMedia(task.id);
+    if (!mediaOk && !state.checkpoints[task.id]?.videoPublicUrl) {
+      tasks.set(task.id, {
+        ...task,
+        status: 'error',
+        stage: 'Failed',
+        error: 'Upload data was cleared — cannot resume',
+        progress: 0,
+        updatedAt: Date.now(),
+      });
+      continue;
+    }
+
+    const cp = state.checkpoints[task.id];
+    tasks.set(task.id, {
+      ...task,
+      status: 'queued',
+      stage: cp?.reelId
+        ? 'Resuming publish...'
+        : cp?.videoPublicUrl
+          ? 'Resuming upload...'
+          : 'Queued',
+      progress: cp?.reelId ? 92 : cp?.videoPublicUrl ? 75 : task.progress ?? 0,
+      error: undefined,
+      updatedAt: Date.now(),
+    });
+    taskDrafts.set(task.id, draft);
+    if (state.checkpoints[task.id]) {
+      checkpoints.set(task.id, state.checkpoints[task.id]);
+    }
+    queue.push({ id: task.id, draft });
+  }
+
+  emit();
+  pumpWorkers();
+}
+
+export function initReelUploadQueue(): Promise<void> {
+  if (!initPromise) {
+    initPromise = resumePersistedTasks();
+  }
+  return initPromise;
 }

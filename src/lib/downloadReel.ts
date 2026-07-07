@@ -1,16 +1,17 @@
 import { Alert, Platform, Share } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
+import { api } from './api';
 import type { ReelDTO } from './api';
 
-function reelVideoUrl(reel: ReelDTO): string {
-  if (reel.video_url && !/\.m3u8(\?|$)/i.test(reel.video_url)) {
-    return reel.video_url;
-  }
-  return reel.playback_url ?? reel.video_url;
-}
-
 export async function downloadReelVideo(reel: ReelDTO): Promise<void> {
-  const url = reelVideoUrl(reel);
+  let url: string;
+  try {
+    const res = await api.reels.download(reel.id);
+    url = res.download_url;
+  } catch {
+    throw new Error('Could not prepare watermarked download');
+  }
+
   if (!url) {
     Alert.alert('Download', 'Video is not available.');
     return;
@@ -47,6 +48,6 @@ export async function downloadReelVideo(reel: ReelDTO): Promise<void> {
       title: 'Save reel',
     });
   } catch {
-    Alert.alert('Downloaded', 'Video saved to app cache. Open Files to access it.');
+    Alert.alert('Downloaded', 'Watermarked video saved to app cache. Open Files to access it.');
   }
 }

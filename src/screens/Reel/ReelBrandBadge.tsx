@@ -1,7 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { Animated, Easing, Image, StyleSheet, Text, View } from 'react-native';
 import { USE_NATIVE_DRIVER } from '../../lib/animation';
-import { REEL_PROGRESS_ZONE } from './reelVideoLayout';
 import { APP_NAME, REEL_WATERMARK_ANIM_MS } from './reelTheme';
 
 const APP_LOGO = require('../../../assets/favIconChat.png');
@@ -44,7 +43,7 @@ export function ReelBrandBadge({
   const startTop = compact ? 10 : 14;
   const startLeft = compact ? 10 : 14;
   const endRight = 12;
-  const endBottom = progressBottom + REEL_PROGRESS_ZONE + 6;
+  const endBottom = progressBottom + 2;
 
   const moveX = Math.max(0, frameWidth - BADGE_W - endRight - startLeft);
   const moveY = Math.max(0, frameHeight - BADGE_H - endBottom - startTop);

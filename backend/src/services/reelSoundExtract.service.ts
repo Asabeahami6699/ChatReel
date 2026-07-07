@@ -1,0 +1,97 @@
+import { spawn } from 'child_process';
+import ffmpeg from 'fluent-ffmpeg';
+import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
+import fs from 'fs/promises';
+import os from 'os';
+import path from 'path';
+import { supabaseAdmin } from '../lib/supabaseAdmin';
+import { videoHasAudioFromFfmpegStderr } from '../lib/videoProbe';
+import { createReelSound, type ReelSoundRow } from './reelSounds.service';
+
+ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+
+async function downloadToFile(url: string, destPath: string): Promise<void> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Download failed (${res.status})`);
+  await fs.writeFile(destPath, Buffer.from(await res.arrayBuffer()));
+}
+
+function storagePathFromPublicUrl(url: string): string | null {
+  const match = /\/storage\/v1\/object\/(?:public|sign)\/reels\/(.+)$/.exec(url.split('?')[0]);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+async function deleteStorageObjectIfPresent(url: string): Promise<void> {
+  const storagePath = storagePathFromPublicUrl(url);
+  if (!storagePath) return;
+  await supabaseAdmin.storage.from('reels').remove([storagePath]).catch(() => undefined);
+}
+
+/** Extract the audio track from a reels-bucket video into a new library sound. */
+export async function extractSoundFromVideoUrl(input: {
+  videoUrl: string;
+  profileId: string;
+  title: string;
+  artist?: string | null;
+  durationSec?: number | null;
+}): Promise<ReelSoundRow> {
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'reel-sound-extract-'));
+  const inputPath = path.join(tmpDir, 'input.mp4');
+  const outputPath = path.join(tmpDir, 'extracted.mp3');
+
+  try {
+    await downloadToFile(input.videoUrl, inputPath);
+
+    const probeStderr = await new Promise<string>((resolve, reject) => {
+      const proc = spawn(ffmpegInstaller.path, ['-hide_banner', '-i', inputPath], {
+        stdio: ['ignore', 'ignore', 'pipe'],
+      });
+      let stderr = '';
+      proc.stderr.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      proc.on('error', reject);
+      proc.on('close', () => resolve(stderr));
+    });
+
+    if (!videoHasAudioFromFfmpegStderr(probeStderr)) {
+      throw new Error('This video has no audio track to extract');
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      ffmpeg(inputPath)
+        .noVideo()
+        .audioCodec('libmp3lame')
+        .audioBitrate('128k')
+        .output(outputPath)
+        .on('end', () => resolve())
+        .on('error', (err) => reject(err))
+        .run();
+    });
+
+    const storagePath = `sounds/extracted-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp3`;
+    const body = await fs.readFile(outputPath);
+    const { error: uploadErr } = await supabaseAdmin.storage
+      .from('reels')
+      .upload(storagePath, body, { contentType: 'audio/mpeg', upsert: false });
+    if (uploadErr) throw new Error(uploadErr.message);
+
+    const { data } = supabaseAdmin.storage.from('reels').getPublicUrl(storagePath);
+    const sound = await createReelSound({
+      title: input.title.trim() || 'Extracted audio',
+      artist: input.artist ?? null,
+      audio_url: data.publicUrl,
+      preview_url: data.publicUrl,
+      duration_sec: input.durationSec ?? null,
+      uploaded_by: input.profileId,
+    });
+
+    if (input.videoUrl.includes('/extract-temp/')) {
+      await deleteStorageObjectIfPresent(input.videoUrl);
+    }
+
+    return sound;
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}

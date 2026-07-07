@@ -24,18 +24,20 @@ export type ReelSoundMixOptions = {
   soundId: string;
   soundStartSec?: number;
   originalAudioVolume?: number;
+  soundVolume?: number;
 };
 
 type ResolvedSoundMix = {
   audioUrl: string;
   soundStartSec: number;
   originalAudioVolume: number;
+  soundVolume: number;
 };
 
 async function loadSoundMixOptions(reelId: string): Promise<ResolvedSoundMix | null> {
   const { data, error } = await supabaseAdmin
     .from('reels')
-    .select('sound_id, sound_start_sec, original_audio_volume')
+    .select('sound_id, sound_start_sec, original_audio_volume, sound_volume')
     .eq('id', reelId)
     .maybeSingle();
   if (error || !data?.sound_id) return null;
@@ -52,6 +54,7 @@ async function loadSoundMixOptions(reelId: string): Promise<ResolvedSoundMix | n
     audioUrl: sound.audio_url as string,
     soundStartSec: Number(data.sound_start_sec ?? 0),
     originalAudioVolume: Number(data.original_audio_volume ?? 1),
+    soundVolume: Number(data.sound_volume ?? 1),
   };
 }
 
@@ -76,19 +79,25 @@ async function mixSoundIntoVideo(
     trimEnd != null && trimEnd > trimStart ? trimEnd - trimStart : undefined;
 
   const origVol = Math.max(0, Math.min(1, sound.originalAudioVolume));
+  const musicVol = Math.max(0, Math.min(1, sound.soundVolume));
   const soundStart = Math.max(0, sound.soundStartSec);
 
   let filterComplex: string;
   if (origVol <= 0.001) {
     filterComplex =
       trimDuration != null
-        ? `[1:a]atrim=duration=${trimDuration},asetpts=PTS-STARTPTS[aout]`
-        : `[1:a]asetpts=PTS-STARTPTS[aout]`;
+        ? `[1:a]atrim=duration=${trimDuration},asetpts=PTS-STARTPTS,volume=${musicVol}[aout]`
+        : `[1:a]asetpts=PTS-STARTPTS,volume=${musicVol}[aout]`;
+  } else if (musicVol <= 0.001) {
+    filterComplex =
+      trimDuration != null
+        ? `[0:a]atrim=duration=${trimDuration},asetpts=PTS-STARTPTS,volume=${origVol}[aout]`
+        : `[0:a]volume=${origVol}[aout]`;
   } else {
     const soundChain =
       trimDuration != null
-        ? `[1:a]atrim=duration=${trimDuration},asetpts=PTS-STARTPTS,volume=1[a1]`
-        : `[1:a]asetpts=PTS-STARTPTS,volume=1[a1]`;
+        ? `[1:a]atrim=duration=${trimDuration},asetpts=PTS-STARTPTS,volume=${musicVol}[a1]`
+        : `[1:a]asetpts=PTS-STARTPTS,volume=${musicVol}[a1]`;
     filterComplex = `[0:a]volume=${origVol}[a0];${soundChain};[a0][a1]amix=inputs=2:duration=first:dropout_transition=0[aout]`;
   }
 
@@ -267,11 +276,62 @@ export function queueReelHlsTranscode(
   trim?: ReelTrimOptions
 ): void {
   if (!isReelHlsEnabled()) {
-    void supabaseAdmin
-      .from('reels')
-      .update({ transcode_status: 'skipped' })
-      .eq('id', reelId);
     return;
   }
   void transcodeReelToHls(reelId, videoUrl, trim);
+}
+
+/** Mix background music into MP4 when HLS transcode is disabled. */
+export async function muxSoundIntoReelMp4(
+  reelId: string,
+  videoUrl: string,
+  trim?: ReelTrimOptions
+): Promise<void> {
+  const soundMix = await loadSoundMixOptions(reelId);
+  if (!soundMix) {
+    await supabaseAdmin.from('reels').update({ transcode_status: 'skipped' }).eq('id', reelId);
+    return;
+  }
+
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), `reel-mix-${reelId}-`));
+  try {
+    await supabaseAdmin.from('reels').update({ transcode_status: 'processing' }).eq('id', reelId);
+
+    const res = await fetch(videoUrl);
+    if (!res.ok) throw new Error(`Download failed (${res.status})`);
+    const inputPath = path.join(tmpDir, 'input.mp4');
+    await fs.writeFile(inputPath, Buffer.from(await res.arrayBuffer()));
+
+    const mixedPath = path.join(tmpDir, 'mixed.mp4');
+    await mixSoundIntoVideo(inputPath, mixedPath, soundMix, trim);
+
+    const storagePath = `mixed/${reelId}.mp4`;
+    const body = await fs.readFile(mixedPath);
+    const { error: upErr } = await supabaseAdmin.storage
+      .from('reels')
+      .upload(storagePath, body, { contentType: 'video/mp4', upsert: true });
+    if (upErr) throw new Error(upErr.message);
+
+    const { data: pub } = supabaseAdmin.storage.from('reels').getPublicUrl(storagePath);
+    const publicUrl = applyReelsCdnUrl(pub.publicUrl) ?? pub.publicUrl;
+
+    await supabaseAdmin
+      .from('reels')
+      .update({ video_url: publicUrl, transcode_status: 'ready' })
+      .eq('id', reelId);
+  } catch (err) {
+    console.error('[reels] MP4 sound mux failed:', err);
+    await supabaseAdmin.from('reels').update({ transcode_status: 'failed' }).eq('id', reelId);
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+export function queueReelSoundMux(
+  reelId: string,
+  videoUrl: string,
+  trim?: ReelTrimOptions
+): void {
+  if (isReelHlsEnabled()) return;
+  void muxSoundIntoReelMp4(reelId, videoUrl, trim);
 }

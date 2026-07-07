@@ -1,11 +1,11 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import { Platform } from 'react-native';
 import type { ReelDTO } from '../../lib/api';
-import { getReelPlaybackUrl, isHlsUrl } from '../../lib/reelPlayback';
+import { getReelPlaybackUrl, isHlsUrl, stripMediaFragment } from '../../lib/reelPlayback';
 
 const CACHE_DIR = `${FileSystem.cacheDirectory ?? ''}reels-cache/`;
-const PREFETCH_AHEAD = 4;
-const MAX_CONCURRENT = 3;
+const PREFETCH_AHEAD = 8;
+const MAX_CONCURRENT = 6;
 
 /** Web browsers stream HLS/MP4 with range requests; full blob prefetch hits QUIC/CDN errors. */
 const WEB_FILE_PREFETCH = Platform.OS !== 'web';
@@ -51,7 +51,7 @@ async function ensureCacheDir() {
 
 /** MP4 URL suitable for full-file cache (HLS stays streamed). */
 function mp4CacheUrl(reel: ReelLike): string | null {
-  const mp4 = reel.video_url;
+  const mp4 = stripMediaFragment(reel.video_url);
   if (!mp4 || isHlsUrl(mp4)) return null;
   return mp4;
 }

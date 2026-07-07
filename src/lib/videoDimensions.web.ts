@@ -22,3 +22,9 @@ export async function probeVideoDimensions(
     video.src = uri;
   });
 }
+
+/** Web cannot reliably detect audio tracks before decode; assume video files may have audio. */
+export async function probeVideoHasAudio(uri: string): Promise<boolean> {
+  const dims = await probeVideoDimensions(uri);
+  return Boolean(dims?.duration && dims.duration > 0);
+}

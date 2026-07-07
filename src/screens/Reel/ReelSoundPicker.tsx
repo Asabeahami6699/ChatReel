@@ -61,6 +61,7 @@ export function ReelSoundPicker({ visible, selectedId, onClose, onSelect }: Prop
   const [loadingMy, setLoadingMy] = useState(false);
   const [loadingDevice, setLoadingDevice] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [previewId, setPreviewId] = useState<string | null>(null);
   const playerRef = useRef<AudioPlayer | null>(null);
@@ -283,6 +284,24 @@ export function ReelSoundPicker({ visible, selectedId, onClose, onSelect }: Prop
     [onClose, onSelect, stopPreview]
   );
 
+  const handleDeleteSound = useCallback(
+    async (sound: ReelSoundDTO) => {
+      if (deletingId) return;
+      setDeletingId(sound.id);
+      setError(null);
+      try {
+        await api.reels.deleteSound(sound.id);
+        setMySounds((prev) => prev.filter((s) => s.id !== sound.id));
+        if (selectedId === sound.id) onSelect(null);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Could not delete sound');
+      } finally {
+        setDeletingId(null);
+      }
+    },
+    [deletingId, onSelect, selectedId]
+  );
+
   const handleRemove = useCallback(() => {
     void stopPreview();
     onSelect(null);
@@ -298,7 +317,11 @@ export function ReelSoundPicker({ visible, selectedId, onClose, onSelect }: Prop
     }
   }, [loadDeviceTracks, query]);
 
-  const renderSoundRow = (item: ReelSoundDTO, index: number, opts?: { showRank?: boolean }) => {
+  const renderSoundRow = (
+    item: ReelSoundDTO,
+    index: number,
+    opts?: { showRank?: boolean; showDelete?: boolean }
+  ) => {
     const active = selectedId === item.id;
     const playing = previewId === item.id;
     const viral = item.usage_count >= 3;
@@ -331,6 +354,19 @@ export function ReelSoundPicker({ visible, selectedId, onClose, onSelect }: Prop
         >
           <Ionicons name={playing ? 'pause' : 'play'} size={15} color="#fff" />
         </TouchableOpacity>
+        {opts?.showDelete ? (
+          <TouchableOpacity
+            style={styles.deleteBtn}
+            onPress={() => void handleDeleteSound(item)}
+            disabled={deletingId === item.id}
+          >
+            {deletingId === item.id ? (
+              <ActivityIndicator size="small" color="#ff8a80" />
+            ) : (
+              <Ionicons name="trash-outline" size={17} color="#ff8a80" />
+            )}
+          </TouchableOpacity>
+        ) : null}
       </Pressable>
     );
   };
@@ -494,7 +530,9 @@ export function ReelSoundPicker({ visible, selectedId, onClose, onSelect }: Prop
                       keyExtractor={(item) => item.id}
                       style={styles.list}
                       keyboardShouldPersistTaps="handled"
-                      renderItem={({ item, index }) => renderSoundRow(item, index)}
+                      renderItem={({ item, index }) =>
+                        renderSoundRow(item, index, { showDelete: true })
+                      }
                       ListEmptyComponent={
                         <View style={styles.center}>
                           <Text style={styles.empty}>No uploads yet</Text>
@@ -710,6 +748,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   previewBtnActive: { backgroundColor: REEL_ACCENT },
+  deleteBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   uploadPane: {
     alignItems: 'center',
     paddingHorizontal: 24,

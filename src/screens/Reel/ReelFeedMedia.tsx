@@ -10,7 +10,7 @@ import type { ReelDTO } from '../../lib/api';
 import { getReelMediaItems } from '../../lib/reelPlayback';
 import type { ReelPlaybackStatus, ReelPlayerHandle } from '../../components/ReelPlayer';
 import { ReelMediaSlide } from './ReelMediaSlide';
-import { useReelSoundPlayback } from '../../hooks/useReelSoundPlayback';
+import { useReelSoundPlayback, reelVideoVoiceVolume } from '../../hooks/useReelSoundPlayback';
 
 type Props = {
   reel: ReelDTO;
@@ -51,11 +51,15 @@ export function ReelFeedMedia({
   const isCurrentReel = reelIndex === currentReelIndex;
   const [mediaIndex, setMediaIndex] = useState(0);
 
+  const masterVol = isMuted ? 0 : (volume ?? 1);
+  const videoVolume = reelVideoVoiceVolume(reel, masterVol);
+
   useReelSoundPlayback(reel, {
     active: isCurrentReel,
     playing: isPlaying,
     muted: isMuted,
     focused: isFocused,
+    masterVolume: masterVol,
   });
 
   const mediaIndexRef = useRef(0);
@@ -109,7 +113,7 @@ export function ReelFeedMedia({
         isFocused={isFocused}
         isPlaying={isPlaying}
         isMuted={isMuted}
-        volume={volume}
+        volume={videoVolume}
         isReady={isReady}
         videoUri={videoUri}
         onReady={() => onReady(reel.id)}
@@ -152,7 +156,7 @@ export function ReelFeedMedia({
             isFocused={isFocused}
             isPlaying={isPlaying}
             isMuted={isMuted}
-            volume={volume}
+            volume={videoVolume}
             isReady={isReady}
             onReady={(key) => {
               if (key === slideKey(mediaIndex) || mediaItems.length === 1) onReady(reel.id);

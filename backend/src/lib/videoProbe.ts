@@ -47,3 +47,8 @@ function parseFfmpegDimensions(stderr: string): VideoDimensions | null {
 
   return { width, height, duration };
 }
+
+/** True when ffmpeg stderr shows at least one audio stream. */
+export function videoHasAudioFromFfmpegStderr(stderr: string): boolean {
+  return /Audio:\s/.test(stderr);
+}

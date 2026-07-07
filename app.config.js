@@ -114,6 +114,7 @@ module.exports = {
       },
     ],
     'expo-notifications',
+    '@react-native-community/datetimepicker',
   ],
   extra: {
     eas: {

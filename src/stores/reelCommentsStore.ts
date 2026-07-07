@@ -42,6 +42,7 @@ type ReelCommentsStore = {
     parentId?: string
   ) => Promise<{ comment: ReelCommentDTO | null; error: string | null }>;
   remove: (reelId: string, commentId: string) => Promise<void>;
+  toggleLike: (reelId: string, commentId: string) => Promise<void>;
   setDraft: (reelId: string, draft: string) => void;
   setReplyTo: (reelId: string, commentId: string | null) => void;
 };
@@ -151,6 +152,29 @@ export const useReelCommentsStore = create<ReelCommentsStore>((set, get) => ({
   setDraft: (reelId, draft) => get().patchSlice(reelId, { draft }),
 
   setReplyTo: (reelId, replyToId) => get().patchSlice(reelId, { replyToId }),
+
+  toggleLike: async (reelId, commentId) => {
+    const slice = get().getSlice(reelId);
+    const target = slice.comments.find((c) => c.id === commentId);
+    if (!target) return;
+
+    const liked = Boolean(target.liked_by_me);
+    const nextCount = Math.max(0, (target.like_count ?? 0) + (liked ? -1 : 1));
+    const patchComments = (comments: ReelCommentDTO[]) =>
+      comments.map((c) =>
+        c.id === commentId
+          ? { ...c, liked_by_me: !liked, like_count: nextCount }
+          : c
+      );
+
+    get().patchSlice(reelId, { comments: patchComments(slice.comments) });
+    try {
+      if (liked) await api.reels.unlikeComment(commentId);
+      else await api.reels.likeComment(commentId);
+    } catch {
+      get().patchSlice(reelId, { comments: slice.comments });
+    }
+  },
 }));
 
 /** Selector helper: subscribe to one reel's comment slice. */
