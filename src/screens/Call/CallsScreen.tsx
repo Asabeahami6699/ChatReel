@@ -15,17 +15,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { FAB } from 'react-native-paper';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useFocusEffect } from '@react-navigation/native';
 import { api, ApiError, type CallHistoryItemDTO } from '../../lib/api';
-import { useRealtimeTopic } from '../../hooks/useRealtimeTopic';
 import { supabase } from '../../lib/supabase';
 import { navigateToChat } from '../../navigation/navigateToChat';
 import { useCurrentProfileId } from '../../hooks/useCurrentProfileId';
-import { friendshipsToCallFriends, type CallFriendRow } from '../../lib/callFriends';
-import {
-  getCallsPrefetchCache,
-  upsertCallsPrefetchCache,
-} from '../../lib/callsPrefetch';
+import { useCallsFeed } from '../../hooks/useCallsFeed';
 import { CallFriendPickerSheet } from '../../components/CallFriendPickerSheet';
 
 type Tab = 'all' | 'missed';
@@ -118,60 +112,23 @@ function groupCalls(calls: CallHistoryItemDTO[]): CallSection[] {
 export default function CallsScreen() {
   const insets = useSafeAreaInsets();
   const myProfileId = useCurrentProfileId();
-  const prefetched = useMemo(() => getCallsPrefetchCache(), []);
+  const {
+    calls,
+    friends: friendContacts,
+    callsEnabled,
+    loading,
+    refreshing,
+    error,
+    refresh,
+  } = useCallsFeed(myProfileId);
 
   const [tab, setTab] = useState<Tab>('all');
-  const [calls, setCalls] = useState<CallHistoryItemDTO[]>(() => prefetched?.calls ?? []);
-  const [friendContacts, setFriendContacts] = useState<CallFriendRow[]>(
-    () => prefetched?.friends ?? []
-  );
-  const [loading, setLoading] = useState(() => !(prefetched?.calls.length ?? 0));
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [callsEnabled, setCallsEnabled] = useState<boolean | null>(
-    () => prefetched?.callsEnabled ?? null
-  );
   const [myAuthId, setMyAuthId] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setMyAuthId(data.user?.id ?? null));
-    if (prefetched?.callsEnabled != null) return;
-    api.calls
-      .config()
-      .then((res) => setCallsEnabled(res.enabled))
-      .catch(() => setCallsEnabled(false));
-  }, [prefetched?.callsEnabled]);
-
-  const load = useCallback(async (isRefresh = false) => {
-    if (!isRefresh && calls.length === 0) setLoading(true);
-    setError(null);
-    try {
-      const [{ calls: history }, friendsRes] = await Promise.all([
-        api.calls.history(80),
-        myProfileId
-          ? api.friendships.list('accepted')
-          : Promise.resolve({ friendships: [] as Record<string, unknown>[] }),
-      ]);
-      const friends = friendshipsToCallFriends(friendsRes.friendships ?? [], myProfileId);
-      setCalls(history);
-      setFriendContacts(friends);
-      upsertCallsPrefetchCache({ calls: history, friends });
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load call history');
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [myProfileId, calls.length]);
-
-  useFocusEffect(
-    useCallback(() => {
-      void load(calls.length > 0);
-    }, [load, calls.length])
-  );
-
-  useRealtimeTopic('calls', () => void load(true));
+  }, []);
 
   const missedCount = useMemo(() => calls.filter(isMissedFor).length, [calls]);
 
@@ -418,15 +375,16 @@ export default function CallsScreen() {
       <StatusBar barStyle="light-content" backgroundColor="#0d47a1" />
 
       {loading && calls.length === 0 ? (
-        <View style={styles.center}>
+        <View style={styles.loadingBox}>
           <ActivityIndicator color="#1976d2" size="large" />
+          <Text style={styles.loadingText}>Loading calls…</Text>
         </View>
       ) : error && calls.length === 0 ? (
-        <View style={styles.center}>
-          <Ionicons name="cloud-offline-outline" size={36} color="#888" />
+        <View style={styles.loadingBox}>
+          <Ionicons name="cloud-offline-outline" size={40} color="#888" />
           <Text style={styles.errorText}>{error}</Text>
-          <TouchableOpacity style={styles.retryBtn} onPress={() => load()}>
-            <Text style={styles.retryBtnText}>Try again</Text>
+          <TouchableOpacity style={styles.retryBtn} onPress={refresh}>
+            <Text style={styles.retryBtnText}>Retry</Text>
           </TouchableOpacity>
         </View>
       ) : (
@@ -442,14 +400,7 @@ export default function CallsScreen() {
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
           refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={() => {
-                setRefreshing(true);
-                load(true);
-              }}
-              tintColor="#1976d2"
-            />
+            <RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor="#1976d2" />
           }
           ListEmptyComponent={
             <View style={styles.emptyState}>
@@ -492,7 +443,8 @@ export default function CallsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f4f6f9' },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  loadingBox: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 80, gap: 12 },
+  loadingText: { color: '#6b7280', fontSize: 15 },
   hero: {
     paddingHorizontal: 20,
     paddingBottom: 22,
@@ -669,15 +621,15 @@ const styles = StyleSheet.create({
   },
   emptyText: { fontSize: 18, fontWeight: '700', color: '#374151' },
   emptySubtext: { fontSize: 14, color: '#9ca3af', marginTop: 6, textAlign: 'center', lineHeight: 20 },
-  errorText: { color: '#666', marginTop: 12, textAlign: 'center', paddingHorizontal: 32 },
+  errorText: { color: '#666', textAlign: 'center', paddingHorizontal: 32 },
   retryBtn: {
-    marginTop: 16,
+    marginTop: 4,
     paddingHorizontal: 18,
     paddingVertical: 9,
     backgroundColor: '#1976d2',
     borderRadius: 18,
   },
-  retryBtnText: { color: '#fff', fontWeight: '600' },
+  retryBtnText: { color: '#fff', fontWeight: '700' },
   fab: {
     position: 'absolute',
     right: 20,
