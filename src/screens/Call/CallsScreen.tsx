@@ -3,9 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
-  Pressable,
   RefreshControl,
-  ScrollView,
   SectionList,
   StatusBar,
   StyleSheet,
@@ -15,6 +13,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { FAB } from 'react-native-paper';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { api, ApiError, type CallHistoryItemDTO } from '../../lib/api';
@@ -22,18 +21,14 @@ import { useRealtimeTopic } from '../../hooks/useRealtimeTopic';
 import { supabase } from '../../lib/supabase';
 import { navigateToChat } from '../../navigation/navigateToChat';
 import { useCurrentProfileId } from '../../hooks/useCurrentProfileId';
+import { friendshipsToCallFriends, type CallFriendRow } from '../../lib/callFriends';
+import {
+  getCallsPrefetchCache,
+  upsertCallsPrefetchCache,
+} from '../../lib/callsPrefetch';
+import { CallFriendPickerSheet } from '../../components/CallFriendPickerSheet';
 
 type Tab = 'all' | 'missed';
-
-type QuickContact = {
-  key: string;
-  name: string;
-  avatar: string | null;
-  userId: string;
-  lastType: 'voice' | 'video';
-  lastCall?: CallHistoryItemDTO;
-};
-
 type CallSection = { title: string; data: CallHistoryItemDTO[] };
 
 function formatDuration(seconds: number | null | undefined): string {
@@ -110,35 +105,6 @@ function peerUserId(c: CallHistoryItemDTO, myAuthId: string | null): string | nu
   return c.caller_id === myAuthId ? c.callee_id : c.caller_id;
 }
 
-function buildQuickContacts(
-  calls: CallHistoryItemDTO[],
-  friends: QuickContact[],
-  myAuthId: string | null
-): QuickContact[] {
-  const byUser = new Map<string, QuickContact>();
-
-  for (const call of calls) {
-    const uid = peerUserId(call, myAuthId);
-    if (!uid || byUser.has(uid)) continue;
-    byUser.set(uid, {
-      key: uid,
-      userId: uid,
-      name: callDisplayName(call),
-      avatar: call.peer?.avatar_url ?? null,
-      lastType: call.call_type,
-      lastCall: call,
-    });
-  }
-
-  for (const friend of friends) {
-    if (!byUser.has(friend.userId)) {
-      byUser.set(friend.userId, friend);
-    }
-  }
-
-  return Array.from(byUser.values()).slice(0, 12);
-}
-
 function groupCalls(calls: CallHistoryItemDTO[]): CallSection[] {
   const map = new Map<string, CallHistoryItemDTO[]>();
   for (const call of calls) {
@@ -152,25 +118,33 @@ function groupCalls(calls: CallHistoryItemDTO[]): CallSection[] {
 export default function CallsScreen() {
   const insets = useSafeAreaInsets();
   const myProfileId = useCurrentProfileId();
+  const prefetched = useMemo(() => getCallsPrefetchCache(), []);
+
   const [tab, setTab] = useState<Tab>('all');
-  const [calls, setCalls] = useState<CallHistoryItemDTO[]>([]);
-  const [friendContacts, setFriendContacts] = useState<QuickContact[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [calls, setCalls] = useState<CallHistoryItemDTO[]>(() => prefetched?.calls ?? []);
+  const [friendContacts, setFriendContacts] = useState<CallFriendRow[]>(
+    () => prefetched?.friends ?? []
+  );
+  const [loading, setLoading] = useState(() => !(prefetched?.calls.length ?? 0));
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [callsEnabled, setCallsEnabled] = useState<boolean | null>(null);
+  const [callsEnabled, setCallsEnabled] = useState<boolean | null>(
+    () => prefetched?.callsEnabled ?? null
+  );
   const [myAuthId, setMyAuthId] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setMyAuthId(data.user?.id ?? null));
+    if (prefetched?.callsEnabled != null) return;
     api.calls
       .config()
       .then((res) => setCallsEnabled(res.enabled))
       .catch(() => setCallsEnabled(false));
-  }, []);
+  }, [prefetched?.callsEnabled]);
 
   const load = useCallback(async (isRefresh = false) => {
-    if (!isRefresh) setLoading(true);
+    if (!isRefresh && calls.length === 0) setLoading(true);
     setError(null);
     try {
       const [{ calls: history }, friendsRes] = await Promise.all([
@@ -179,44 +153,22 @@ export default function CallsScreen() {
           ? api.friendships.list('accepted')
           : Promise.resolve({ friendships: [] as Record<string, unknown>[] }),
       ]);
+      const friends = friendshipsToCallFriends(friendsRes.friendships ?? [], myProfileId);
       setCalls(history);
-
-      const friends: QuickContact[] = [];
-      for (const f of friendsRes.friendships ?? []) {
-        const row = f as Record<string, unknown>;
-        const isSender = row.user_id === myProfileId;
-        const profile = (isSender ? row.receiver_profile : row.sender_profile) as {
-          user_id?: string;
-          display_name?: string | null;
-          email?: string | null;
-          avatar_url?: string | null;
-        } | null;
-        const userId = profile?.user_id;
-        if (!userId) continue;
-        friends.push({
-          key: userId,
-          userId,
-          name:
-            profile?.display_name?.trim() ||
-            profile?.email?.split('@')[0] ||
-            'Friend',
-          avatar: profile?.avatar_url ?? null,
-          lastType: 'voice',
-        });
-      }
       setFriendContacts(friends);
+      upsertCallsPrefetchCache({ calls: history, friends });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load call history');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [myProfileId]);
+  }, [myProfileId, calls.length]);
 
   useFocusEffect(
     useCallback(() => {
-      void load();
-    }, [load])
+      void load(calls.length > 0);
+    }, [load, calls.length])
   );
 
   useRealtimeTopic('calls', () => void load(true));
@@ -229,11 +181,6 @@ export default function CallsScreen() {
   );
 
   const sections = useMemo(() => groupCalls(filtered), [filtered]);
-
-  const quickContacts = useMemo(
-    () => buildQuickContacts(calls, friendContacts, myAuthId),
-    [calls, friendContacts, myAuthId]
-  );
 
   const weekStats = useMemo(() => {
     const weekAgo = Date.now() - 7 * 24 * 3600_000;
@@ -250,6 +197,7 @@ export default function CallsScreen() {
       }
       try {
         const { call, live_kit } = await api.calls.start({ type, callee_id: userId });
+        setPickerOpen(false);
         const { navigateToOutgoingCall } = await import('../../navigation/rootNavigation');
         navigateToOutgoingCall({ call, token: live_kit.token, url: live_kit.url });
       } catch (err) {
@@ -260,121 +208,45 @@ export default function CallsScreen() {
   );
 
   const startCall = useCallback(
-    async (target: CallHistoryItemDTO | QuickContact, type: 'voice' | 'video') => {
-      if ('scope' in target) {
-        if (target.scope === 'direct') {
-          const otherUserId = peerUserId(target, myAuthId);
-          if (!otherUserId) {
-            Alert.alert('Call', 'Still loading your account. Try again in a moment.');
-            return;
-          }
-          await startCallToUser(otherUserId, type);
+    async (target: CallHistoryItemDTO, type: 'voice' | 'video') => {
+      if (target.scope === 'direct') {
+        const otherUserId = peerUserId(target, myAuthId);
+        if (!otherUserId) {
+          Alert.alert('Call', 'Still loading your account. Try again in a moment.');
           return;
         }
-        if (target.scope === 'group' && target.group_id) {
-          if (callsEnabled === false) {
-            Alert.alert('Calls', 'Calls are not enabled on this server yet.');
-            return;
-          }
-          try {
-            const { call, live_kit } = await api.calls.start({ type, group_id: target.group_id });
-            const { navigateToOutgoingCall } = await import('../../navigation/rootNavigation');
-            navigateToOutgoingCall({ call, token: live_kit.token, url: live_kit.url });
-          } catch (err) {
-            Alert.alert('Call', err instanceof ApiError ? err.message : 'Could not start call');
-          }
-        }
+        await startCallToUser(otherUserId, type);
         return;
       }
-
-      await startCallToUser(target.userId, type);
+      if (target.scope === 'group' && target.group_id) {
+        if (callsEnabled === false) {
+          Alert.alert('Calls', 'Calls are not enabled on this server yet.');
+          return;
+        }
+        try {
+          const { call, live_kit } = await api.calls.start({ type, group_id: target.group_id });
+          const { navigateToOutgoingCall } = await import('../../navigation/rootNavigation');
+          navigateToOutgoingCall({ call, token: live_kit.token, url: live_kit.url });
+        } catch (err) {
+          Alert.alert('Call', err instanceof ApiError ? err.message : 'Could not start call');
+        }
+      }
     },
     [callsEnabled, myAuthId, startCallToUser]
   );
 
-  const openChatForContact = useCallback((contact: QuickContact) => {
-    navigateToChat({
-      chatType: 'individual',
-      chatId: contact.userId,
-      chatName: contact.name,
-      avatarUrl: contact.avatar ?? undefined,
-    });
-  }, []);
-
-  const openChatFor = useCallback((item: CallHistoryItemDTO) => {
-    const uid = peerUserId(item, myAuthId);
-    if (!uid || item.scope !== 'direct') return;
-    navigateToChat({
-      chatType: 'individual',
-      chatId: uid,
-      chatName: callDisplayName(item),
-      avatarUrl: item.peer?.avatar_url ?? undefined,
-    });
-  }, [myAuthId]);
-
-  const renderQuickContactVertical = (contact: QuickContact) => (
-    <View key={`v-${contact.key}`} style={styles.quickCardVertical}>
-      <Pressable
-        style={styles.quickAvatarWrapVertical}
-        onPress={() => openChatForContact(contact)}
-      >
-        {contact.avatar ? (
-          <Image source={{ uri: contact.avatar }} style={styles.quickAvatarVertical} />
-        ) : (
-          <View style={[styles.quickAvatarVertical, styles.avatarFallback]}>
-            <Text style={styles.avatarFallbackText}>{contact.name.charAt(0).toUpperCase()}</Text>
-          </View>
-        )}
-      </Pressable>
-      <Text style={styles.quickNameVertical} numberOfLines={2}>
-        {contact.name.split(' ')[0]}
-      </Text>
-      <View style={styles.quickActionsVertical}>
-        <TouchableOpacity
-          style={[styles.quickActionBtnVertical, styles.quickVoiceBtn]}
-          onPress={() => void startCall(contact, 'voice')}
-        >
-          <Ionicons name="call" size={18} color="#fff" />
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.quickActionBtnVertical, styles.quickVideoBtn]}
-          onPress={() => void startCall(contact, 'video')}
-        >
-          <Ionicons name="videocam" size={18} color="#fff" />
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-
-  const renderQuickContactHorizontal = (contact: QuickContact) => (
-    <View key={`h-${contact.key}`} style={styles.quickCardHorizontal}>
-      <Pressable style={styles.quickAvatarWrap} onPress={() => openChatForContact(contact)}>
-        {contact.avatar ? (
-          <Image source={{ uri: contact.avatar }} style={styles.quickAvatar} />
-        ) : (
-          <View style={[styles.quickAvatar, styles.avatarFallback]}>
-            <Text style={styles.avatarFallbackText}>{contact.name.charAt(0).toUpperCase()}</Text>
-          </View>
-        )}
-      </Pressable>
-      <Text style={styles.quickNameHorizontal} numberOfLines={1}>
-        {contact.name.split(' ')[0]}
-      </Text>
-      <View style={styles.quickActions}>
-        <TouchableOpacity
-          style={[styles.quickActionBtn, styles.quickVoiceBtn]}
-          onPress={() => void startCall(contact, 'voice')}
-        >
-          <Ionicons name="call" size={16} color="#fff" />
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.quickActionBtn, styles.quickVideoBtn]}
-          onPress={() => void startCall(contact, 'video')}
-        >
-          <Ionicons name="videocam" size={16} color="#fff" />
-        </TouchableOpacity>
-      </View>
-    </View>
+  const openChatFor = useCallback(
+    (item: CallHistoryItemDTO) => {
+      const uid = peerUserId(item, myAuthId);
+      if (!uid || item.scope !== 'direct') return;
+      navigateToChat({
+        chatType: 'individual',
+        chatId: uid,
+        chatName: callDisplayName(item),
+        avatarUrl: item.peer?.avatar_url ?? undefined,
+      });
+    },
+    [myAuthId]
   );
 
   const renderCallItem = (item: CallHistoryItemDTO) => {
@@ -482,20 +354,6 @@ export default function CallsScreen() {
           </View>
         </View>
       </LinearGradient>
-
-      {quickContacts.length > 0 && tab === 'all' && (
-        <View style={styles.quickSection}>
-          <Text style={styles.quickSectionTitle}>
-            {calls.length > 0 ? 'Quick dial' : 'Call a friend'}
-          </Text>
-          <ScrollView
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.quickScrollVertical}
-          >
-            {quickContacts.map(renderQuickContactVertical)}
-          </ScrollView>
-        </View>
-      )}
 
       {tab === 'all' && missedCount > 0 && (
         <TouchableOpacity style={styles.missedBanner} onPress={() => setTab('missed')}>
@@ -608,24 +466,26 @@ export default function CallsScreen() {
               <Text style={styles.emptySubtext}>
                 {tab === 'missed'
                   ? 'You have no missed calls right now.'
-                  : 'Use quick dial above or pick a friend below.'}
+                  : 'Tap the friends button below to start a call.'}
               </Text>
-              {tab === 'all' && friendContacts.length > 0 ? (
-                <View style={styles.friendsFallback}>
-                  <Text style={styles.friendsFallbackTitle}>Friends</Text>
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.quickScroll}
-                  >
-                    {friendContacts.map(renderQuickContactHorizontal)}
-                  </ScrollView>
-                </View>
-              ) : null}
             </View>
           }
         />
       )}
+
+      <FAB
+        icon="account-multiple"
+        style={[styles.fab, { bottom: insets.bottom + 20 }]}
+        onPress={() => setPickerOpen(true)}
+        color="#fff"
+      />
+
+      <CallFriendPickerSheet
+        visible={pickerOpen}
+        friends={friendContacts}
+        onClose={() => setPickerOpen(false)}
+        onCall={(userId, type) => void startCallToUser(userId, type)}
+      />
     </SafeAreaView>
   );
 }
@@ -654,119 +514,6 @@ const styles = StyleSheet.create({
   statValueMissed: { color: '#ffcdd2' },
   statLabel: { fontSize: 11, color: 'rgba(255,255,255,0.8)', marginTop: 2, fontWeight: '600' },
   statDivider: { width: 1, backgroundColor: 'rgba(255,255,255,0.25)', marginVertical: 4 },
-  quickSection: { paddingTop: 16, paddingBottom: 4 },
-  quickSectionTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#6b7280',
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-    paddingHorizontal: 20,
-    marginBottom: 10,
-  },
-  quickScrollVertical: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    paddingHorizontal: 16,
-    gap: 12,
-    paddingBottom: 8,
-  },
-  quickCardVertical: {
-    width: 88,
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    paddingVertical: 12,
-    paddingHorizontal: 8,
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
-  },
-  quickAvatarWrapVertical: { marginBottom: 6 },
-  quickAvatarVertical: { width: 52, height: 52, borderRadius: 26 },
-  quickNameVertical: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#111',
-    textAlign: 'center',
-    marginBottom: 8,
-    minHeight: 28,
-  },
-  quickActionsVertical: { gap: 6, alignItems: 'center' },
-  quickActionBtnVertical: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  quickVoiceBtn: { backgroundColor: '#1976d2' },
-  quickVideoBtn: { backgroundColor: '#34c759' },
-  quickScroll: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    gap: 10,
-  },
-  quickCard: {
-    width: 88,
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    paddingVertical: 12,
-    paddingHorizontal: 8,
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
-  },
-  quickCardHorizontal: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    gap: 10,
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
-  },
-  quickNameHorizontal: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#1c1c1e',
-    maxWidth: 100,
-  },
-  quickAvatarWrap: { position: 'relative' },
-  quickAvatar: { width: 52, height: 52, borderRadius: 26 },
-  quickTypeDot: {
-    position: 'absolute',
-    bottom: 0,
-    right: -2,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: '#fff',
-  },
-  quickName: { fontSize: 12, fontWeight: '600', color: '#1c1c1e', marginTop: 8, maxWidth: 80 },
-  quickActions: { flexDirection: 'row', gap: 8, marginTop: 8 },
-  quickActionBtn: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: '#f0f4f8',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   missedBanner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -922,16 +669,6 @@ const styles = StyleSheet.create({
   },
   emptyText: { fontSize: 18, fontWeight: '700', color: '#374151' },
   emptySubtext: { fontSize: 14, color: '#9ca3af', marginTop: 6, textAlign: 'center', lineHeight: 20 },
-  friendsFallback: { width: '100%', marginTop: 20, paddingHorizontal: 4 },
-  friendsFallbackTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#6b7280',
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-    marginBottom: 8,
-    paddingHorizontal: 8,
-  },
   errorText: { color: '#666', marginTop: 12, textAlign: 'center', paddingHorizontal: 32 },
   retryBtn: {
     marginTop: 16,
@@ -941,4 +678,9 @@ const styles = StyleSheet.create({
     borderRadius: 18,
   },
   retryBtnText: { color: '#fff', fontWeight: '600' },
+  fab: {
+    position: 'absolute',
+    right: 20,
+    backgroundColor: '#1976d2',
+  },
 });

@@ -102,14 +102,6 @@ export function useChatRoomRealtime({
       }
       if (event === 'INSERT') deliveredIds.add(row.id);
 
-      console.log(
-        `[chatRealtime] ${event} ${direction}`,
-        chatType,
-        chatId,
-        row.id,
-        `(via ${source})`
-      );
-
       handlerRef.current(row, event);
     };
 

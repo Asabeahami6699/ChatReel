@@ -125,8 +125,6 @@ export function ReelMediaSlide({
 const styles = StyleSheet.create({
   shell: {
     backgroundColor: '#000',
-    alignItems: 'center',
-    justifyContent: 'center',
     overflow: 'hidden',
   },
   media: {

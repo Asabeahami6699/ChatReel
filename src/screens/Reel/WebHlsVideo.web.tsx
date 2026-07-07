@@ -19,7 +19,7 @@ const VIDEO_CSS: React.CSSProperties = {
   height: '100%',
   display: 'block',
   backgroundColor: '#000',
-  objectFit: 'contain',
+  objectFit: 'cover',
   objectPosition: 'center',
 };
 
@@ -63,6 +63,9 @@ export const WebHlsVideo = forwardRef<ReelPlayerHandle, Props>(function WebHlsVi
   mutedRef.current = muted;
   volumeRef.current = volume;
 
+  const lastStatusEmitRef = useRef(0);
+  const STATUS_EMIT_MS = 250;
+
   const emitStatus = (video: HTMLVideoElement, extra?: Partial<ReelPlaybackStatus>) => {
     const durationSec = video.duration;
     if (!Number.isFinite(durationSec) || durationSec <= 0) return;
@@ -76,12 +79,24 @@ export const WebHlsVideo = forwardRef<ReelPlayerHandle, Props>(function WebHlsVi
     });
   };
 
+  const emitStatusThrottled = (video: HTMLVideoElement, force = false) => {
+    if (force) {
+      lastStatusEmitRef.current = Date.now();
+      emitStatus(video);
+      return;
+    }
+    const now = Date.now();
+    if (now - lastStatusEmitRef.current < STATUS_EMIT_MS) return;
+    lastStatusEmitRef.current = now;
+    emitStatus(video);
+  };
+
   const applyPlayback = (video: HTMLVideoElement) => {
     video.muted = mutedRef.current;
     if (volumeRef.current !== undefined) video.volume = volumeRef.current;
     if (!shouldPlayRef.current) {
       video.pause();
-      emitStatus(video);
+      emitStatusThrottled(video, true);
       return;
     }
     if (video.ended) return;
@@ -91,7 +106,7 @@ export const WebHlsVideo = forwardRef<ReelPlayerHandle, Props>(function WebHlsVi
       void result.catch((err: unknown) => {
         if (gen !== playGenRef.current) return;
         if (!isBenignPlayError(err)) {
-          console.debug('[WebHlsVideo] play failed', err);
+          /* ignore autoplay / abort errors */
         }
       });
     }
@@ -111,7 +126,7 @@ export const WebHlsVideo = forwardRef<ReelPlayerHandle, Props>(function WebHlsVi
         if (!video) return;
         shouldPlayRef.current = false;
         video.pause();
-        emitStatus(video);
+        emitStatusThrottled(video, true);
       },
       replayAsync: async () => {
         const video = videoRef.current;
@@ -163,8 +178,8 @@ export const WebHlsVideo = forwardRef<ReelPlayerHandle, Props>(function WebHlsVi
       applyPlayback(video);
     };
 
-    const onTimeUpdate = () => emitStatus(video);
-    const onProgress = () => emitStatus(video);
+    const onTimeUpdate = () => emitStatusThrottled(video);
+    const onProgress = () => emitStatusThrottled(video);
     const onEnded = () => {
       video.pause();
       emitStatus(video, { didJustFinish: true });

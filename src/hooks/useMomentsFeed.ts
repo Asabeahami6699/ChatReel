@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ApiError, api, type MomentAuthorFeedDTO } from '../lib/api';
+import { getMomentsFeedCache, upsertMomentsFeedCache } from '../lib/momentsFeedPrefetch';
+import { dedupeMomentSlides } from '../lib/momentSlides';
 import { useRealtimeTopic } from './useRealtimeTopic';
 
 function dedupeAuthors(authors: MomentAuthorFeedDTO[]): MomentAuthorFeedDTO[] {
@@ -7,13 +9,18 @@ function dedupeAuthors(authors: MomentAuthorFeedDTO[]): MomentAuthorFeedDTO[] {
   for (const entry of authors) {
     const existing = byId.get(entry.author.id);
     if (!existing) {
-      byId.set(entry.author.id, entry);
+      byId.set(entry.author.id, {
+        ...entry,
+        slides: dedupeMomentSlides(entry.slides),
+      });
       continue;
     }
     const mergedSlides = [...existing.slides];
     const seenSlideIds = new Set(existing.slides.map((s) => s.id));
     for (const slide of entry.slides) {
-      if (!seenSlideIds.has(slide.id)) mergedSlides.push(slide);
+      if (seenSlideIds.has(slide.id)) continue;
+      seenSlideIds.add(slide.id);
+      mergedSlides.push(slide);
     }
     mergedSlides.sort((a, b) => {
       const groupA = a.group_id ?? a.id;
@@ -34,8 +41,9 @@ function dedupeAuthors(authors: MomentAuthorFeedDTO[]): MomentAuthorFeedDTO[] {
 }
 
 export function useMomentsFeed() {
-  const [authors, setAuthors] = useState<MomentAuthorFeedDTO[]>([]);
-  const [loading, setLoading] = useState(true);
+  const cached = getMomentsFeedCache();
+  const [authors, setAuthors] = useState<MomentAuthorFeedDTO[]>(() => cached?.authors ?? []);
+  const [loading, setLoading] = useState(() => !(cached?.authors.length ?? 0));
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -45,7 +53,9 @@ export function useMomentsFeed() {
     setError(null);
     try {
       const { authors: data } = await api.moments.feed();
-      setAuthors(dedupeAuthors(data));
+      const next = dedupeAuthors(data);
+      setAuthors(next);
+      if (next.length > 0) upsertMomentsFeedCache(next);
     } catch (err) {
       const message = err instanceof ApiError ? err.message : 'Failed to load feed';
       setError(message);
@@ -58,7 +68,9 @@ export function useMomentsFeed() {
   const silentRefresh = useCallback(async () => {
     try {
       const { authors: data } = await api.moments.feed();
-      setAuthors(dedupeAuthors(data));
+      const next = dedupeAuthors(data);
+      setAuthors(next);
+      if (next.length > 0) upsertMomentsFeedCache(next);
     } catch {
       /* ignore background refresh errors */
     }

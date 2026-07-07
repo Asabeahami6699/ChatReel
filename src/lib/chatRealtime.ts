@@ -76,10 +76,8 @@ export function subscribeToChatMessages(
       if (!belongsToChat(row)) return;
 
       if (payload.eventType === 'INSERT') {
-        console.log('[chatRealtime] INSERT', chatType, chatId, row.id);
         handlers.onInsert(row);
       } else if (payload.eventType === 'UPDATE') {
-        console.log('[chatRealtime] UPDATE', chatType, chatId, row.id);
         handlers.onUpdate(row);
       }
     }
@@ -89,7 +87,6 @@ export function subscribeToChatMessages(
   channel.subscribe(async (status, err) => {
     if (status === 'SUBSCRIBED') {
       errorRetries = 0;
-      console.log('[chatRealtime] subscribed', chatType, chatId);
     } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
       console.error('[chatRealtime] channel status', status, err);
       // Re-apply the auth token in case it's a JWT expiry / refresh race, then let

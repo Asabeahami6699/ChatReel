@@ -10,6 +10,10 @@ export type MomentUploadItem = {
   mime?: string;
   caption?: string;
   textBackground?: string;
+  sound_id?: string;
+  sound_start_sec?: number;
+  original_audio_volume?: number;
+  sound_volume?: number;
 };
 
 export type MomentUploadDraft = {
@@ -82,6 +86,10 @@ async function processOne(item: { id: string; draft: MomentUploadDraft }) {
     caption?: string;
     text_background?: string;
     thumbnail_url?: string;
+    sound_id?: string;
+    sound_start_sec?: number;
+    original_audio_volume?: number;
+    sound_volume?: number;
   }> = [];
 
   for (let i = 0; i < draft.items.length; i++) {
@@ -132,6 +140,14 @@ async function processOne(item: { id: string; draft: MomentUploadDraft }) {
       media_type: itemDraft.mediaType,
       caption: itemDraft.caption?.trim() || undefined,
       thumbnail_url: thumbnailUrl,
+      ...(itemDraft.mediaType !== 'text' && itemDraft.sound_id
+        ? {
+            sound_id: itemDraft.sound_id,
+            sound_start_sec: itemDraft.sound_start_sec ?? 0,
+            original_audio_volume: itemDraft.original_audio_volume ?? 1,
+            sound_volume: itemDraft.sound_volume ?? 0.45,
+          }
+        : {}),
     });
   }
 

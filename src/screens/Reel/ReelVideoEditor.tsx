@@ -17,6 +17,7 @@ import {
   seekPlaybackPlayer,
   type AudioPlayer,
 } from '../../lib/appAudio';
+import { COMPOSE_PREVIEW_HEIGHT, ComposeVideoPreview } from '../../components/ComposeVideoPreview';
 import { ReelTrimTimeline } from './ReelTrimTimeline';
 import {
   getReelFilterOverlay,
@@ -222,57 +223,72 @@ export function ReelVideoEditor({
   const previewHeight = previewMode
     ? Math.max(280, windowHeight * 0.72)
     : immersive
-      ? Math.max(220, windowHeight * (showTrimControls || showFilterControls ? 0.48 : 0.58))
+      ? COMPOSE_PREVIEW_HEIGHT
       : Math.min(480, windowWidth * 1.35);
+
+  const previewCard = (
+    <View
+      style={[
+        styles.previewWrap,
+        (immersive || previewMode) && styles.previewWrapImmersive,
+        !immersive && !previewMode
+          ? { width: windowWidth - 32, height: previewHeight }
+          : { height: previewHeight },
+      ]}
+    >
+      <TouchableOpacity activeOpacity={1} onPress={() => void togglePlay()} style={styles.videoTap}>
+        <ReelPlayer
+          ref={playerRef}
+          source={video.uri}
+          style={styles.preview}
+          contentFit="contain"
+          isLooping={false}
+          shouldPlay={isPlaying && !forcePaused}
+          isMuted={overlaySound ? true : isMuted}
+          progressUpdateIntervalMillis={200}
+          onPlaybackStatusUpdate={onPlaybackStatus}
+        />
+        {filterOverlay ? (
+          <View style={[styles.filterOverlay, { backgroundColor: filterOverlay }]} pointerEvents="none" />
+        ) : null}
+        {!isPlaying && (
+          <View style={styles.playOverlay}>
+            <Ionicons name="play" size={48} color="rgba(255,255,255,0.9)" />
+          </View>
+        )}
+      </TouchableOpacity>
+
+      <View style={styles.topTools}>
+        <TouchableOpacity style={styles.toolBtn} onPress={() => void togglePlay()}>
+          <Ionicons name={isPlaying ? 'pause' : 'play'} size={18} color="#fff" />
+        </TouchableOpacity>
+        {!overlaySound ? (
+          <TouchableOpacity style={styles.toolBtn} onPress={() => setIsMuted((m) => !m)}>
+            <Ionicons name={isMuted ? 'volume-mute' : 'volume-high'} size={18} color="#fff" />
+          </TouchableOpacity>
+        ) : null}
+        {Platform.OS !== 'web' && !immersive ? (
+          <TouchableOpacity style={styles.toolBtn} onPress={onEditNative}>
+            <Ionicons name="crop" size={18} color="#fff" />
+            <Text style={styles.toolBtnText}>Crop</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+    </View>
+  );
 
   return (
     <View style={[styles.wrap, (immersive || previewMode) && styles.wrapImmersive]}>
-      <View
-        style={[
-          styles.previewWrap,
-          (immersive || previewMode) && styles.previewWrapImmersive,
-          { width: immersive || previewMode ? '100%' : windowWidth - 32, height: previewHeight },
-        ]}
-      >
-        <TouchableOpacity activeOpacity={1} onPress={() => void togglePlay()} style={styles.videoTap}>
-          <ReelPlayer
-            ref={playerRef}
-            source={video.uri}
-            style={styles.preview}
-            contentFit={immersive || previewMode ? 'cover' : 'contain'}
-            isLooping={false}
-            shouldPlay={isPlaying && !forcePaused}
-            isMuted={overlaySound ? true : isMuted}
-            progressUpdateIntervalMillis={200}
-            onPlaybackStatusUpdate={onPlaybackStatus}
-          />
-          {filterOverlay ? (
-            <View style={[styles.filterOverlay, { backgroundColor: filterOverlay }]} pointerEvents="none" />
-          ) : null}
-          {!isPlaying && (
-            <View style={styles.playOverlay}>
-              <Ionicons name="play" size={48} color="rgba(255,255,255,0.9)" />
-            </View>
-          )}
-        </TouchableOpacity>
-
-        <View style={styles.topTools}>
-          <TouchableOpacity style={styles.toolBtn} onPress={() => void togglePlay()}>
-            <Ionicons name={isPlaying ? 'pause' : 'play'} size={18} color="#fff" />
-          </TouchableOpacity>
-          {!overlaySound ? (
-            <TouchableOpacity style={styles.toolBtn} onPress={() => setIsMuted((m) => !m)}>
-              <Ionicons name={isMuted ? 'volume-mute' : 'volume-high'} size={18} color="#fff" />
-            </TouchableOpacity>
-          ) : null}
-          {Platform.OS !== 'web' && !immersive ? (
-            <TouchableOpacity style={styles.toolBtn} onPress={onEditNative}>
-              <Ionicons name="crop" size={18} color="#fff" />
-              <Text style={styles.toolBtnText}>Crop</Text>
-            </TouchableOpacity>
-          ) : null}
-        </View>
-      </View>
+      {immersive || previewMode ? (
+        <ComposeVideoPreview
+          height={previewHeight}
+          style={immersive ? styles.composeCard : undefined}
+        >
+          {previewCard}
+        </ComposeVideoPreview>
+      ) : (
+        previewCard
+      )}
 
       {!immersive ? <Text style={styles.hint}>Tap video to play or pause</Text> : null}
 
@@ -344,7 +360,8 @@ export function ReelVideoEditor({
 
 const styles = StyleSheet.create({
   wrap: { marginBottom: 8 },
-  wrapImmersive: { marginBottom: 0, flex: 1 },
+  wrapImmersive: { marginBottom: 0 },
+  composeCard: { marginHorizontal: 14 },
   previewWrap: {
     backgroundColor: '#000',
     borderRadius: 16,
@@ -352,8 +369,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     alignSelf: 'center',
+    width: '100%',
+    flex: 1,
   },
-  previewWrapImmersive: { borderRadius: 0, alignSelf: 'stretch' },
+  previewWrapImmersive: {
+    borderRadius: 0,
+    alignSelf: 'stretch',
+    marginHorizontal: 0,
+    borderWidth: 0,
+  },
   videoTap: { width: '100%', height: '100%' },
   preview: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
   filterOverlay: { ...StyleSheet.absoluteFillObject },

@@ -13,17 +13,23 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import Slider from '@react-native-community/slider';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { api, type MomentAudienceMode } from '../../lib/api';
+import { api, type MomentAudienceMode, type ReelSoundDTO } from '../../lib/api';
 import { enqueueMomentUpload } from '../../lib/momentUploadQueue';
 import {
   getTextBackground,
   MOMENT_TEXT_BACKGROUNDS,
 } from '../../lib/momentTextBackgrounds';
 import { useCurrentProfileId } from '../../hooks/useCurrentProfileId';
-import { ReelPlayer } from '../../components/ReelPlayer';
+import { ReelPlayer, type ReelPlaybackStatus } from '../../components/ReelPlayer';
+import { ComposeVideoPreview } from '../../components/ComposeVideoPreview';
+import { ReelSoundPicker, soundLabel } from '../Reel/ReelSoundPicker';
+import { ReelSoundTrimTimeline } from '../Reel/ReelSoundTrimTimeline';
+import { defaultSoundRange, IMAGE_SOUND_CLIP_SEC } from '../Reel/reelSoundUtils';
+import { useOverlaySoundLoop } from '../../hooks/useOverlaySoundLoop';
 
 export type MomentDraftItem = {
   uri?: string;
@@ -32,6 +38,11 @@ export type MomentDraftItem = {
   mime?: string;
   caption?: string;
   textBackground?: string;
+  sound?: ReelSoundDTO | null;
+  soundStartSec?: number;
+  soundEndSec?: number;
+  originalAudioVolume?: number;
+  soundVolume?: number;
 };
 
 export type MomentDraft = {
@@ -93,9 +104,45 @@ export function MomentComposer({
   const [friendsLoading, setFriendsLoading] = useState(false);
   const [friendQuery, setFriendQuery] = useState('');
   const [previewIndex, setPreviewIndex] = useState(0);
+  const [soundOpen, setSoundOpen] = useState(false);
+  const [videoDurationSec, setVideoDurationSec] = useState(15);
+  const [soundPreviewSec, setSoundPreviewSec] = useState(0);
 
   const items = draft?.items ?? [];
   const currentItem = items[previewIndex];
+  const selectedSound = currentItem?.sound ?? null;
+  const soundStartSec = currentItem?.soundStartSec ?? 0;
+  const soundEndSec = currentItem?.soundEndSec ?? 0;
+  const originalAudioVolume = currentItem?.originalAudioVolume ?? 1;
+  const soundVolume = currentItem?.soundVolume ?? 0.45;
+  const isPhotoOrVideo =
+    currentItem?.mediaType === 'video' || currentItem?.mediaType === 'image';
+  const clipLenSec = Math.max(
+    1,
+    currentItem?.mediaType === 'image' ? IMAGE_SOUND_CLIP_SEC : videoDurationSec
+  );
+  const soundDuration = selectedSound?.duration_sec ?? Math.max(clipLenSec + 30, 60);
+
+  const overlaySound = useMemo(
+    () =>
+      visible && selectedSound && isPhotoOrVideo
+        ? {
+            url: selectedSound.preview_url ?? selectedSound.audio_url,
+            startSec: soundStartSec,
+            endSec: soundEndSec > soundStartSec ? soundEndSec : soundStartSec + clipLenSec,
+          }
+        : null,
+    [
+      visible,
+      selectedSound,
+      isPhotoOrVideo,
+      soundStartSec,
+      soundEndSec,
+      clipLenSec,
+    ]
+  );
+
+  useOverlaySoundLoop(overlaySound, clipLenSec, { volume: soundVolume, enabled: visible });
 
   useEffect(() => {
     if (!visible) return;
@@ -105,6 +152,8 @@ export function MomentComposer({
     setSelectedIds(new Set());
     setFriendQuery('');
     setPreviewIndex(0);
+    setSoundOpen(false);
+    setVideoDurationSec(15);
   }, [visible]);
 
   useEffect(() => {
@@ -166,6 +215,35 @@ export function MomentComposer({
       : 'Pick who to hide from';
   }, [audienceMode, selectedIds.size]);
 
+  const handleSoundSelect = useCallback(
+    (sound: ReelSoundDTO | null) => {
+      if (!currentItem) return;
+      if (!sound) {
+        onUpdateItem(previewIndex, {
+          sound: null,
+          soundStartSec: 0,
+          soundEndSec: 0,
+        });
+        return;
+      }
+      const range = defaultSoundRange(sound, clipLenSec);
+      onUpdateItem(previewIndex, {
+        sound,
+        soundStartSec: range.start,
+        soundEndSec: range.end,
+      });
+      setSoundPreviewSec(range.start);
+    },
+    [clipLenSec, currentItem, onUpdateItem, previewIndex]
+  );
+
+  const onVideoPlaybackStatus = useCallback((status: ReelPlaybackStatus) => {
+    if (!status.isLoaded) return;
+    if (status.durationMillis && status.durationMillis > 0) {
+      setVideoDurationSec(status.durationMillis / 1000);
+    }
+  }, []);
+
   const handlePost = () => {
     if (!draft?.items.length) return;
     if (audienceMode !== 'friends' && selectedIds.size === 0) {
@@ -198,6 +276,15 @@ export function MomentComposer({
         mime: item.mime,
         caption: item.caption,
         textBackground: item.textBackground,
+        ...(item.mediaType !== 'text' && item.sound
+          ? {
+              sound_id: item.sound.id,
+              sound_start_sec: item.soundStartSec ?? 0,
+              original_audio_volume:
+                item.mediaType === 'video' ? (item.originalAudioVolume ?? 1) : 1,
+              sound_volume: item.soundVolume ?? 0.45,
+            }
+          : {}),
       })),
       duration_minutes: durationMinutes,
       view_once: viewOnce,
@@ -235,7 +322,7 @@ export function MomentComposer({
           keyboardShouldPersistTaps="handled"
         >
           {/* Live preview */}
-          <View style={styles.previewCard}>
+          <ComposeVideoPreview style={styles.previewCard} bordered>
             {currentItem.mediaType === 'text' ? (
               <LinearGradient
                 colors={[...getTextBackground(currentItem.textBackground).colors]}
@@ -267,10 +354,13 @@ export function MomentComposer({
                 key={currentItem.uri}
                 source={currentItem.uri}
                 style={styles.previewMedia}
-                contentFit="cover"
+                contentFit="contain"
                 shouldPlay
-                isMuted
+                isMuted={Boolean(selectedSound)}
                 isLooping
+                volume={selectedSound ? originalAudioVolume : 1}
+                progressUpdateIntervalMillis={200}
+                onPlaybackStatusUpdate={onVideoPlaybackStatus}
               />
             ) : currentItem.uri ? (
               <Image
@@ -314,7 +404,91 @@ export function MomentComposer({
                 <Text style={styles.viewOnceBadgeText}>View once</Text>
               </View>
             )}
-          </View>
+          </ComposeVideoPreview>
+
+          {isPhotoOrVideo ? (
+            <View style={styles.section}>
+              <Text style={styles.sectionLabel}>Music</Text>
+              {selectedSound ? (
+                <>
+                  <TouchableOpacity
+                    style={styles.soundRow}
+                    onPress={() => setSoundOpen(true)}
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="musical-notes" size={18} color={C.primary} />
+                    <Text style={styles.soundRowText} numberOfLines={1}>
+                      {soundLabel(selectedSound)}
+                    </Text>
+                    <TouchableOpacity
+                      hitSlop={8}
+                      onPress={(e) => {
+                        e.stopPropagation?.();
+                        handleSoundSelect(null);
+                      }}
+                    >
+                      <Text style={styles.soundRemoveText}>Remove</Text>
+                    </TouchableOpacity>
+                  </TouchableOpacity>
+                  <ReelSoundTrimTimeline
+                    duration={soundDuration}
+                    startSec={soundStartSec}
+                    endSec={soundEndSec > soundStartSec ? soundEndSec : soundStartSec + clipLenSec}
+                    previewSec={Math.max(
+                      soundStartSec,
+                      Math.min(soundPreviewSec, soundEndSec - 0.05)
+                    )}
+                    onStartChange={(v) => onUpdateItem(previewIndex, { soundStartSec: v })}
+                    onEndChange={(v) => onUpdateItem(previewIndex, { soundEndSec: v })}
+                    onPreviewChange={(v) => setSoundPreviewSec(v)}
+                    onPreviewStart={() => {}}
+                    onPreviewComplete={(v) => setSoundPreviewSec(v)}
+                  />
+                  {currentItem.mediaType === 'video' ? (
+                    <View style={styles.volumeBlock}>
+                      <Text style={styles.volumeLabel}>
+                        Original audio · {Math.round(originalAudioVolume * 100)}%
+                      </Text>
+                      <Slider
+                        style={styles.volumeSlider}
+                        minimumValue={0}
+                        maximumValue={1}
+                        step={0.01}
+                        value={originalAudioVolume}
+                        onValueChange={(v) =>
+                          onUpdateItem(previewIndex, { originalAudioVolume: v })
+                        }
+                        minimumTrackTintColor={C.primary}
+                        maximumTrackTintColor="#d1d5db"
+                        thumbTintColor={C.primary}
+                      />
+                    </View>
+                  ) : null}
+                  <View style={styles.volumeBlock}>
+                    <Text style={styles.volumeLabel}>
+                      Music · {Math.round(soundVolume * 100)}%
+                    </Text>
+                    <Slider
+                      style={styles.volumeSlider}
+                      minimumValue={0}
+                      maximumValue={1}
+                      step={0.01}
+                      value={soundVolume}
+                      onValueChange={(v) => onUpdateItem(previewIndex, { soundVolume: v })}
+                      minimumTrackTintColor={C.primary}
+                      maximumTrackTintColor="#d1d5db"
+                      thumbTintColor={C.primary}
+                    />
+                  </View>
+                </>
+              ) : (
+                <TouchableOpacity style={styles.addSoundBtn} onPress={() => setSoundOpen(true)}>
+                  <Ionicons name="musical-notes-outline" size={20} color={C.primary} />
+                  <Text style={styles.addSoundText}>Add music</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          ) : null}
 
           {currentItem.mediaType === 'text' && (
             <View style={styles.section}>
@@ -503,6 +677,13 @@ export function MomentComposer({
             </View>
           )}
         </ScrollView>
+
+        <ReelSoundPicker
+          visible={soundOpen}
+          selectedId={selectedSound?.id}
+          onClose={() => setSoundOpen(false)}
+          onSelect={handleSoundSelect}
+        />
       </View>
     </Modal>
   );
@@ -536,12 +717,6 @@ const styles = StyleSheet.create({
 
   previewCard: {
     margin: 14,
-    height: 380,
-    borderRadius: 20,
-    overflow: 'hidden',
-    backgroundColor: '#000',
-    borderWidth: 1,
-    borderColor: C.border,
   },
   previewMedia: { width: '100%', height: '100%' },
   previewGrad: { ...StyleSheet.absoluteFillObject },
@@ -739,4 +914,33 @@ const styles = StyleSheet.create({
   },
   checkOn: { backgroundColor: C.primary, borderColor: C.primary },
   emptyFriends: { textAlign: 'center', color: C.muted, padding: 20 },
+
+  soundRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 12,
+    backgroundColor: C.bg,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: C.border,
+    marginBottom: 10,
+  },
+  soundRowText: { flex: 1, fontSize: 14, fontWeight: '600', color: C.text },
+  soundRemoveText: { color: '#ef4444', fontSize: 13, fontWeight: '600' },
+  addSoundBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 14,
+    backgroundColor: C.bg,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  addSoundText: { color: C.primary, fontSize: 15, fontWeight: '700' },
+  volumeBlock: { marginTop: 12 },
+  volumeLabel: { color: C.muted, fontSize: 12, fontWeight: '600', marginBottom: 4 },
+  volumeSlider: { width: '100%', height: 36 },
 });

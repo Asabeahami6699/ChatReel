@@ -43,9 +43,10 @@ function MediaTilePreview({ item }: { item: MediaDraft }) {
       <ReelPlayer
         source={item.uri}
         style={StyleSheet.absoluteFill}
-        contentFit="contain"
-        shouldPlay={false}
-        isLooping={false}
+        contentFit="cover"
+        shouldPlay
+        isLooping
+        isMuted
         nativeControls={false}
       />
     </View>

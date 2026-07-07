@@ -53,8 +53,6 @@ export function setSupabaseSession(accessToken: string, _refreshToken?: string) 
   try {
     supabase.realtime.setAuth(accessToken);
     if (isNew) {
-      // 1-line breadcrumb so it's easy to spot in logs the moment Realtime is authed.
-      console.log('[supabase] realtime auth set (token len:', accessToken.length, ')');
       authChangeListeners.forEach((fn) => {
         try {
           fn();

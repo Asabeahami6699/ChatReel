@@ -3,6 +3,7 @@ import {
   getAuthUserIdByProfileId,
   sendPushToUserSafe,
 } from './push.service';
+import type { ReelSoundSummary } from './reels.service';
 
 export type MomentAudienceMode = 'friends' | 'only' | 'except';
 
@@ -21,6 +22,10 @@ export type MomentRow = {
   group_id: string | null;
   position: number;
   reel_id: string | null;
+  sound_id: string | null;
+  sound_start_sec: number;
+  original_audio_volume: number;
+  sound_volume: number;
   created_at: string;
 };
 
@@ -56,6 +61,11 @@ export type MomentSlideDTO = {
   view_count?: number;
   reel_id?: string | null;
   reel?: MomentReelRefDTO | null;
+  sound_id?: string | null;
+  sound_start_sec?: number | null;
+  original_audio_volume?: number | null;
+  sound_volume?: number | null;
+  sound?: ReelSoundSummary | null;
 };
 
 export type MomentViewerDTO = {
@@ -496,7 +506,7 @@ export async function buildMomentsFeed(viewerProfileId: string): Promise<MomentA
   const { data: rows, error } = await supabaseAdmin
     .from('moments')
     .select(
-      `id, author_id, media_url, media_type, caption, text_background, thumbnail_url, duration_minutes, expires_at, view_once, audience_mode, group_id, position, reel_id, created_at,
+      `id, author_id, media_url, media_type, caption, text_background, thumbnail_url, duration_minutes, expires_at, view_once, audience_mode, group_id, position, reel_id, sound_id, sound_start_sec, original_audio_volume, sound_volume, created_at,
        author:profiles!moments_author_id_fkey(id, user_id, display_name, email, avatar_url)`
     )
     .gt('expires_at', now)
@@ -565,6 +575,10 @@ export async function buildMomentsFeed(viewerProfileId: string): Promise<MomentA
       group_id: moment.group_id ?? null,
       position: moment.position ?? 0,
       reel_id: moment.reel_id ?? null,
+      sound_id: moment.sound_id ?? null,
+      sound_start_sec: moment.sound_start_sec ?? 0,
+      original_audio_volume: moment.original_audio_volume ?? 1,
+      sound_volume: moment.sound_volume ?? 0.45,
     };
 
     if (!visibleByAuthor.has(moment.author_id)) visibleByAuthor.set(moment.author_id, []);
@@ -608,6 +622,21 @@ export async function buildMomentsFeed(viewerProfileId: string): Promise<MomentA
     }
   }
 
+  const soundIds = [
+    ...new Set(moments.map((m) => m.sound_id).filter((id): id is string => Boolean(id))),
+  ];
+  const soundById = new Map<string, ReelSoundSummary>();
+  if (soundIds.length) {
+    const { data: soundRows, error: soundErr } = await supabaseAdmin
+      .from('reel_sounds')
+      .select('id, title, artist, audio_url, preview_url, duration_sec, cover_url, usage_count')
+      .in('id', soundIds);
+    if (soundErr) throw new Error(soundErr.message);
+    for (const s of (soundRows ?? []) as ReelSoundSummary[]) {
+      soundById.set(s.id, s);
+    }
+  }
+
   const authors: MomentAuthorFeedDTO[] = [];
   for (const [authorId, slides] of visibleByAuthor) {
     if (!slides.length) continue;
@@ -619,10 +648,14 @@ export async function buildMomentsFeed(viewerProfileId: string): Promise<MomentA
         authorId === viewerProfileId
           ? { ...slide, view_count: viewCounts.get(slide.id) ?? 0 }
           : slide;
+      let enriched = base;
       if (slide.reel_id && reelRefMap.has(slide.reel_id)) {
-        return { ...base, reel: reelRefMap.get(slide.reel_id) ?? null };
+        enriched = { ...enriched, reel: reelRefMap.get(slide.reel_id) ?? null };
       }
-      return base;
+      if (slide.sound_id && soundById.has(slide.sound_id)) {
+        enriched = { ...enriched, sound: soundById.get(slide.sound_id) ?? null };
+      }
+      return enriched;
     });
 
     authors.push({

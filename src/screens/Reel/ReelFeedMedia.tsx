@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { memo, useEffect, useRef, useState } from 'react';
 import {
   FlatList,
   NativeScrollEvent,
@@ -30,7 +30,7 @@ type Props = {
   onMediaIndexChange?: (reelId: string, index: number) => void;
 };
 
-export function ReelFeedMedia({
+function ReelFeedMediaComponent({
   reel,
   reelIndex,
   currentReelIndex,
@@ -178,6 +178,26 @@ export function ReelFeedMedia({
     </View>
   );
 }
+
+function feedMediaPropsEqual(prev: Props, next: Props): boolean {
+  if (prev.reel.id !== next.reel.id) return false;
+  if (prev.reelIndex !== next.reelIndex) return false;
+  if (prev.videoUri !== next.videoUri) return false;
+  if (prev.frameWidth !== next.frameWidth || prev.frameHeight !== next.frameHeight) return false;
+  if (prev.isReady !== next.isReady) return false;
+  if (prev.isMuted !== next.isMuted || prev.volume !== next.volume) return false;
+
+  const prevCurrent = prev.reelIndex === prev.currentReelIndex;
+  const nextCurrent = next.reelIndex === next.currentReelIndex;
+  if (prevCurrent || nextCurrent) {
+    if (prev.currentReelIndex !== next.currentReelIndex) return false;
+    if (prev.isFocused !== next.isFocused) return false;
+    if (prev.isPlaying !== next.isPlaying) return false;
+  }
+  return true;
+}
+
+export const ReelFeedMedia = memo(ReelFeedMediaComponent, feedMediaPropsEqual);
 
 const styles = StyleSheet.create({
   wrap: { flex: 1 },

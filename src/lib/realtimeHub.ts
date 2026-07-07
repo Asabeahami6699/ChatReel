@@ -80,7 +80,6 @@ export async function startRealtimeHub(
       if (!profileId) return;
       if (!row) return;
       if (row.user_id === profileId || row.friend_id === profileId) {
-        console.log('[realtimeHub] friendships event');
         realtimeTopics.friendships.notify();
       }
     }
@@ -93,17 +92,6 @@ export async function startRealtimeHub(
       const row = (payload.new ?? payload.old) as
         | { sender_id?: string; receiver_id?: string; group_id?: string; id?: string }
         | undefined;
-      console.log(
-        '[realtimeHub] messages',
-        payload.eventType,
-        row?.id,
-        'sender:',
-        row?.sender_id,
-        'receiver:',
-        row?.receiver_id,
-        'group:',
-        row?.group_id
-      );
       if (row?.id && (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE')) {
         dispatchMessageRow(row, payload.eventType);
       }
@@ -139,7 +127,6 @@ export async function startRealtimeHub(
   ch.subscribe(async (status, err) => {
     if (status === 'SUBSCRIBED') {
       errorRetries = 0;
-      console.log('[realtimeHub] subscribed for', authUserId);
     } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
       console.error('[realtimeHub] status', status, err);
       if (errorRetries < 3) {

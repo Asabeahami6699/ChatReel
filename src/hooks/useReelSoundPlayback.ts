@@ -1,6 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type { ReelDTO } from '../lib/api';
-import { getReelMediaItems, isImageReelUrl } from '../lib/reelPlayback';
+import type { MomentSlideDTO, ReelDTO } from '../lib/api';
 import {
   configurePlaybackAudio,
   createPlaybackPlayer,
@@ -9,28 +8,57 @@ import {
   type AudioPlayer,
 } from '../lib/appAudio';
 
+/** Minimal fields needed for overlay music playback (reels + moments). */
+export type SoundPlaybackItem = Pick<
+  ReelDTO,
+  | 'sound'
+  | 'sound_id'
+  | 'sound_start_sec'
+  | 'sound_volume'
+  | 'original_audio_volume'
+  | 'duration'
+  | 'transcode_status'
+  | 'hls_url'
+>;
+
 /** True when the published file already has music baked in (HLS or muxed MP4). */
-export function reelHasMuxedSound(reel: ReelDTO): boolean {
-  if (reel.transcode_status === 'ready' && reel.hls_url) return true;
-  if (reel.transcode_status === 'ready' && reel.sound_id && !reel.hls_url) return true;
+export function reelHasMuxedSound(item: SoundPlaybackItem): boolean {
+  if (item.transcode_status === 'ready' && item.hls_url) return true;
+  if (item.transcode_status === 'ready' && item.sound_id && !item.hls_url) return true;
   return false;
 }
 
 /**
- * Overlay music when the reel has a sound track that is not yet muxed into the video,
- * or for photo reels (music is always separate).
+ * Overlay music when the track is not muxed into the video (or photo posts).
  */
-export function reelNeedsOverlaySound(reel: ReelDTO): boolean {
-  if (!reel.sound?.audio_url && !reel.sound?.preview_url) return false;
-  if (reelHasMuxedSound(reel)) return false;
+export function reelNeedsOverlaySound(item: SoundPlaybackItem | null | undefined): boolean {
+  if (!item?.sound?.audio_url && !item?.sound?.preview_url) return false;
+  if (reelHasMuxedSound(item)) return false;
   return true;
 }
 
 /** Video player volume when overlay music is active (voice track). */
-export function reelVideoVoiceVolume(reel: ReelDTO, masterVolume: number): number {
-  if (!reelNeedsOverlaySound(reel)) return masterVolume;
-  const voice = reel.original_audio_volume ?? 1;
+export function reelVideoVoiceVolume(item: SoundPlaybackItem, masterVolume: number): number {
+  if (!reelNeedsOverlaySound(item)) return masterVolume;
+  const voice = item.original_audio_volume ?? 1;
   return masterVolume * voice;
+}
+
+/** Moments never mux audio — map slide + clip length to reel-style playback source. */
+export function momentToSoundPlayback(
+  slide: MomentSlideDTO,
+  clipSec: number
+): SoundPlaybackItem {
+  return {
+    sound: slide.sound,
+    sound_id: slide.sound_id,
+    sound_start_sec: slide.sound_start_sec,
+    sound_volume: slide.sound_volume,
+    original_audio_volume: slide.original_audio_volume,
+    duration: clipSec,
+    transcode_status: 'pending',
+    hls_url: null,
+  };
 }
 
 type Options = {
@@ -43,8 +71,12 @@ type Options = {
 
 /**
  * Plays attached music for image reels and video reels awaiting server mux.
+ * Also used for moments via momentToSoundPlayback().
  */
-export function useReelSoundPlayback(reel: ReelDTO | null | undefined, opts: Options): void {
+export function useReelSoundPlayback(
+  item: SoundPlaybackItem | null | undefined,
+  opts: Options
+): void {
   const playerRef = useRef<AudioPlayer | null>(null);
   const watchRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -63,27 +95,27 @@ export function useReelSoundPlayback(reel: ReelDTO | null | undefined, opts: Opt
     };
 
     const shouldPlay =
-      Boolean(reel) &&
-      reelNeedsOverlaySound(reel!) &&
+      Boolean(item) &&
+      reelNeedsOverlaySound(item!) &&
       opts.active &&
       opts.playing &&
       opts.focused &&
       !opts.muted;
 
-    if (!shouldPlay || !reel?.sound) {
+    if (!shouldPlay || !item?.sound) {
       void stopPlayer();
       return;
     }
 
-    const sound = reel.sound;
-    const startSec = Math.max(0, reel.sound_start_sec ?? 0);
-    const clipSec = reel.duration && reel.duration > 0 ? reel.duration : 15;
+    const sound = item.sound;
+    const startSec = Math.max(0, item.sound_start_sec ?? 0);
+    const clipSec = item.duration && item.duration > 0 ? item.duration : 15;
     const endSec =
       sound.duration_sec != null && sound.duration_sec > startSec
         ? Math.min(startSec + clipSec, sound.duration_sec)
         : startSec + clipSec;
     const url = sound.preview_url ?? sound.audio_url;
-    const musicVol = (reel.sound_volume ?? 0.45) * (opts.masterVolume ?? 1);
+    const musicVol = (item.sound_volume ?? 0.45) * (opts.masterVolume ?? 1);
 
     let alive = true;
 
@@ -125,14 +157,14 @@ export function useReelSoundPlayback(reel: ReelDTO | null | undefined, opts: Opt
       void stopPlayer();
     };
   }, [
-    reel,
-    reel?.id,
-    reel?.sound?.id,
-    reel?.sound_start_sec,
-    reel?.sound_volume,
-    reel?.duration,
-    reel?.transcode_status,
-    reel?.hls_url,
+    item,
+    item?.sound?.id,
+    item?.sound_start_sec,
+    item?.sound_volume,
+    item?.duration,
+    item?.transcode_status,
+    item?.hls_url,
+    item?.sound_id,
     opts.active,
     opts.playing,
     opts.muted,

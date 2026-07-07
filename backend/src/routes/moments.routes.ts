@@ -15,6 +15,7 @@ import {
   getMomentActivity,
   MomentAudienceMode,
 } from '../services/moments.service';
+import { assertReelSoundActive } from '../services/reelSounds.service';
 import {
   canViewReel,
   enrichReels,
@@ -32,6 +33,10 @@ const mediaItemSchema = z
     caption: z.string().max(2000).optional(),
     text_background: z.string().max(50).optional(),
     thumbnail_url: z.string().url().optional(),
+    sound_id: z.string().uuid().optional(),
+    sound_start_sec: z.number().min(0).optional(),
+    original_audio_volume: z.number().min(0).max(1).optional(),
+    sound_volume: z.number().min(0).max(1).optional(),
   })
   .superRefine((item, ctx) => {
     if (item.media_type === 'text') {
@@ -103,6 +108,10 @@ function resolveMediaItems(body: z.infer<typeof createMomentSchema>) {
       caption: item.caption?.trim() || null,
       text_background: item.text_background?.trim() || null,
       thumbnail_url: item.thumbnail_url ?? null,
+      sound_id: item.sound_id ?? null,
+      sound_start_sec: item.sound_start_sec ?? 0,
+      original_audio_volume: item.original_audio_volume ?? 1,
+      sound_volume: item.sound_volume ?? 0.45,
     }));
   }
   if (body.media_type === 'text') {
@@ -113,6 +122,10 @@ function resolveMediaItems(body: z.infer<typeof createMomentSchema>) {
         caption: body.caption?.trim() || null,
         text_background: body.text_background?.trim() || 'ocean',
         thumbnail_url: null,
+        sound_id: null,
+        sound_start_sec: 0,
+        original_audio_volume: 1,
+        sound_volume: 0.45,
       },
     ];
   }
@@ -123,6 +136,10 @@ function resolveMediaItems(body: z.infer<typeof createMomentSchema>) {
       caption: body.caption?.trim() || null,
       text_background: null,
       thumbnail_url: null,
+      sound_id: null,
+      sound_start_sec: 0,
+      original_audio_volume: 1,
+      sound_volume: 0.45,
     },
   ];
 }
@@ -175,6 +192,12 @@ router.post(
       if (item.thumbnail_url) {
         assertMomentThumbnailUrl(item.thumbnail_url);
       }
+      if (item.sound_id) {
+        if (item.media_type !== 'video' && item.media_type !== 'image') {
+          return res.status(400).json({ error: 'Music is only supported on photo and video moments' });
+        }
+        await assertReelSoundActive(item.sound_id);
+      }
     }
 
     const audienceIds = body.audience_ids ?? [];
@@ -205,6 +228,13 @@ router.post(
       caption: item.caption,
       text_background: item.text_background,
       thumbnail_url: item.thumbnail_url,
+      sound_id: item.media_type === 'video' || item.media_type === 'image' ? item.sound_id : null,
+      sound_start_sec:
+        item.media_type === 'video' || item.media_type === 'image' ? item.sound_start_sec : 0,
+      original_audio_volume:
+        item.media_type === 'video' ? item.original_audio_volume : 1,
+      sound_volume:
+        item.media_type === 'video' || item.media_type === 'image' ? item.sound_volume : 0.45,
       duration_minutes: body.duration_minutes,
       expires_at: expiresAt,
       view_once: body.view_once,

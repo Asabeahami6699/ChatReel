@@ -116,14 +116,6 @@ export default function DropdownMenu({ triggerIcon = 'ellipsis-vertical' }: Drop
     },
   ];
 
-  // Debugging navigation on the web side
-  useEffect(() => {
-    if (Platform.OS === 'web') {
-      console.log('Navigation:', navigation);  // Check navigation object
-      console.log('Navigation state:', navigation.getState()); // Get the full state of navigation
-    }
-  }, [navigation]);
-
   return (
     <>
       {/* Trigger */}

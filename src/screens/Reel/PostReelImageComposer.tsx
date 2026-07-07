@@ -14,7 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ReelSoundPicker, soundLabel } from './ReelSoundPicker';
 import { ReelSoundTrimTimeline } from './ReelSoundTrimTimeline';
-import { defaultSoundRange } from './PostReelVideoComposer';
+import { defaultSoundRange, IMAGE_SOUND_CLIP_SEC } from './reelSoundUtils';
 import type { ReelSoundDTO } from '../../lib/api';
 import type { ReelUploadVisibility } from '../../lib/reelUploadQueue';
 import {
@@ -33,7 +33,7 @@ import { REEL_ACCENT } from './reelTheme';
 import { pauseReelFeedPlayback } from '../../lib/reelPlaybackBridge';
 
 /** Photo reels display ~15s in feed — default music clip length. */
-export const IMAGE_REEL_CLIP_SEC = 15;
+export const IMAGE_REEL_CLIP_SEC = IMAGE_SOUND_CLIP_SEC;
 
 type DockTab = 'filter' | 'sound' | 'details';
 

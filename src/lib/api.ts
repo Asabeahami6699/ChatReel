@@ -117,6 +117,11 @@ export type MomentSlideDTO = {
     thumbnail_url: string | null;
     author_name: string;
   } | null;
+  sound_id?: string | null;
+  sound_start_sec?: number | null;
+  original_audio_volume?: number | null;
+  sound_volume?: number | null;
+  sound?: ReelSoundDTO | null;
 };
 
 export type MomentViewerDTO = {
@@ -693,6 +698,10 @@ export const api = {
         caption?: string;
         text_background?: string;
         thumbnail_url?: string;
+        sound_id?: string;
+        sound_start_sec?: number;
+        original_audio_volume?: number;
+        sound_volume?: number;
       }>;
       caption?: string;
       text_background?: string;

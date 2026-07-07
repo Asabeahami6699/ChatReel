@@ -316,8 +316,6 @@ export const useGroupList = (searchQuery = '') => {
   useEffect(() => {
     if (!user?.id) return;
 
-    console.log('[chatlist-groups] subscribeToMessageRows attached for', user.id);
-
     return subscribeToMessageRows((row, event) => {
       if (event !== 'INSERT') return;
       const groupId = row.group_id as string | undefined;
@@ -329,16 +327,9 @@ export const useGroupList = (searchQuery = '') => {
       const createdAt = String(row.created_at ?? new Date().toISOString());
       const isIncoming = senderId !== user.id;
 
-      console.log('[chatlist-groups] message event INSERT', {
-        groupId,
-        direction: isIncoming ? 'incoming' : 'outgoing',
-        content: content.slice(0, 30),
-      });
-
       setGroups((prev) => {
         const idx = prev.findIndex((g) => g.id === groupId);
         if (idx < 0) {
-          console.log('[chatlist-groups] group not in list, fetching…');
           void fetchGroups(true, true);
           return prev;
         }
@@ -352,7 +343,6 @@ export const useGroupList = (searchQuery = '') => {
             : next[idx].unread_count,
         };
         next.splice(idx, 1);
-        console.log('[chatlist-groups] updated group', next[0]?.name ?? groupId);
         return [updated, ...next];
       });
     });

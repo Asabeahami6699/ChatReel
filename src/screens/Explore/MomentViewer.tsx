@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Image,
@@ -20,6 +20,13 @@ import { getTextBackground } from '../../lib/momentTextBackgrounds';
 import { isHlsUrl, isImageReelUrl } from '../../lib/reelPlayback';
 import { ReelPlayer, type ReelPlayerHandle } from '../../components/ReelPlayer';
 import { WebHlsVideo } from '../Reel/WebHlsVideo';
+import {
+  momentToSoundPlayback,
+  reelNeedsOverlaySound,
+  reelVideoVoiceVolume,
+  useReelSoundPlayback,
+} from '../../hooks/useReelSoundPlayback';
+import { dedupeMomentSlides } from '../../lib/momentSlides';
 import { navigateToReelPreview } from '../../navigation/navigateToChat';
 import { MomentViewersSheet } from './MomentViewersSheet';
 import {
@@ -112,25 +119,45 @@ export function MomentViewer({
   const videoRef = useRef<ReelPlayerHandle>(null);
   const imageStartRef = useRef(Date.now());
   const imageElapsedRef = useRef(0);
-  const videoDurationRef = useRef(IMAGE_DURATION_MS);
+  const [videoDurationSec, setVideoDurationSec] = useState(IMAGE_DURATION_MS / 1000);
 
-  const slides = author?.slides ?? [];
+  const slides = useMemo(
+    () => dedupeMomentSlides(author?.slides ?? []),
+    [author?.slides]
+  );
   const currentSlide = slides[slideIndex];
   const isOwner = author?.author.id === myProfileId;
   const frozen =
     activityOpen || composerFocused || sendingComposer || reelCaptionOpen || composerOpen;
   const isPaused = paused || holding || frozen;
   const videoShouldPlay = visible && !isPaused && Boolean(currentSlide);
+  const soundClipSec =
+    currentSlide?.media_type === 'image'
+      ? IMAGE_DURATION_MS / 1000
+      : Math.max(1, videoDurationSec);
+  const soundSource = useMemo(
+    () => (currentSlide ? momentToSoundPlayback(currentSlide, soundClipSec) : null),
+    [currentSlide, soundClipSec]
+  );
+  const overlaySoundActive = reelNeedsOverlaySound(soundSource);
+  const videoVoiceVolume = soundSource ? reelVideoVoiceVolume(soundSource) : 1;
+
+  useReelSoundPlayback(soundSource, {
+    active: visible && overlaySoundActive,
+    playing: visible && !isPaused && !frozen,
+    muted: false,
+    focused: visible,
+  });
 
   const goNext = useCallback(() => {
     if (frozen) return;
     if (!author) return;
-    if (slideIndex < author.slides.length - 1) {
+    if (slideIndex < slides.length - 1) {
       setSlideIndex((i) => i + 1);
     } else {
       onClose();
     }
-  }, [author, slideIndex, onClose, frozen]);
+  }, [slides.length, slideIndex, onClose, frozen]);
 
   const goPrev = useCallback(() => {
     if (frozen) return;
@@ -162,6 +189,7 @@ export function MomentViewer({
     setProgress(0);
     setPaused(false);
     setComposerMode(null);
+    setVideoDurationSec(IMAGE_DURATION_MS / 1000);
     imageElapsedRef.current = 0;
     imageStartRef.current = Date.now();
   }, [slideIndex, currentSlide?.id]);
@@ -215,16 +243,16 @@ export function MomentViewer({
     }) => {
       if (isPaused) return;
       if (status.durationMillis && status.durationMillis > 0) {
-        videoDurationRef.current = status.durationMillis;
+        setVideoDurationSec(status.durationMillis / 1000);
       }
-      const duration = status.durationMillis || videoDurationRef.current;
+      const duration = status.durationMillis || videoDurationSec * 1000;
       const position = status.positionMillis ?? 0;
       if (duration > 0) {
         setProgress(Math.min(100, (position / duration) * 100));
       }
       if (status.didJustFinish && !isPaused) goNext();
     },
-    [goNext, isPaused]
+    [goNext, isPaused, videoDurationSec]
   );
 
   const sendComposer = async () => {
@@ -338,7 +366,7 @@ export function MomentViewer({
       <View style={styles.viewer}>
         <View style={[styles.viewerProgressRow, { paddingTop: insets.top + 8 }]}>
           {slides.map((s, i) => (
-            <View key={s.id} style={styles.viewerProgressTrack}>
+            <View key={`${s.id}-${i}`} style={styles.viewerProgressTrack}>
               <View
                 style={[
                   styles.viewerProgressFill,
@@ -439,7 +467,7 @@ export function MomentViewer({
                 key={currentSlide.id}
                 uri={currentSlide.media_url}
                 style={styles.viewerMedia}
-                muted={false}
+                muted={overlaySoundActive}
                 shouldPlay={videoShouldPlay}
               />
             ) : (
@@ -448,9 +476,11 @@ export function MomentViewer({
                 ref={videoRef}
                 source={currentSlide.media_url}
                 style={styles.viewerMedia}
-                contentFit="contain"
+                contentFit="cover"
                 shouldPlay={videoShouldPlay}
                 isLooping={false}
+                isMuted={overlaySoundActive}
+                volume={overlaySoundActive ? videoVoiceVolume : 1}
                 progressUpdateIntervalMillis={100}
                 onPlaybackStatusUpdate={handleVideoStatus}
               />
@@ -459,7 +489,7 @@ export function MomentViewer({
             <Image
               source={{ uri: currentSlide.media_url }}
               style={styles.viewerMedia}
-              resizeMode="contain"
+              resizeMode="cover"
             />
           ) : null}
 
@@ -640,8 +670,8 @@ const styles = StyleSheet.create({
     padding: 6,
     marginRight: 8,
   },
-  viewerBody: { flex: 1, justifyContent: 'center' },
-  viewerMedia: { width: '100%', height: '100%', justifyContent: 'center', alignItems: 'center' },
+  viewerBody: { flex: 1 },
+  viewerMedia: { width: '100%', height: '100%' },
   textMomentBody: {
     color: '#fff',
     fontSize: 28,

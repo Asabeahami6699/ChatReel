@@ -177,12 +177,22 @@ export function useReelsFeed(source: FeedSource = 'feed') {
       const { reels: latest } = await fetchPage(null);
       setState((s) => {
         const byId = new Map(s.reels.map((r) => [r.id, r]));
-        for (const r of latest) byId.set(r.id, r);
-        // Re-order: new items go to the front (latest first), then keep
-        // any older items in their existing relative order.
         const latestIds = new Set(latest.map((r) => r.id));
         const tail = s.reels.filter((r) => !latestIds.has(r.id));
-        const head = latest.map((r) => byId.get(r.id) as ReelDTO);
+        const head = latest.map((fresh) => {
+          const prev = byId.get(fresh.id);
+          if (!prev) return fresh;
+          if (
+            prev.like_count === fresh.like_count &&
+            prev.comment_count === fresh.comment_count &&
+            prev.view_count === fresh.view_count &&
+            prev.liked_by_me === fresh.liked_by_me &&
+            prev.caption === fresh.caption
+          ) {
+            return prev;
+          }
+          return { ...prev, ...fresh };
+        });
         return { ...s, reels: [...head, ...tail] };
       });
     } catch {
@@ -210,7 +220,19 @@ export function useReelsFeed(source: FeedSource = 'feed') {
       if (freshById.size === 0) return;
       setState((s) => ({
         ...s,
-        reels: s.reels.map((r) => freshById.get(r.id) ?? r),
+        reels: s.reels.map((r) => {
+          const fresh = freshById.get(r.id);
+          if (!fresh) return r;
+          if (
+            r.like_count === fresh.like_count &&
+            r.comment_count === fresh.comment_count &&
+            r.view_count === fresh.view_count &&
+            r.liked_by_me === fresh.liked_by_me
+          ) {
+            return r;
+          }
+          return { ...r, ...fresh };
+        }),
       }));
     } catch {
       /* ignore */

@@ -119,8 +119,6 @@ export const useIndividualChats = (searchQuery: string = '') => {
   useEffect(() => {
     if (!user?.id) return;
 
-    console.log('[chatlist-individual] subscribeToMessageRows attached for', user.id);
-
     return subscribeToMessageRows((row, event) => {
       // Skip group messages — handled by useGroupList.
       if (row.group_id) return;
@@ -135,12 +133,6 @@ export const useIndividualChats = (searchQuery: string = '') => {
 
       const partnerId = isIncoming ? senderId : receiverId;
 
-      console.log('[chatlist-individual] message event', event, {
-        partnerId,
-        direction: isIncoming ? 'incoming' : 'outgoing',
-        content: String(row.content ?? '').slice(0, 30),
-      });
-
       if (event === 'INSERT') {
         const content = String(row.content ?? '');
         const createdAt = String(row.created_at ?? new Date().toISOString());
@@ -148,7 +140,6 @@ export const useIndividualChats = (searchQuery: string = '') => {
         setChats((prev) => {
           const idx = prev.findIndex((c) => c.user_id === partnerId);
           if (idx < 0) {
-            console.log('[chatlist-individual] partner not in list, fetching…');
             void fetchChats(true, true);
             return prev;
           }
@@ -164,7 +155,6 @@ export const useIndividualChats = (searchQuery: string = '') => {
           next.splice(idx, 1);
           const reordered = [updated, ...next];
           void saveChatsToStorage(reordered);
-          console.log('[chatlist-individual] updated chat for', next[0]?.name ?? partnerId);
           return reordered;
         });
       } else if (event === 'UPDATE') {

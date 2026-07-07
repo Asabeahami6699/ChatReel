@@ -27,6 +27,9 @@ import {
 import { REEL_ACCENT } from './reelTheme';
 import { ReelSchedulePicker } from './ReelProfileMenuFloat';
 import { pauseReelFeedPlayback } from '../../lib/reelPlaybackBridge';
+import { defaultSoundRange } from './reelSoundUtils';
+
+export { defaultSoundRange } from './reelSoundUtils';
 
 type DockTab = 'edit' | 'filter' | 'sound' | 'details';
 
@@ -66,15 +69,6 @@ type Props = {
   openSoundOnMount?: boolean;
   onSoundPickerOpened?: () => void;
 };
-
-export function defaultSoundRange(
-  sound: ReelSoundDTO,
-  clipLenSec: number
-): { start: number; end: number } {
-  const trackLen = sound.duration_sec ?? Math.max(clipLenSec + 30, 60);
-  const end = Math.min(trackLen, Math.max(clipLenSec, 1));
-  return { start: 0, end };
-}
 
 function VolumeSlider({
   label,
@@ -276,6 +270,10 @@ export function PostReelVideoComposer({
   }, [dock, stopSoundPreview]);
 
   useEffect(() => {
+    if (previewOpen) void stopSoundPreview();
+  }, [previewOpen, stopSoundPreview]);
+
+  useEffect(() => {
     return () => {
       void releasePlayer(soundPreviewPlayerRef.current);
       soundPreviewPlayerRef.current = null;
@@ -321,9 +319,9 @@ export function PostReelVideoComposer({
           onChange={onVideoChange}
           onEditNative={onReplaceMedia}
           onPickThumbnailFrame={(t) => void handlePickThumbnail(t)}
-          overlaySound={overlaySound}
+          overlaySound={previewOpen ? null : overlaySound}
           immersive
-          forcePaused={dock === 'sound'}
+          forcePaused={previewOpen || dock === 'sound'}
           showTrimControls={dock === 'edit'}
           showFilterControls={dock === 'filter'}
         />
@@ -513,7 +511,14 @@ export function PostReelVideoComposer({
         })}
       </View>
 
-      <Modal visible={previewOpen} animationType="slide" onRequestClose={() => setPreviewOpen(false)}>
+      <Modal
+        visible={previewOpen}
+        animationType="slide"
+        onRequestClose={() => {
+          void stopSoundPreview();
+          setPreviewOpen(false);
+        }}
+      >
         <View style={[styles.previewModal, { paddingTop: insets.top + 8, paddingBottom: insets.bottom + 12 }]}>
           <View style={styles.previewTop}>
             <TouchableOpacity onPress={() => setPreviewOpen(false)}>

@@ -13,9 +13,6 @@ export function createRealtimeTopic(_name: string): RealtimeTopic {
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   const runListeners = () => {
-    if (listeners.size > 0) {
-      console.log(`[realtime:${_name}] dispatching to ${listeners.size} listener(s)`);
-    }
     listeners.forEach((fn) => {
       try {
         fn();

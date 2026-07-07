@@ -4,7 +4,6 @@ import {
   Alert,
   Animated,
   FlatList,
-  Image,
   Modal,
   PanResponder,
   Platform,
@@ -32,6 +31,7 @@ import {
   registerBeforeChatNavigate,
   unregisterBeforeChatNavigate,
 } from '../../navigation/chatNavigationBridge';
+import { navigateMainTab } from '../../navigation/rootNavigation';
 import { openPostReelCompose, registerReelFeedPauseHandler, useReelPlaybackGateActive } from '../../lib/reelPlaybackBridge';
 import ReelCommentSheet from './ReelCommentSheet';
 import ReelShareSheet from './ReelShareSheet';
@@ -45,49 +45,16 @@ import {
   getReelFrameDimensions,
 } from './reelVideoLayout';
 import { useReelVideoPrefetch } from './useReelVideoPrefetch';
-import { ReelFeedMedia } from './ReelFeedMedia';
 import { reelTabBarOffset } from './ReelsTabBar';
 import { useReelsMainTabFocused } from '../../context/ReelsMainTabFocusContext';
 import { useReelFeedMode } from './ReelFeedModeContext';
-import { ExpandableCaption } from './ExpandableCaption';
-import { ReelSoundStrip } from './ReelSoundStrip';
-import { ReelBrandBadge } from './ReelBrandBadge';
-import { ReelEndScreen } from './ReelEndScreen';
 import { REEL_ACCENT, REEL_END_SCREEN_MS, reelBottomLayout } from './reelTheme';
 import { VolumeControl } from './VolumeControl';
+import { ReelFeedRow } from './ReelFeedRow';
+import { ReelFeedOverlays } from './ReelFeedOverlays';
 
 const WINDOW_HEIGHT = SCREEN_HEIGHT;
-
-function ActionIcon({
-  name,
-  size = 28,
-  color = '#fff',
-}: {
-  name: keyof typeof Ionicons.glyphMap;
-  size?: number;
-  color?: string;
-  active?: boolean;
-}) {
-  return <Ionicons name={name} size={size} color={color} />;
-}
-
-function formatCount(n: number): string {
-  if (n < 1000) return String(n);
-  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}K`.replace('.0K', 'K');
-  return `${(n / 1_000_000).toFixed(1)}M`.replace('.0M', 'M');
-}
-
-function authorLabel(reel: ReelDTO): string {
-  return (
-    reel.author?.display_name?.trim() ||
-    reel.author?.email?.split('@')[0] ||
-    'unknown'
-  );
-}
-
-function avatarFor(reel: ReelDTO): string | null {
-  return reel.author?.avatar_url ?? null;
-}
+const PROGRESS_UI_MS = 280;
 
 const navArrowStyles = StyleSheet.create({
   container: {
@@ -167,6 +134,8 @@ export default function ReelsScreen() {
   const activeMediaIndexRef = useRef<Record<string, number>>({});
   const durationMillisRef = useRef(1);
   const isScrubbingRef = useRef(false);
+  const progressUiRef = useRef({ progress: 0, buffered: 0, lastEmit: 0 });
+  const progressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const viewedReelIds = useRef<Set<string>>(new Set());
   const [readyReelIds, setReadyReelIds] = useState<Set<string>>(new Set());
 
@@ -248,6 +217,7 @@ export default function ReelsScreen() {
       unregisterBeforeChatNavigate();
       unregisterPause();
       if (endScreenTimerRef.current) clearTimeout(endScreenTimerRef.current);
+      if (progressTimerRef.current) clearTimeout(progressTimerRef.current);
     };
   }, [pauseAllVideos]);
 
@@ -295,6 +265,27 @@ export default function ReelsScreen() {
     []
   );
 
+  const scheduleProgressUi = useCallback((nextProgress: number, nextBuffered: number) => {
+    progressUiRef.current.progress = nextProgress;
+    progressUiRef.current.buffered = nextBuffered;
+    const now = Date.now();
+    const elapsed = now - progressUiRef.current.lastEmit;
+    if (elapsed >= PROGRESS_UI_MS) {
+      progressUiRef.current.lastEmit = now;
+      setProgress(nextProgress);
+      setBufferedProgress(nextBuffered);
+      return;
+    }
+    if (!progressTimerRef.current) {
+      progressTimerRef.current = setTimeout(() => {
+        progressTimerRef.current = null;
+        progressUiRef.current.lastEmit = Date.now();
+        setProgress(progressUiRef.current.progress);
+        setBufferedProgress(progressUiRef.current.buffered);
+      }, PROGRESS_UI_MS - elapsed);
+    }
+  }, []);
+
   const handlePlaybackStatus = useCallback(
     (reelId: string, status: ReelPlaybackStatus, isCurrent: boolean) => {
       if (!status.isLoaded || !isCurrent) return;
@@ -314,17 +305,19 @@ export default function ReelsScreen() {
       }
       if (status.durationMillis != null && status.durationMillis > 0) {
         durationMillisRef.current = status.durationMillis;
-        if (status.bufferedMillis != null) {
-          setBufferedProgress(
-            Math.min(1, Math.max(0, status.bufferedMillis / status.durationMillis))
-          );
-        }
-        if (status.positionMillis != null && !isScrubbingRef.current) {
-          setProgress(status.positionMillis / status.durationMillis);
-        }
+        if (isScrubbingRef.current) return;
+        const buffered =
+          status.bufferedMillis != null
+            ? Math.min(1, Math.max(0, status.bufferedMillis / status.durationMillis))
+            : progressUiRef.current.buffered;
+        const nextProgress =
+          status.positionMillis != null
+            ? status.positionMillis / status.durationMillis
+            : progressUiRef.current.progress;
+        scheduleProgressUi(nextProgress, buffered);
       }
     },
-    []
+    [scheduleProgressUi]
   );
 
   const refreshFollowedAuthors = useCallback(async () => {
@@ -349,6 +342,11 @@ export default function ReelsScreen() {
     setCurrentIndex(0);
     setProgress(0);
     setBufferedProgress(0);
+    progressUiRef.current = { progress: 0, buffered: 0, lastEmit: 0 };
+    if (progressTimerRef.current) {
+      clearTimeout(progressTimerRef.current);
+      progressTimerRef.current = null;
+    }
     clearPins();
     activeReelIdRef.current = null;
     viewedReelIds.current.clear();
@@ -452,6 +450,35 @@ export default function ReelsScreen() {
     },
     []
   );
+
+  const handleMediaIndexChange = useCallback(
+    (reelId: string, mediaIndex: number) => {
+      activeMediaIndexRef.current[reelId] = mediaIndex;
+      if (reelId === activeReelIdRef.current) {
+        void playActiveReel(reelId);
+      }
+    },
+    [playActiveReel]
+  );
+
+  const onOpenComments = useCallback(
+    (reel: ReelDTO) => openSheet(setOpenComments, reel),
+    [openSheet]
+  );
+  const onOpenShare = useCallback((reel: ReelDTO) => openSheet(setOpenShare, reel), [openSheet]);
+  const onOpenProfile = useCallback(
+    (reel: ReelDTO) => openSheet(setOpenProfile, reel),
+    [openSheet]
+  );
+  const onNavigateSound = useCallback(
+    (soundId: string) => navigation.navigate('ReelSound', { soundId }),
+    [navigation]
+  );
+
+  const goToChats = useCallback(() => {
+    void pauseAllVideos();
+    navigateMainTab('Chats');
+  }, [pauseAllVideos]);
 
   const handlePullRefresh = useCallback(async () => {
     if (currentIndex !== 0) {
@@ -686,248 +713,67 @@ export default function ReelsScreen() {
   );
 
   const renderReel = useCallback(
-    ({ item, index }: { item: ReelDTO; index: number }) => {
-      const isLiked = item.liked_by_me;
-      const isCurrent = index === currentIndex;
-      const avatar = avatarFor(item);
-      const videoUri = resolveUri(item);
-      const isFollowing = followedAuthorIds.has(item.author_id);
-      const isReady = readyReelIds.has(item.id);
-
-      return (
-        <View style={[styles.reelContainer, { width: reelWidth + desktopActionOffset, height: reelHeight }, usePhoneFrame && styles.reelContainerDesktop]}>
-          <TouchableOpacity
-            activeOpacity={1}
-            onPress={() => handleVideoPress(item)}
-            onLongPress={() => handleDelete(item)}
-            delayLongPress={700}
-            style={[
-              styles.videoTouchLayer,
-              usePhoneFrame && [styles.videoTouchLayerDesktop, { width: reelWidth }],
-            ]}
-          >
-            <ReelFeedMedia
-              reel={item}
-              reelIndex={index}
-              currentReelIndex={currentIndex}
-              videoUri={videoUri}
-              frameWidth={reelWidth}
-              frameHeight={reelHeight}
-              isFocused={isFocused}
-              isPlaying={mediaShouldPlay}
-              isMuted={isMuted}
-              volume={isMuted ? 0 : volume}
-              isReady={isReady}
-              onReady={handleVideoReady}
-              onPlaybackStatus={handlePlaybackStatus}
-              onRef={registerVideoRef}
-              onMediaIndexChange={(reelId, mediaIndex) => {
-                activeMediaIndexRef.current[reelId] = mediaIndex;
-                if (reelId === activeReelIdRef.current) {
-                  void playActiveReel(reelId);
-                }
-              }}
-            />
-            {isCurrent && (
-              <Animated.View
-                style={[
-                  styles.heartAnimation,
-                  { transform: [{ scale: heartScale }], opacity: heartOpacity },
-                ]}
-                pointerEvents="none"
-              >
-                <Ionicons name="heart" size={100} color={REEL_ACCENT} />
-              </Animated.View>
-            )}
-            {isCurrent && (
-              <ReelBrandBadge
-                ownerName={authorLabel(item)}
-                frameWidth={reelWidth}
-                frameHeight={reelHeight}
-                progressBottom={progressBottom}
-                playCycle={badgePlayCycle}
-                compact={!usePhoneFrame}
-              />
-            )}
-            {isCurrent && endScreenReelId === item.id && (
-              <ReelEndScreen ownerName={authorLabel(item)} />
-            )}
-            {isCurrent && playbackIcon && (
-              <View style={styles.playbackIconOverlay} pointerEvents="none">
-                <Ionicons
-                  name={playbackIcon === 'play' ? 'play' : 'pause'}
-                  size={56}
-                  color="#fff"
-                />
-              </View>
-            )}
-          </TouchableOpacity>
-
-          {isCurrent && (
-            <View
-              style={[
-                styles.progressContainer,
-                { bottom: progressBottom },
-                usePhoneFrame && { width: reelWidth },
-                Platform.OS === 'web' && (isScrubbing ? styles.progressScrubbing : styles.progressGrab),
-              ]}
-              {...progressPan.panHandlers}
-            >
-              <View style={styles.progressBg}>
-                <View style={[styles.progressBuffered, { width: `${bufferedProgress * 100}%` }]} />
-                <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
-              </View>
-            </View>
-          )}
-
-          <View
-            style={[
-              styles.bottomMeta,
-              usePhoneFrame && [styles.bottomMetaDesktop, { width: reelWidth }],
-            ]}
-            pointerEvents="box-none"
-          >
-            <View
-              style={[
-                styles.captionContainer,
-                {
-                  marginBottom: metaBottom,
-                  paddingRight: usePhoneFrame ? 8 : REEL_ACTION_RAIL_WIDTH + 8,
-                },
-              ]}
-            >
-              <View style={styles.userInfo}>
-                <TouchableOpacity onPress={() => openSheet(setOpenProfile, item)}>
-                  <Text style={styles.username}>@{authorLabel(item)}</Text>
-                </TouchableOpacity>
-                {item.visibility !== 'public' && (
-                  <View style={styles.visibilityPill}>
-                    <Ionicons
-                      name={
-                        item.visibility === 'friends'
-                          ? 'people'
-                          : item.visibility === 'group'
-                            ? 'chatbubbles'
-                            : 'lock-closed'
-                      }
-                      size={11}
-                      color="#fff"
-                    />
-                  </View>
-                )}
-              </View>
-              {!!item.caption && (
-              <ExpandableCaption
-                text={item.caption}
-                style={styles.caption}
-                maxWidth={Math.round(reelWidth * 0.7)}
-              />
-              )}
-              <View style={styles.musicContainer}>
-                <ReelSoundStrip
-                  reel={item}
-                  authorHandle={authorLabel(item)}
-                  onPressSound={(soundId) => navigation.navigate('ReelSound', { soundId })}
-                />
-              </View>
-            </View>
-          </View>
-
-          <View
-            style={[
-              styles.actionButtons,
-              { bottom: metaBottom },
-              usePhoneFrame && styles.actionButtonsDesktop,
-            ]}
-          >
-            <View style={styles.profileActionWrap}>
-              <TouchableOpacity style={styles.profileButton} onPress={() => openSheet(setOpenProfile, item)}>
-                {avatar ? (
-                  <Image source={{ uri: avatar }} style={styles.profileAvatar} />
-                ) : (
-                  <View style={[styles.profileAvatar, styles.avatarFallback]}>
-                    <Text style={styles.avatarFallbackText}>
-                      {authorLabel(item).charAt(0).toUpperCase()}
-                    </Text>
-                  </View>
-                )}
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.profileFollowPlus}
-                onPress={() => void quickFollow(item)}
-              >
-                <Ionicons name={isFollowing ? 'checkmark' : 'add'} size={13} color="#fff" />
-              </TouchableOpacity>
-            </View>
-            <TouchableOpacity style={styles.actionButton} onPress={() => toggleLike(item)}>
-              <ActionIcon
-                name={isLiked ? 'heart' : 'heart-outline'}
-                size={26}
-                color={isLiked ? REEL_ACCENT : '#fff'}
-                active={isLiked}
-              />
-              <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>
-                {formatCount(item.like_count)}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.actionButton} onPress={() => openSheet(setOpenComments, item)}>
-              <ActionIcon name="chatbubble-ellipses-outline" size={26} />
-              <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>
-                {formatCount(item.comment_count)}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.actionButton} onPress={() => openSheet(setOpenShare, item)}>
-              <ActionIcon name="paper-plane-outline" size={24} />
-              <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>Share</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.actionButton}>
-              <ActionIcon name="eye-outline" size={22} />
-              <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>
-                {formatCount(item.view_count)}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      );
-    },
+    ({ item, index }: { item: ReelDTO; index: number }) => (
+      <ReelFeedRow
+        item={item}
+        index={index}
+        currentIndex={currentIndex}
+        reelWidth={reelWidth}
+        reelHeight={reelHeight}
+        desktopActionOffset={desktopActionOffset}
+        usePhoneFrame={usePhoneFrame}
+        isFocused={isFocused}
+        mediaShouldPlay={mediaShouldPlay}
+        isMuted={isMuted}
+        volume={volume}
+        isReady={readyReelIds.has(item.id)}
+        isFollowing={followedAuthorIds.has(item.author_id)}
+        metaBottom={metaBottom}
+        videoUri={resolveUri(item)}
+        onVideoPress={handleVideoPress}
+        onDelete={handleDelete}
+        onToggleLike={toggleLike}
+        onQuickFollow={quickFollow}
+        onOpenComments={onOpenComments}
+        onOpenShare={onOpenShare}
+        onOpenProfile={onOpenProfile}
+        onNavigateSound={onNavigateSound}
+        onReady={handleVideoReady}
+        onPlaybackStatus={handlePlaybackStatus}
+        onRef={registerVideoRef}
+        onMediaIndexChange={handleMediaIndexChange}
+      />
+    ),
     [
       currentIndex,
-      handleDelete,
-      handleVideoPress,
-      heartOpacity,
-      heartScale,
       reelHeight,
       reelWidth,
-      bottomNavOffset,
-      insets.bottom,
+      desktopActionOffset,
+      usePhoneFrame,
       isFocused,
-      isMuted,
       mediaShouldPlay,
-      openSheet,
-      progress,
-      bufferedProgress,
-      progressPan.panHandlers,
+      isMuted,
+      volume,
+      readyReelIds,
+      followedAuthorIds,
+      metaBottom,
+      resolveUri,
+      handleVideoPress,
+      handleDelete,
+      toggleLike,
+      quickFollow,
+      onOpenComments,
+      onOpenShare,
+      onOpenProfile,
+      onNavigateSound,
       handleVideoReady,
       handlePlaybackStatus,
       registerVideoRef,
-      resolveUri,
-      readyReelIds,
-      playbackIcon,
-      followedAuthorIds,
-      quickFollow,
-      toggleLike,
-      myProfileId,
-      navigation,
-      usePhoneFrame,
-      desktopActionOffset,
-      endScreenReelId,
-      badgePlayCycle,
-      metaBottom,
-      progressBottom,
-      isScrubbing,
-      volume,
+      handleMediaIndexChange,
     ]
   );
+
+  const currentReel = reels[currentIndex] ?? null;
 
   if (loading && reels.length === 0) {
     return (
@@ -956,7 +802,7 @@ export default function ReelsScreen() {
     <View style={[styles.container, usePhoneFrame && styles.containerPhoneFrame]}>
       <StatusBar barStyle="light-content" backgroundColor="#000" translucent />
 
-      <View style={[styles.feedColumn, usePhoneFrame && styles.feedColumnPhone, { width: reelWidth + desktopActionOffset }]}>
+      <View style={[styles.feedColumn, { width: reelWidth }]}>
 
       <View
         style={[
@@ -967,7 +813,14 @@ export default function ReelsScreen() {
         pointerEvents="box-none"
       >
         <View style={styles.topBar}>
-          <View style={styles.topIconBtnSpacer} />
+          <TouchableOpacity
+            style={styles.topIconBtn}
+            onPress={goToChats}
+            accessibilityLabel="Back to chats"
+            hitSlop={8}
+          >
+            <Ionicons name="arrow-back" size={22} color="#fff" />
+          </TouchableOpacity>
 
           {!usePhoneFrame && (
             <View style={styles.feedPills}>
@@ -1093,6 +946,24 @@ export default function ReelsScreen() {
           ) : null
         }
       />
+      {reels.length > 0 && (
+        <ReelFeedOverlays
+          reel={currentReel}
+          reelWidth={reelWidth}
+          reelHeight={reelHeight}
+          usePhoneFrame={usePhoneFrame}
+          progress={progress}
+          bufferedProgress={bufferedProgress}
+          progressBottom={progressBottom}
+          isScrubbing={isScrubbing}
+          playbackIcon={playbackIcon}
+          endScreenReelId={endScreenReelId}
+          badgePlayCycle={badgePlayCycle}
+          heartScale={heartScale}
+          heartOpacity={heartOpacity}
+          progressPanHandlers={progressPan.panHandlers}
+        />
+      )}
       </View>
 
       {Platform.OS === 'web' && isFocused && (
