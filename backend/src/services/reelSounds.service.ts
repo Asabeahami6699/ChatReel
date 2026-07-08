@@ -1,5 +1,7 @@
 import { supabaseAdmin } from '../lib/supabaseAdmin';
 
+export type ReelSoundSourceType = 'licensed' | 'ugc' | 'extracted';
+
 export type ReelSoundRow = {
   id: string;
   title: string;
@@ -11,26 +13,58 @@ export type ReelSoundRow = {
   usage_count: number;
   is_active: boolean;
   uploaded_by: string | null;
+  genre: string | null;
+  mood: string | null;
+  source_type: ReelSoundSourceType;
+  source_reel_id: string | null;
   created_at: string;
 };
+
+export const REEL_SOUND_GENRES = [
+  'afrobeats',
+  'pop',
+  'hip-hop',
+  'chill',
+  'electronic',
+  'acoustic',
+  'latin',
+  'r&b',
+] as const;
 
 export async function listReelSounds(opts: {
   q?: string;
   limit?: number;
   trending?: boolean;
+  newest?: boolean;
   uploadedByProfileId?: string;
+  genre?: string;
+  mood?: string;
+  licensedOnly?: boolean;
 }): Promise<ReelSoundRow[]> {
   const limit = Math.min(opts.limit ?? 30, 50);
-  let query = supabaseAdmin
-    .from('reel_sounds')
-    .select('*')
-    .eq('is_active', true)
-    .limit(limit);
+  let query = supabaseAdmin.from('reel_sounds').select('*').eq('is_active', true).limit(limit);
 
   if (opts.uploadedByProfileId) {
     query = query
       .eq('uploaded_by', opts.uploadedByProfileId)
       .order('created_at', { ascending: false });
+  } else if (opts.genre) {
+    query = query
+      .eq('genre', opts.genre)
+      .order('usage_count', { ascending: false })
+      .order('created_at', { ascending: false });
+  } else if (opts.mood) {
+    query = query
+      .eq('mood', opts.mood)
+      .order('usage_count', { ascending: false })
+      .order('created_at', { ascending: false });
+  } else if (opts.licensedOnly) {
+    query = query
+      .eq('source_type', 'licensed')
+      .order('usage_count', { ascending: false })
+      .order('created_at', { ascending: false });
+  } else if (opts.newest) {
+    query = query.order('created_at', { ascending: false });
   } else if (opts.trending) {
     query = query.order('usage_count', { ascending: false }).order('created_at', { ascending: false });
   } else {
@@ -46,7 +80,9 @@ export async function listReelSounds(opts: {
     rows = rows.filter(
       (s) =>
         s.title.toLowerCase().includes(q) ||
-        (s.artist?.toLowerCase().includes(q) ?? false)
+        (s.artist?.toLowerCase().includes(q) ?? false) ||
+        (s.genre?.toLowerCase().includes(q) ?? false) ||
+        (s.mood?.toLowerCase().includes(q) ?? false)
     );
   }
   return rows;
@@ -58,6 +94,19 @@ export async function getReelSoundById(id: string): Promise<ReelSoundRow | null>
     .select('*')
     .eq('id', id)
     .eq('is_active', true)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data as ReelSoundRow | null) ?? null;
+}
+
+export async function getReelSoundBySourceReelId(reelId: string): Promise<ReelSoundRow | null> {
+  const { data, error } = await supabaseAdmin
+    .from('reel_sounds')
+    .select('*')
+    .eq('source_reel_id', reelId)
+    .eq('is_active', true)
+    .order('created_at', { ascending: false })
+    .limit(1)
     .maybeSingle();
   if (error) throw new Error(error.message);
   return (data as ReelSoundRow | null) ?? null;
@@ -77,6 +126,10 @@ export async function createReelSound(input: {
   duration_sec?: number | null;
   cover_url?: string | null;
   uploaded_by?: string | null;
+  genre?: string | null;
+  mood?: string | null;
+  source_type?: ReelSoundSourceType;
+  source_reel_id?: string | null;
 }): Promise<ReelSoundRow> {
   const { data, error } = await supabaseAdmin
     .from('reel_sounds')
@@ -88,6 +141,10 @@ export async function createReelSound(input: {
       duration_sec: input.duration_sec ?? null,
       cover_url: input.cover_url ?? null,
       uploaded_by: input.uploaded_by ?? null,
+      genre: input.genre?.trim() || null,
+      mood: input.mood?.trim() || null,
+      source_type: input.source_type ?? (input.uploaded_by ? 'extracted' : 'licensed'),
+      source_reel_id: input.source_reel_id ?? null,
       is_active: true,
     })
     .select('*')

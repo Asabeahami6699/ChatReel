@@ -20,6 +20,7 @@ import { isReelHlsEnabled, queueReelHlsTranscode, queueReelSoundMux } from '../s
 import { assertCaptionAllowed, scheduleReelModeration } from '../services/reelModeration.service';
 import { assertReelSoundActive, createReelSound, deactivateReelSoundForUser, getReelSoundById, listReelSounds } from '../services/reelSounds.service';
 import { extractSoundFromVideoUrl } from '../services/reelSoundExtract.service';
+import { resolveSoundFromReel } from '../services/reelSoundFromReel.service';
 import { buildWatermarkedReelDownload } from '../services/reelDownload.service';
 import { probeVideoDimensionsFromUrl } from '../lib/videoProbe';
 
@@ -438,6 +439,10 @@ router.get(
   asyncHandler(async (req: AuthedRequest, res) => {
     const q = typeof req.query.q === 'string' ? req.query.q : undefined;
     const trending = req.query.trending === '1' || req.query.trending === 'true';
+    const newest = req.query.new === '1' || req.query.new === 'true';
+    const licensed = req.query.licensed === '1' || req.query.licensed === 'true';
+    const genre = typeof req.query.genre === 'string' ? req.query.genre : undefined;
+    const mood = typeof req.query.mood === 'string' ? req.query.mood : undefined;
     const mine = req.query.mine === '1' || req.query.mine === 'true';
     const limit = Math.min(Number(req.query.limit ?? 30), 50);
 
@@ -449,7 +454,15 @@ router.get(
       }
       sounds = await listReelSounds({ q, limit, uploadedByProfileId: profileId });
     } else {
-      sounds = await listReelSounds({ q, trending, limit });
+      sounds = await listReelSounds({
+        q,
+        trending: trending && !newest && !genre && !mood && !licensed,
+        newest,
+        licensedOnly: licensed,
+        genre,
+        mood,
+        limit,
+      });
     }
     return res.json({ sounds });
   })
@@ -497,6 +510,31 @@ router.post(
       audio_url: body.audio_url,
       duration_sec: body.duration_sec,
       uploaded_by: profileId,
+    });
+
+    return res.status(201).json({ sound });
+  })
+);
+
+const fromReelSoundSchema = z.object({
+  reel_id: z.string().uuid(),
+});
+
+/* -------------------------------------------------------------------------- */
+/*  POST /sounds/from-reel — reuse library or extract original audio from reel  */
+/* -------------------------------------------------------------------------- */
+router.post(
+  '/sounds/from-reel',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const body = fromReelSoundSchema.parse(req.body);
+    const profileId = await getProfileIdByUserId(req.userId!);
+    if (!profileId) return res.status(404).json({ error: 'Profile not found' });
+
+    const sound = await resolveSoundFromReel({
+      reelId: body.reel_id,
+      requesterProfileId: profileId,
+      requesterAuthUserId: req.userId!,
     });
 
     return res.status(201).json({ sound });

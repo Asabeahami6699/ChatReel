@@ -34,6 +34,8 @@ export async function extractSoundFromVideoUrl(input: {
   title: string;
   artist?: string | null;
   durationSec?: number | null;
+  sourceType?: 'ugc' | 'extracted';
+  sourceReelId?: string | null;
 }): Promise<ReelSoundRow> {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'reel-sound-extract-'));
   const inputPath = path.join(tmpDir, 'input.mp4');
@@ -84,6 +86,8 @@ export async function extractSoundFromVideoUrl(input: {
       preview_url: data.publicUrl,
       duration_sec: input.durationSec ?? null,
       uploaded_by: input.profileId,
+      source_type: input.sourceType ?? 'extracted',
+      source_reel_id: input.sourceReelId ?? null,
     });
 
     if (input.videoUrl.includes('/extract-temp/')) {

@@ -52,6 +52,8 @@ type Props = {
   author: MomentAuthorFeedDTO | null;
   myProfileId: string | null;
   onClose: () => void;
+  /** Called when the last slide of the current author finishes (more authors may follow). */
+  onAdvanceAuthor?: () => void;
   onSlideViewed: (authorId: string, slideId: string) => void;
 };
 
@@ -93,6 +95,7 @@ export function MomentViewer({
   author,
   myProfileId,
   onClose,
+  onAdvanceAuthor,
   onSlideViewed,
 }: Props) {
   const insets = useSafeAreaInsets();
@@ -154,10 +157,12 @@ export function MomentViewer({
     if (!author) return;
     if (slideIndex < slides.length - 1) {
       setSlideIndex((i) => i + 1);
+    } else if (onAdvanceAuthor) {
+      onAdvanceAuthor();
     } else {
       onClose();
     }
-  }, [slides.length, slideIndex, onClose, frozen]);
+  }, [slides.length, slideIndex, onClose, onAdvanceAuthor, frozen, author]);
 
   const goPrev = useCallback(() => {
     if (frozen) return;
@@ -183,12 +188,22 @@ export function MomentViewer({
       setReelCaptionOpen(false);
       setComposerText('');
     }
+  }, [visible]);
+
+  useEffect(() => {
+    if (!visible || !author) return;
+    setSlideIndex(0);
+    setProgress(0);
+    setPaused(false);
+    setHolding(false);
+    setComposerMode(null);
+    setVideoDurationSec(IMAGE_DURATION_MS / 1000);
+    imageElapsedRef.current = 0;
+    imageStartRef.current = Date.now();
   }, [visible, author?.author.id]);
 
   useEffect(() => {
     setProgress(0);
-    setPaused(false);
-    setComposerMode(null);
     setVideoDurationSec(IMAGE_DURATION_MS / 1000);
     imageElapsedRef.current = 0;
     imageStartRef.current = Date.now();

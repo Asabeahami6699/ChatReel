@@ -161,7 +161,7 @@ export default function FeedScreen() {
   } | null>(null);
 
   const [composerDraft, setComposerDraft] = useState<MomentDraft | null>(null);
-  const [viewerAuthor, setViewerAuthor] = useState<MomentAuthorFeedDTO | null>(null);
+  const [viewerIndex, setViewerIndex] = useState(-1);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
 
   const renderSlidePreview = (slide: MomentSlideDTO, style: object) => (
@@ -233,6 +233,15 @@ export default function FeedScreen() {
     }
     return ordered;
   }, [authors, myFeed, myProfileId, myProfile]);
+
+  const viewerQueue = useMemo(
+    () => stripAuthors.filter((a) => a.slides.length > 0),
+    [stripAuthors]
+  );
+
+  const viewerAuthor = viewerIndex >= 0 ? (viewerQueue[viewerIndex] ?? null) : null;
+  const viewerHasNextAuthor =
+    viewerIndex >= 0 && viewerIndex < viewerQueue.length - 1;
 
   const appendDraftItems = useCallback((newItems: MomentDraftItem[]) => {
     if (!newItems.length) return;
@@ -350,8 +359,21 @@ export default function FeedScreen() {
       return;
     }
     if (!author.slides.length) return;
-    setViewerAuthor(author);
-  }, [myProfileId, openAddMenu]);
+    const idx = viewerQueue.findIndex((a) => a.author.id === author.author.id);
+    setViewerIndex(idx >= 0 ? idx : 0);
+  }, [myProfileId, openAddMenu, viewerQueue]);
+
+  const closeViewer = useCallback(() => {
+    setViewerIndex(-1);
+  }, []);
+
+  const advanceViewerAuthor = useCallback(() => {
+    setViewerIndex((idx) => {
+      if (idx < 0) return idx;
+      if (idx < viewerQueue.length - 1) return idx + 1;
+      return -1;
+    });
+  }, [viewerQueue.length]);
 
   const handleSlideViewed = useCallback(
     async (authorId: string, slideId: string) => {
@@ -641,10 +663,11 @@ export default function FeedScreen() {
       </Modal>
 
       <MomentViewer
-        visible={!!viewerAuthor && isScreenFocused}
+        visible={viewerIndex >= 0 && !!viewerAuthor && isScreenFocused}
         author={viewerAuthor}
         myProfileId={myProfileId}
-        onClose={() => setViewerAuthor(null)}
+        onClose={closeViewer}
+        onAdvanceAuthor={viewerHasNextAuthor ? advanceViewerAuthor : undefined}
         onSlideViewed={handleSlideViewed}
       />
     </View>

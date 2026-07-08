@@ -375,6 +375,25 @@ export function ReelImmersiveViewer({
     }
   ).current;
 
+  const onUseReelAudio = useCallback(
+    async (reel: ReelDTO) => {
+      if (reel.sound?.id) {
+        navigation.navigate('ReelSound', { soundId: reel.sound.id });
+        return;
+      }
+      try {
+        const { sound } = await api.reels.soundFromReel(reel.id);
+        navigation.navigate('ReelSound', { soundId: sound.id });
+      } catch (err) {
+        Alert.alert(
+          'Sound',
+          err instanceof ApiError ? err.message : 'Could not use audio from this reel'
+        );
+      }
+    },
+    [navigation]
+  );
+
   const renderReel = useCallback(
     ({ item, index }: { item: ReelDTO; index: number }) => {
       const isCurrent = index === currentIndex;
@@ -460,6 +479,7 @@ export function ReelImmersiveViewer({
                 reel={item}
                 authorHandle={authorLabel(item)}
                 onPressSound={(soundId) => navigation.navigate('ReelSound', { soundId })}
+                onPressOriginalAudio={onUseReelAudio}
               />
             </View>
           </View>
@@ -510,6 +530,8 @@ export function ReelImmersiveViewer({
       metaBottom,
       progressBottom,
       disableProfileNavigation,
+      navigation,
+      onUseReelAudio,
     ]
   );
 

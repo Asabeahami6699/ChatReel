@@ -15,6 +15,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api, ApiError, type ReelDTO, type ReelSoundDTO } from '../../lib/api';
 import type { ReelsStackParamList } from '../../navigation/reelsNavigation';
+import { openPostReelWithSound } from '../../lib/reelPlaybackBridge';
 import { REEL_ACCENT } from './reelTheme';
 import { soundLabel } from './ReelSoundPicker';
 
@@ -57,6 +58,12 @@ export default function ReelSoundScreen() {
     [navigation, reels]
   );
 
+  const useSound = useCallback(() => {
+    if (!sound) return;
+    openPostReelWithSound(sound);
+    navigation.navigate('PostReel');
+  }, [navigation, sound]);
+
   return (
     <View style={styles.root}>
       <StatusBar barStyle="light-content" />
@@ -70,6 +77,12 @@ export default function ReelSoundScreen() {
           </Text>
           {sound && sound.usage_count > 0 ? (
             <Text style={styles.headerSub}>{sound.usage_count} reels</Text>
+          ) : null}
+          {sound?.genre ? (
+            <Text style={styles.headerTag}>
+              {sound.genre}
+              {sound.mood ? ` · ${sound.mood}` : ''}
+            </Text>
           ) : null}
         </View>
         <View style={styles.headerSpacer} />
@@ -95,7 +108,7 @@ export default function ReelSoundScreen() {
           data={reels}
           keyExtractor={(item) => item.id}
           numColumns={3}
-          contentContainerStyle={{ paddingBottom: insets.bottom + 16 }}
+          contentContainerStyle={{ paddingBottom: insets.bottom + 88 }}
           renderItem={({ item, index }) => {
             const thumb = item.thumbnail_url ?? item.media?.[0]?.thumbnail_url;
             return (
@@ -112,6 +125,15 @@ export default function ReelSoundScreen() {
           }}
         />
       )}
+
+      {sound ? (
+        <View style={[styles.useBar, { paddingBottom: insets.bottom + 12 }]}>
+          <TouchableOpacity style={styles.useBtn} onPress={useSound} activeOpacity={0.9}>
+            <Ionicons name="add-circle" size={22} color="#fff" />
+            <Text style={styles.useBtnText}>Use this sound</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -130,6 +152,7 @@ const styles = StyleSheet.create({
   headerBody: { flex: 1, alignItems: 'center' },
   headerTitle: { color: '#fff', fontSize: 16, fontWeight: '700' },
   headerSub: { color: '#888', fontSize: 12, marginTop: 2 },
+  headerTag: { color: '#aaa', fontSize: 11, marginTop: 2, textTransform: 'capitalize' },
   headerSpacer: { width: 26 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   error: { color: '#ff6b6b', textAlign: 'center', marginBottom: 12 },
@@ -142,4 +165,25 @@ const styles = StyleSheet.create({
   },
   tileImage: { flex: 1, borderRadius: 4, backgroundColor: '#111' },
   tileFallback: { alignItems: 'center', justifyContent: 'center' },
+  useBar: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    backgroundColor: 'rgba(0,0,0,0.92)',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#222',
+  },
+  useBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: REEL_ACCENT,
+    borderRadius: 28,
+    paddingVertical: 14,
+  },
+  useBtnText: { color: '#fff', fontSize: 16, fontWeight: '800' },
 });

@@ -21,6 +21,10 @@ export type ReelSoundDTO = {
   cover_url: string | null;
   usage_count: number;
   uploaded_by?: string | null;
+  genre?: string | null;
+  mood?: string | null;
+  source_type?: 'licensed' | 'ugc' | 'extracted';
+  source_reel_id?: string | null;
 };
 
 export type ReelMediaDTO = {
@@ -589,10 +593,23 @@ export const api = {
     byUser: (profileId: string, limit = 30) =>
       apiRequest<{ reels: ReelDTO[] }>(`/api/reels/user/${profileId}?limit=${limit}`),
     get: (id: string) => apiRequest<{ reel: ReelDTO }>(`/api/reels/${id}`),
-    sounds: (params?: { q?: string; trending?: boolean; mine?: boolean; limit?: number }) => {
+    sounds: (params?: {
+      q?: string;
+      trending?: boolean;
+      new?: boolean;
+      licensed?: boolean;
+      genre?: string;
+      mood?: string;
+      mine?: boolean;
+      limit?: number;
+    }) => {
       const search = new URLSearchParams();
       if (params?.q) search.set('q', params.q);
       if (params?.trending) search.set('trending', '1');
+      if (params?.new) search.set('new', '1');
+      if (params?.licensed) search.set('licensed', '1');
+      if (params?.genre) search.set('genre', params.genre);
+      if (params?.mood) search.set('mood', params.mood);
       if (params?.mine) search.set('mine', '1');
       if (params?.limit) search.set('limit', String(params.limit));
       const qs = search.toString();
@@ -612,6 +629,11 @@ export const api = {
       apiRequest<{ sound: ReelSoundDTO }>('/api/reels/sounds', { method: 'POST', body: data }),
     extractSound: (data: { video_url: string; title?: string; duration_sec?: number }) =>
       apiRequest<{ sound: ReelSoundDTO }>('/api/reels/sounds/extract', { method: 'POST', body: data }),
+    soundFromReel: (reel_id: string) =>
+      apiRequest<{ sound: ReelSoundDTO }>('/api/reels/sounds/from-reel', {
+        method: 'POST',
+        body: { reel_id },
+      }),
     deleteSound: (id: string) =>
       apiRequest<{ ok: boolean }>(`/api/reels/sounds/${id}`, { method: 'DELETE' }),
     download: (id: string) =>

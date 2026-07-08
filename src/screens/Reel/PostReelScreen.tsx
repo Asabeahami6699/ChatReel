@@ -19,7 +19,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useAuth } from '../../hooks/useAuth';
 import { isImageMime } from '../../lib/reelPlayback';
-import { pauseReelFeedPlayback, consumePendingComposeDraft, setReelPlaybackGate } from '../../lib/reelPlaybackBridge';
+import { pauseReelFeedPlayback, consumePendingComposeDraft, consumePendingComposeSound, setReelPlaybackGate } from '../../lib/reelPlaybackBridge';
 import { enqueueReelUpload, type ReelUploadDraft, type ReelUploadVisibility } from '../../lib/reelUploadQueue';
 import { saveReelComposeDraft } from '../../lib/reelComposeDraftStore';
 import { probeVideoDimensions, probeVideoHasAudio } from '../../lib/videoDimensions';
@@ -31,6 +31,7 @@ import { PostReelImageComposer } from './PostReelImageComposer';
 import { VideoAudioPrompt, type VideoAudioChoice } from './VideoAudioPrompt';
 import type { ReelFilterId } from './reelFilters';
 import { api, type ReelSoundDTO } from '../../lib/api';
+import { defaultSoundRange, IMAGE_SOUND_CLIP_SEC } from './reelSoundUtils';
 
 function MediaTilePreview({ item }: { item: MediaDraft }) {
   if (item.mediaType === 'image') {
@@ -118,6 +119,7 @@ export default function PostReelScreen() {
       pauseReelFeedPlayback();
       setReelPlaybackGate('post-reel', true);
       const saved = consumePendingComposeDraft();
+      const pendingSound = consumePendingComposeSound();
       if (saved) {
         const { draft, sound } = saved;
         setCaption(draft.caption ?? '');
@@ -165,6 +167,14 @@ export default function PostReelScreen() {
             ]);
           }
         }
+      } else if (pendingSound) {
+        setSelectedSound(pendingSound);
+        setOriginalAudioVolume(1);
+        setSoundVolume(0.45);
+        const range = defaultSoundRange(pendingSound, IMAGE_SOUND_CLIP_SEC);
+        setSoundStartSec(range.start);
+        setSoundEndSec(range.end);
+        setOpenSoundOnMount(false);
       }
 
       return () => {

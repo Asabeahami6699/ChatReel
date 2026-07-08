@@ -5,6 +5,7 @@ import {
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -30,6 +31,7 @@ import {
   releasePlayer,
   type AudioPlayer,
 } from '../../lib/appAudio';
+import { REEL_SOUND_GENRES } from './reelSoundUtils';
 import { REEL_ACCENT } from './reelTheme';
 import { pauseReelFeedPlayback } from '../../lib/reelPlaybackBridge';
 
@@ -40,7 +42,7 @@ type Props = {
   onSelect: (sound: ReelSoundDTO | null) => void;
 };
 
-type Tab = 'trending' | 'upload';
+type Tab = 'trending' | 'new' | 'upload';
 type UploadSubTab = 'mine' | 'device' | 'file';
 
 function soundLabel(s: ReelSoundDTO): string {
@@ -51,6 +53,7 @@ export function ReelSoundPicker({ visible, selectedId, onClose, onSelect }: Prop
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<Tab>('trending');
   const [uploadSubTab, setUploadSubTab] = useState<UploadSubTab>('mine');
+  const [selectedGenre, setSelectedGenre] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [sounds, setSounds] = useState<ReelSoundDTO[]>([]);
   const [mySounds, setMySounds] = useState<ReelSoundDTO[]>([]);
@@ -74,11 +77,35 @@ export function ReelSoundPicker({ visible, selectedId, onClose, onSelect }: Prop
     playerRef.current = null;
   }, []);
 
-  const loadSounds = useCallback(async (q?: string) => {
+  const loadSounds = useCallback(async (q?: string, genre?: string | null) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await api.reels.sounds({ q: q?.trim() || undefined, trending: true, limit: 50 });
+      const res = await api.reels.sounds({
+        q: q?.trim() || undefined,
+        trending: true,
+        genre: genre ?? undefined,
+        limit: 50,
+      });
+      setSounds(res.sounds ?? []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load sounds');
+      setSounds([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const loadNewSounds = useCallback(async (q?: string, genre?: string | null) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await api.reels.sounds({
+        q: q?.trim() || undefined,
+        new: true,
+        genre: genre ?? undefined,
+        limit: 50,
+      });
       setSounds(res.sounds ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load sounds');
@@ -132,6 +159,7 @@ export function ReelSoundPicker({ visible, selectedId, onClose, onSelect }: Prop
       void stopPreview();
       setTab('trending');
       setUploadSubTab('mine');
+      setSelectedGenre(null);
       setQuery('');
       setDeviceTracks([]);
       deviceCursorRef.current = null;
@@ -145,13 +173,19 @@ export function ReelSoundPicker({ visible, selectedId, onClose, onSelect }: Prop
   }, [visible, loadSounds, stopPreview]);
 
   useEffect(() => {
-    if (!visible || tab !== 'trending') return;
+    if (!visible || tab === 'upload') return;
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => void loadSounds(query), 280);
+    debounceRef.current = setTimeout(() => {
+      if (tab === 'new') {
+        void loadNewSounds(query, selectedGenre);
+      } else {
+        void loadSounds(query, selectedGenre);
+      }
+    }, 280);
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [query, visible, tab, loadSounds]);
+  }, [query, visible, tab, selectedGenre, loadSounds, loadNewSounds]);
 
   useEffect(() => {
     if (!visible || tab !== 'upload' || uploadSubTab !== 'mine') return;
@@ -345,6 +379,7 @@ export function ReelSoundPicker({ visible, selectedId, onClose, onSelect }: Prop
           </View>
           <Text style={styles.rowSub} numberOfLines={1}>
             {item.artist ?? 'Unknown'}
+            {item.genre ? ` · ${item.genre}` : ''}
             {item.usage_count > 0 ? ` · ${item.usage_count} reels` : ''}
           </Text>
         </View>
@@ -395,6 +430,7 @@ export function ReelSoundPicker({ visible, selectedId, onClose, onSelect }: Prop
           {(
             [
               { id: 'trending' as const, label: 'Trending', icon: 'flame' },
+              { id: 'new' as const, label: 'New', icon: 'sparkles' },
               { id: 'upload' as const, label: 'Your audio', icon: 'musical-notes' },
             ] as const
           ).map((t) => {
@@ -412,13 +448,13 @@ export function ReelSoundPicker({ visible, selectedId, onClose, onSelect }: Prop
           })}
         </View>
 
-        {tab === 'trending' ? (
+        {tab === 'trending' || tab === 'new' ? (
           <>
             <View style={styles.searchRow}>
               <Ionicons name="search" size={17} color="#888" />
               <TextInput
                 style={styles.searchInput}
-                placeholder="Search viral sounds…"
+                placeholder={tab === 'new' ? 'Search new sounds…' : 'Search viral sounds…'}
                 placeholderTextColor="#666"
                 value={query}
                 onChangeText={setQuery}
@@ -427,6 +463,35 @@ export function ReelSoundPicker({ visible, selectedId, onClose, onSelect }: Prop
               />
             </View>
 
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.genreRow}
+            >
+              <TouchableOpacity
+                style={[styles.genreChip, !selectedGenre && styles.genreChipActive]}
+                onPress={() => setSelectedGenre(null)}
+              >
+                <Text style={[styles.genreChipText, !selectedGenre && styles.genreChipTextActive]}>
+                  All
+                </Text>
+              </TouchableOpacity>
+              {REEL_SOUND_GENRES.map((genre) => {
+                const active = selectedGenre === genre;
+                return (
+                  <TouchableOpacity
+                    key={genre}
+                    style={[styles.genreChip, active && styles.genreChipActive]}
+                    onPress={() => setSelectedGenre(active ? null : genre)}
+                  >
+                    <Text style={[styles.genreChipText, active && styles.genreChipTextActive]}>
+                      {genre}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
             {loading && sounds.length === 0 ? (
               <View style={styles.center}>
                 <ActivityIndicator color={REEL_ACCENT} />
@@ -434,7 +499,13 @@ export function ReelSoundPicker({ visible, selectedId, onClose, onSelect }: Prop
             ) : error ? (
               <View style={styles.center}>
                 <Text style={styles.error}>{error}</Text>
-                <TouchableOpacity onPress={() => void loadSounds(query)}>
+                <TouchableOpacity
+                  onPress={() =>
+                    void (tab === 'new'
+                      ? loadNewSounds(query, selectedGenre)
+                      : loadSounds(query, selectedGenre))
+                  }
+                >
                   <Text style={styles.retry}>Retry</Text>
                 </TouchableOpacity>
               </View>
@@ -444,7 +515,9 @@ export function ReelSoundPicker({ visible, selectedId, onClose, onSelect }: Prop
                 keyExtractor={(item) => item.id}
                 style={styles.list}
                 keyboardShouldPersistTaps="handled"
-                renderItem={({ item, index }) => renderSoundRow(item, index, { showRank: true })}
+                renderItem={({ item, index }) =>
+                  renderSoundRow(item, index, { showRank: tab === 'trending' })
+                }
                 ListEmptyComponent={
                   <View style={styles.center}>
                     <Text style={styles.empty}>No sounds yet — upload your own</Text>
@@ -710,6 +783,17 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   searchInput: { flex: 1, color: '#fff', fontSize: 15, padding: 0 },
+  genreRow: { paddingHorizontal: 16, paddingBottom: 10, gap: 8 },
+  genreChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 16,
+    backgroundColor: '#1a1a1a',
+    marginRight: 8,
+  },
+  genreChipActive: { backgroundColor: '#2a2a2a', borderWidth: 1, borderColor: REEL_ACCENT },
+  genreChipText: { color: '#888', fontSize: 12, fontWeight: '600', textTransform: 'capitalize' },
+  genreChipTextActive: { color: '#fff' },
   list: { maxHeight: 360 },
   center: { alignItems: 'center', justifyContent: 'center', padding: 28 },
   footerLoader: { paddingVertical: 12 },

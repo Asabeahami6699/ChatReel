@@ -51,6 +51,7 @@ export type ReelFeedRowProps = {
   onOpenShare: (reel: ReelDTO) => void;
   onOpenProfile: (reel: ReelDTO) => void;
   onNavigateSound: (soundId: string) => void;
+  onUseReelAudio: (reel: ReelDTO) => void;
   onReady: (reelId: string) => void;
   onPlaybackStatus: (reelId: string, status: ReelPlaybackStatus, isCurrent: boolean) => void;
   onRef: (reelId: string, ref: ReelPlayerHandle | null) => void;
@@ -81,6 +82,7 @@ function ReelFeedRowComponent({
   onOpenShare,
   onOpenProfile,
   onNavigateSound,
+  onUseReelAudio,
   onReady,
   onPlaybackStatus,
   onRef,
@@ -177,6 +179,7 @@ function ReelFeedRowComponent({
               reel={item}
               authorHandle={author}
               onPressSound={onNavigateSound}
+              onPressOriginalAudio={onUseReelAudio}
             />
           </View>
         </View>

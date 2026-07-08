@@ -1,0 +1,66 @@
+[
+  {
+    "title": "Studio Glow",
+    "artist": "ChatReel Audio",
+    "audio_url": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
+    "duration_sec": 360,
+    "genre": "pop",
+    "mood": "bright"
+  },
+  {
+    "title": "Night Market",
+    "artist": "ChatReel Audio",
+    "audio_url": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3",
+    "duration_sec": 420,
+    "genre": "electronic",
+    "mood": "energetic"
+  },
+  {
+    "title": "Palm Shade",
+    "artist": "ChatReel Audio",
+    "audio_url": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3",
+    "duration_sec": 390,
+    "genre": "chill",
+    "mood": "relaxed"
+  },
+  {
+    "title": "Block Party",
+    "artist": "ChatReel Audio",
+    "audio_url": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3",
+    "duration_sec": 300,
+    "genre": "hip-hop",
+    "mood": "groovy"
+  },
+  {
+    "title": "Coastline",
+    "artist": "ChatReel Audio",
+    "audio_url": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3",
+    "duration_sec": 330,
+    "genre": "acoustic",
+    "mood": "warm"
+  },
+  {
+    "title": "Lagos Nights",
+    "artist": "ChatReel Audio",
+    "audio_url": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3",
+    "duration_sec": 340,
+    "genre": "afrobeats",
+    "mood": "upbeat"
+  },
+  {
+    "title": "Candlelight",
+    "artist": "ChatReel Audio",
+    "audio_url": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3",
+    "duration_sec": 280,
+    "genre": "r&b",
+    "mood": "smooth"
+  },
+  {
+    "title": "Carnival Step",
+    "artist": "ChatReel Audio",
+    "audio_url": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-9.mp3",
+    "duration_sec": 350,
+    "genre": "latin",
+    "mood": "dance"
+  }
+]

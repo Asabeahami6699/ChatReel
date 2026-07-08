@@ -475,6 +475,25 @@ export default function ReelsScreen() {
     [navigation]
   );
 
+  const onUseReelAudio = useCallback(
+    async (reel: ReelDTO) => {
+      if (reel.sound?.id) {
+        navigation.navigate('ReelSound', { soundId: reel.sound.id });
+        return;
+      }
+      try {
+        const { sound } = await api.reels.soundFromReel(reel.id);
+        navigation.navigate('ReelSound', { soundId: sound.id });
+      } catch (err) {
+        Alert.alert(
+          'Sound',
+          err instanceof ApiError ? err.message : 'Could not use audio from this reel'
+        );
+      }
+    },
+    [navigation]
+  );
+
   const goToChats = useCallback(() => {
     void pauseAllVideos();
     navigateMainTab('Chats');
@@ -738,6 +757,7 @@ export default function ReelsScreen() {
         onOpenShare={onOpenShare}
         onOpenProfile={onOpenProfile}
         onNavigateSound={onNavigateSound}
+        onUseReelAudio={onUseReelAudio}
         onReady={handleVideoReady}
         onPlaybackStatus={handlePlaybackStatus}
         onRef={registerVideoRef}
@@ -766,6 +786,7 @@ export default function ReelsScreen() {
       onOpenShare,
       onOpenProfile,
       onNavigateSound,
+      onUseReelAudio,
       handleVideoReady,
       handlePlaybackStatus,
       registerVideoRef,
