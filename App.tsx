@@ -14,6 +14,7 @@ import { ReelUploadToast } from './src/components/ReelUploadToast';
 import { ReelUploadQueueRegistrar } from './src/components/ReelUploadQueueRegistrar';
 import { ReelsPrefetchRegistrar } from './src/components/ReelsPrefetchRegistrar';
 import { CallsPrefetchRegistrar } from './src/components/CallsPrefetchRegistrar';
+import { ExplorePrefetchRegistrar } from './src/components/ExplorePrefetchRegistrar';
 import { MomentUploadToast } from './src/components/MomentUploadToast';
 import { PresenceSyncRegistrar } from './src/components/PresenceSyncRegistrar';
 import { useWebIconFonts } from './src/lib/loadWebIconFonts';
@@ -38,6 +39,7 @@ export default function App() {
               <PushNotificationRegistrar />
               <PresenceSyncRegistrar />
               <ReelsPrefetchRegistrar />
+              <ExplorePrefetchRegistrar />
               <CallsPrefetchRegistrar />
               <ReelUploadQueueRegistrar />
               <RootNavigator />

@@ -23,6 +23,7 @@ import {
   getMomentVideoThumbnailUri,
   peekMomentVideoThumbnailUri,
 } from '../../lib/momentVideoThumbnail';
+import { getExploreProfileCache } from '../../lib/momentsFeedPrefetch';
 import { useMomentsFeed } from '../../hooks/useMomentsFeed';
 import { useIsFocused } from '@react-navigation/native';
 import { useCurrentProfileId } from '../../hooks/useCurrentProfileId';
@@ -158,7 +159,7 @@ export default function FeedScreen() {
     display_name: string | null;
     email: string | null;
     avatar_url: string | null;
-  } | null>(null);
+  } | null>(() => getExploreProfileCache());
 
   const [composerDraft, setComposerDraft] = useState<MomentDraft | null>(null);
   const [viewerIndex, setViewerIndex] = useState(-1);
@@ -169,6 +170,7 @@ export default function FeedScreen() {
   );
 
   useEffect(() => {
+    if (myProfile) return;
     api.profiles
       .me()
       .then(({ profile }) => {
@@ -179,7 +181,7 @@ export default function FeedScreen() {
         });
       })
       .catch(() => undefined);
-  }, []);
+  }, [myProfile]);
 
   const myFeed = useMemo(
     () => authors.find((a) => a.author.id === myProfileId) ?? null,

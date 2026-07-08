@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Image,
   KeyboardAvoidingView,
@@ -111,7 +112,7 @@ export default function PostReelScreen() {
     return d;
   });
   const [audioPromptVisible, setAudioPromptVisible] = useState(false);
-  const [audioPromptBusy, setAudioPromptBusy] = useState(false);
+  const [audioExtractBusy, setAudioExtractBusy] = useState(false);
   const [openSoundOnMount, setOpenSoundOnMount] = useState(false);
 
   useFocusEffect(
@@ -255,43 +256,45 @@ export default function PostReelScreen() {
         return;
       }
 
-      setAudioPromptBusy(true);
-      try {
-        const videoUrl = await uploadReelExtractTemp({
-          uri: video.uri,
-          fileName: video.fileName,
-          contentType: video.mime,
-        });
-        const { sound } = await api.reels.extractSound({
-          video_url: videoUrl,
-          title: 'Extracted audio',
-          duration_sec: video.duration,
-        });
-        setAudioPromptVisible(false);
-        Alert.alert(
-          'Audio extracted',
-          'Saved to My uploads. Use it as this reel’s music, or keep the video’s original sound?',
-          [
-            {
-              text: 'Use as music',
-              onPress: () => {
-                setSelectedSound(sound);
-                setOriginalAudioVolume(1);
-                setSoundVolume(0.45);
-                const end = Math.min(sound.duration_sec ?? video.duration, video.duration);
-                setSoundStartSec(0);
-                setSoundEndSec(end > 0 ? end : video.duration);
+      setAudioPromptVisible(false);
+      setAudioExtractBusy(true);
+      void (async () => {
+        try {
+          const videoUrl = await uploadReelExtractTemp({
+            uri: video.uri,
+            fileName: video.fileName,
+            contentType: video.mime,
+          });
+          const { sound } = await api.reels.extractSound({
+            video_url: videoUrl,
+            title: 'Extracted audio',
+            duration_sec: video.duration,
+          });
+          Alert.alert(
+            'Audio extracted',
+            'Saved to My uploads. Use it as this reel’s music, or keep the video’s original sound?',
+            [
+              {
+                text: 'Use as music',
+                onPress: () => {
+                  setSelectedSound(sound);
+                  setOriginalAudioVolume(1);
+                  setSoundVolume(0.45);
+                  const end = Math.min(sound.duration_sec ?? video.duration, video.duration);
+                  setSoundStartSec(0);
+                  setSoundEndSec(end > 0 ? end : video.duration);
+                },
               },
-            },
-            { text: 'Keep video sound', style: 'cancel' },
-          ]
-        );
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Could not extract audio';
-        Alert.alert('Extract failed', message);
-      } finally {
-        setAudioPromptBusy(false);
-      }
+              { text: 'Keep video sound', style: 'cancel' },
+            ]
+          );
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'Could not extract audio';
+          Alert.alert('Extract failed', message);
+        } finally {
+          setAudioExtractBusy(false);
+        }
+      })();
     },
     [items]
   );
@@ -596,9 +599,15 @@ export default function PostReelScreen() {
           onClose={() => navigation.goBack()}
           onReplaceMedia={() => void pickMedia()}
         />
+        {audioExtractBusy ? (
+          <View style={styles.extractBanner} pointerEvents="none">
+            <ActivityIndicator color="#fff" size="small" />
+            <Text style={styles.extractBannerText}>Extracting audio in the background…</Text>
+          </View>
+        ) : null}
         <VideoAudioPrompt
           visible={audioPromptVisible}
-          busy={audioPromptBusy}
+          busy={false}
           onChoose={(choice) => void handleAudioChoice(choice)}
           onDismiss={() => setAudioPromptVisible(false)}
         />
@@ -763,6 +772,23 @@ export default function PostReelScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
+  extractBanner: {
+    position: 'absolute',
+    top: 56,
+    left: 16,
+    right: 16,
+    zIndex: 30,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: 'rgba(22,22,22,0.94)',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  extractBannerText: { color: '#ddd', fontSize: 13, fontWeight: '600', flex: 1 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',

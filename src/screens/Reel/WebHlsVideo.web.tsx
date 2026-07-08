@@ -208,15 +208,28 @@ export const WebHlsVideo = forwardRef<ReelPlayerHandle, Props>(function WebHlsVi
     } else if (Hls.isSupported()) {
       const hls = new Hls({
         enableWorker: true,
-        lowLatencyMode: true,
+        lowLatencyMode: false,
         backBufferLength: 30,
-        maxBufferLength: 20,
-        startLevel: -1,
+        maxBufferLength: 30,
+        maxMaxBufferLength: 60,
+        startLevel: 0,
+        fragLoadingMaxRetry: 4,
+        fragLoadingRetryDelay: 500,
       });
       hlsRef.current = hls;
       hls.loadSource(uri);
       hls.attachMedia(video);
       hls.on(Hls.Events.MANIFEST_PARSED, signalReady);
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (!data.fatal) return;
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+          hls.startLoad();
+          return;
+        }
+        if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          hls.recoverMediaError();
+        }
+      });
     } else {
       video.src = uri;
       video.addEventListener('loadeddata', signalReady, { once: true });

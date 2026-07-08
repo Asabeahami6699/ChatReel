@@ -15,6 +15,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api, ApiError, type ReelDTO, type ReelSoundDTO } from '../../lib/api';
 import type { ReelsStackParamList } from '../../navigation/reelsNavigation';
+import { fetchSoundFromReel } from '../../lib/reelSoundFromReelClient';
 import { openPostReelWithSound } from '../../lib/reelPlaybackBridge';
 import { REEL_ACCENT } from './reelTheme';
 import { soundLabel } from './ReelSoundPicker';
@@ -29,11 +30,23 @@ export default function ReelSoundScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const { soundId, fromReelId } = route.params;
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await api.reels.soundReels(route.params.soundId, { limit: 30 });
+      let resolvedSoundId = soundId;
+      if (!resolvedSoundId && fromReelId) {
+        const extracted = await fetchSoundFromReel(fromReelId);
+        resolvedSoundId = extracted.id;
+        setSound(extracted);
+      }
+      if (!resolvedSoundId) {
+        setError('Sound not found');
+        return;
+      }
+      const res = await api.reels.soundReels(resolvedSoundId, { limit: 30 });
       setSound(res.sound);
       setReels(res.reels ?? []);
     } catch (err) {
@@ -41,7 +54,7 @@ export default function ReelSoundScreen() {
     } finally {
       setLoading(false);
     }
-  }, [route.params.soundId]);
+  }, [soundId, fromReelId]);
 
   useEffect(() => {
     void load();
@@ -91,6 +104,9 @@ export default function ReelSoundScreen() {
       {loading ? (
         <View style={styles.center}>
           <ActivityIndicator color={REEL_ACCENT} />
+          {fromReelId && !soundId ? (
+            <Text style={styles.extracting}>Preparing original audio…</Text>
+          ) : null}
         </View>
       ) : error ? (
         <View style={styles.center}>
@@ -155,6 +171,7 @@ const styles = StyleSheet.create({
   headerTag: { color: '#aaa', fontSize: 11, marginTop: 2, textTransform: 'capitalize' },
   headerSpacer: { width: 26 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  extracting: { color: '#aaa', fontSize: 14, marginTop: 12, textAlign: 'center' },
   error: { color: '#ff6b6b', textAlign: 'center', marginBottom: 12 },
   retry: { color: REEL_ACCENT, fontWeight: '600' },
   empty: { color: '#888', textAlign: 'center' },

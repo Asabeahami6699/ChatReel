@@ -77,8 +77,13 @@ export function useMomentsFeed() {
   }, []);
 
   useEffect(() => {
+    const entry = getMomentsFeedCache();
+    if (entry && entry.authors.length > 0) {
+      void silentRefresh();
+      return;
+    }
     void load();
-  }, [load]);
+  }, [load, silentRefresh]);
 
   useRealtimeTopic('moments', () => void silentRefresh());
   useRealtimeTopic('momentViews', () => void silentRefresh());

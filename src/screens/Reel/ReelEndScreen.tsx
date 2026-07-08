@@ -2,8 +2,15 @@ import React, { useEffect, useRef } from 'react';
 import { Animated, Easing, Image, Platform, StyleSheet, Text, View } from 'react-native';
 import { USE_NATIVE_DRIVER } from '../../lib/animation';
 import { APP_NAME, REEL_END_SCREEN_MS } from './reelTheme';
+import {
+  configurePlaybackAudio,
+  createPlaybackPlayer,
+  releasePlayer,
+  type AudioPlayer,
+} from '../../lib/appAudio';
 
 const END_GIF = require('../../../assets/reel-end.gif');
+const END_SOUND = require('../../../assets/sounds/incoming-ring.mp3');
 
 const FADE_MS = 450;
 
@@ -14,6 +21,7 @@ type Props = {
 
 /** Branded looping GIF + creator tag when a reel finishes. */
 export function ReelEndScreen({ ownerName, durationMs = REEL_END_SCREEN_MS }: Props) {
+  const soundPlayerRef = useRef<AudioPlayer | null>(null);
   const overlayOpacity = useRef(new Animated.Value(0)).current;
   const cardOpacity = useRef(new Animated.Value(0)).current;
   const cardScale = useRef(new Animated.Value(0.88)).current;
@@ -83,7 +91,29 @@ export function ReelEndScreen({ ownerName, durationMs = REEL_END_SCREEN_MS }: Pr
 
     const seq = Animated.sequence([enter, Animated.delay(holdMs), exit]);
     seq.start();
-    return () => seq.stop();
+    // Short end-screen sound effect (subtle, fire-and-forget).
+    void (async () => {
+      try {
+        await configurePlaybackAudio();
+        await releasePlayer(soundPlayerRef.current);
+        soundPlayerRef.current = createPlaybackPlayer(END_SOUND);
+        // Keep it quiet so it doesn't feel like a notification.
+        try {
+          soundPlayerRef.current.volume = 0.25;
+        } catch {
+          /* ignore */
+        }
+        soundPlayerRef.current.play();
+      } catch {
+        /* ignore end-screen audio failures */
+      }
+    })();
+
+    return () => {
+      seq.stop();
+      void releasePlayer(soundPlayerRef.current);
+      soundPlayerRef.current = null;
+    };
   }, [cardOpacity, cardScale, cardSlideY, durationMs, overlayOpacity, ownerName]);
 
   return (

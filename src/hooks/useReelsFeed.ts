@@ -19,7 +19,9 @@ type State = {
   error: string | null;
 };
 
-const PAGE_SIZE = 15;
+// Load enough reels up front so the user isn't blocked waiting for the next page.
+// 50 matches the target UX: initial feed opens quickly, then we fetch more near the end.
+const PAGE_SIZE = 50;
 
 function cacheKeyForSource(source: FeedSource): ReelsFeedCacheKey | null {
   if (source === 'feed') return 'feed';

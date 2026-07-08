@@ -4,11 +4,10 @@ import type { ReelDTO } from '../../lib/api';
 import { getReelPlaybackUrl, isHlsUrl, stripMediaFragment } from '../../lib/reelPlayback';
 
 const CACHE_DIR = `${FileSystem.cacheDirectory ?? ''}reels-cache/`;
-const PREFETCH_AHEAD = 8;
-const MAX_CONCURRENT = 6;
-
-/** Web browsers stream HLS/MP4 with range requests; full blob prefetch hits QUIC/CDN errors. */
-const WEB_FILE_PREFETCH = Platform.OS !== 'web';
+const PREFETCH_AHEAD = 10;
+const MAX_CONCURRENT = 8;
+const IS_WEB = Platform.OS === 'web';
+const NATIVE_FILE_CACHE = !IS_WEB;
 
 type CacheEntry = { localUri: string; blobUrl?: string };
 
@@ -18,9 +17,11 @@ type ReelLike = Pick<
 >;
 
 const memory = new Map<string, CacheEntry>();
+const watchedReelIds = new Set<string>();
 const inFlight = new Map<string, Promise<string>>();
 let activeDownloads = 0;
 const waitQueue: Array<() => void> = [];
+let hydrateStarted = false;
 
 function acquireSlot(): Promise<void> {
   if (activeDownloads < MAX_CONCURRENT) {
@@ -42,28 +43,58 @@ function releaseSlot() {
 }
 
 async function ensureCacheDir() {
-  if (Platform.OS === 'web' || !CACHE_DIR) return;
+  if (!NATIVE_FILE_CACHE || !CACHE_DIR) return;
   const info = await FileSystem.getInfoAsync(CACHE_DIR);
   if (!info.exists) {
     await FileSystem.makeDirectoryAsync(CACHE_DIR, { intermediates: true });
   }
 }
 
-/** MP4 URL suitable for full-file cache (HLS stays streamed). */
+/** MP4 URL suitable for full-file cache (HLS stays streamed when no MP4). */
 function mp4CacheUrl(reel: ReelLike): string | null {
   const mp4 = stripMediaFragment(reel.video_url);
   if (!mp4 || isHlsUrl(mp4)) return null;
   return mp4;
 }
 
-async function downloadReel(id: string, url: string): Promise<string> {
-  if (!WEB_FILE_PREFETCH) {
-    // Let the video element stream from the CDN on web.
-    return url;
-  }
+function cachedPlaybackUri(entry: CacheEntry): string {
+  return entry.blobUrl ?? entry.localUri;
+}
 
+async function prefetchWebBlob(id: string, url: string): Promise<string> {
   const existing = memory.get(id);
-  if (existing) return existing.localUri;
+  if (existing?.blobUrl) return existing.blobUrl;
+
+  const pending = inFlight.get(id);
+  if (pending) return pending;
+
+  const task = (async () => {
+    await acquireSlot();
+    try {
+      const res = await fetch(url, { credentials: 'omit' });
+      if (!res.ok) throw new Error(`prefetch ${res.status}`);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      memory.set(id, { localUri: url, blobUrl });
+      return blobUrl;
+    } finally {
+      releaseSlot();
+    }
+  })();
+
+  inFlight.set(id, task);
+  try {
+    return await task;
+  } finally {
+    inFlight.delete(id);
+  }
+}
+
+async function downloadReelNative(id: string, url: string): Promise<string> {
+  const existing = memory.get(id);
+  if (existing && !existing.localUri.startsWith('http')) {
+    return cachedPlaybackUri(existing);
+  }
 
   const pending = inFlight.get(id);
   if (pending) return pending;
@@ -94,21 +125,53 @@ async function downloadReel(id: string, url: string): Promise<string> {
   }
 }
 
+async function downloadReel(id: string, url: string): Promise<string> {
+  if (IS_WEB) return prefetchWebBlob(id, url);
+  return downloadReelNative(id, url);
+}
+
+/** Rehydrate in-memory index from on-disk MP4 files (survives app restarts). */
+export async function hydrateReelCacheFromDisk(): Promise<void> {
+  if (!NATIVE_FILE_CACHE || !CACHE_DIR || hydrateStarted) return;
+  hydrateStarted = true;
+  try {
+    await ensureCacheDir();
+    const files = await FileSystem.readDirectoryAsync(CACHE_DIR);
+    for (const file of files) {
+      if (!file.endsWith('.mp4')) continue;
+      const id = file.slice(0, -4);
+      if (!memory.has(id)) {
+        memory.set(id, { localUri: `${CACHE_DIR}${file}` });
+      }
+    }
+  } catch {
+    /* cache dir may be unavailable */
+  }
+}
+
+void hydrateReelCacheFromDisk();
+
+export function markReelWatched(reelId: string): void {
+  watchedReelIds.add(reelId);
+}
+
 export function isReelFullyCached(reelId: string): boolean {
   return memory.has(reelId);
 }
 
 export function getCachedReelUri(reelId: string, remoteUrl: string): string {
-  return memory.get(reelId)?.localUri ?? remoteUrl;
+  const entry = memory.get(reelId);
+  if (entry) return cachedPlaybackUri(entry);
+  return remoteUrl;
 }
 
 /**
  * Playback URI: use local blob/file when cached (instant), otherwise stream
- * (HLS preferred when ready, else remote MP4).
+ * (MP4 on web to avoid HLS segment QUIC errors; HLS on native when ready).
  */
 export function resolveReelPlaybackUri(reel: ReelLike): string {
-  const cached = memory.get(reel.id)?.localUri;
-  if (cached) return cached;
+  const entry = memory.get(reel.id);
+  if (entry) return cachedPlaybackUri(entry);
   return getReelPlaybackUrl(reel);
 }
 
@@ -118,8 +181,6 @@ export function scheduleReelPrefetch(
   currentIndex: number,
   onCached: (reelId: string, localUri: string) => void
 ) {
-  if (!WEB_FILE_PREFETCH) return;
-
   const tasks: Array<{ id: string; url: string; priority: number }> = [];
 
   const addTask = (reel: ReelLike | undefined, priority: number) => {
@@ -138,6 +199,12 @@ export function scheduleReelPrefetch(
 
   addTask(reels[currentIndex - 1], 0.5);
 
+  for (const reel of reels) {
+    if (watchedReelIds.has(reel.id)) {
+      addTask(reel, 0.75);
+    }
+  }
+
   tasks.sort((a, b) => a.priority - b.priority);
 
   for (const task of tasks) {
@@ -153,7 +220,6 @@ export function prefetchReelNow(
   reel: ReelLike,
   onCached: (reelId: string, localUri: string) => void
 ) {
-  if (!WEB_FILE_PREFETCH) return;
   const url = mp4CacheUrl(reel);
   if (!url) return;
   if (memory.has(reel.id) || inFlight.has(reel.id)) return;

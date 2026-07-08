@@ -39,12 +39,14 @@ import ReelProfileSheet from './ReelProfileSheet';
 import {
   SCREEN_HEIGHT,
   SCREEN_WIDTH,
+  REEL_ACTION_RAIL_RIGHT,
   REEL_ACTION_RAIL_WIDTH,
   REEL_BOTTOM_INSET,
   REEL_PHONE_MAX_WIDTH,
   getReelFrameDimensions,
 } from './reelVideoLayout';
 import { useReelVideoPrefetch } from './useReelVideoPrefetch';
+import { markReelWatched } from './reelVideoCache';
 import { reelTabBarOffset } from './ReelsTabBar';
 import { useReelsMainTabFocused } from '../../context/ReelsMainTabFocusContext';
 import { useReelFeedMode } from './ReelFeedModeContext';
@@ -52,6 +54,7 @@ import { REEL_ACCENT, REEL_END_SCREEN_MS, reelBottomLayout } from './reelTheme';
 import { VolumeControl } from './VolumeControl';
 import { ReelFeedRow } from './ReelFeedRow';
 import { ReelFeedOverlays } from './ReelFeedOverlays';
+import { useReelProfileStore } from '../../stores/reelProfileStore';
 
 const WINDOW_HEIGHT = SCREEN_HEIGHT;
 const PROGRESS_UI_MS = 280;
@@ -140,6 +143,7 @@ export default function ReelsScreen() {
   const [readyReelIds, setReadyReelIds] = useState<Set<string>>(new Set());
 
   const [currentIndex, setCurrentIndex] = useState(0);
+  const currentIndexRef = useRef(0);
   const [isMuted, setIsMuted] = useState(false);
   const [volume, setVolume] = useState(1);
   const [isPlaying, setIsPlaying] = useState(true);
@@ -147,6 +151,11 @@ export default function ReelsScreen() {
   const [bufferedProgress, setBufferedProgress] = useState(0);
   const [playbackIcon, setPlaybackIcon] = useState<'play' | 'pause' | null>(null);
   const [isScrubbing, setIsScrubbing] = useState(false);
+
+  // Keep a ref in sync for viewability callbacks so we can clamp/choose the next index.
+  useEffect(() => {
+    currentIndexRef.current = currentIndex;
+  }, [currentIndex]);
 
   const [openComments, setOpenComments] = useState<ReelDTO | null>(null);
   const [openShare, setOpenShare] = useState<ReelDTO | null>(null);
@@ -157,6 +166,8 @@ export default function ReelsScreen() {
   const mediaShouldPlay = isPlaying && isFocused && !sheetOpen && !gateActive;
   const mediaShouldPlayRef = useRef(mediaShouldPlay);
   mediaShouldPlayRef.current = mediaShouldPlay;
+  const canAutoplayRef = useRef(false);
+  canAutoplayRef.current = isFocused && !sheetOpen && !gateActive;
 
   const [followedAuthorIds, setFollowedAuthorIds] = useState<Set<string>>(new Set());
   const [followBusyAuthorIds, setFollowBusyAuthorIds] = useState<Set<string>>(new Set());
@@ -298,8 +309,11 @@ export default function ReelsScreen() {
           setEndScreenReelId((cur) => (cur === reelId ? null : cur));
           setBadgePlayCycle((c) => c + 1);
           const key = activePlayerKey(reelId);
-          setIsPlaying(true);
-          void (key ? videos.current[key] : null)?.replayAsync();
+          // Respect the current play/pause state: if the user paused, don't
+          // automatically resume just because the reel ended.
+          if (mediaShouldPlayRef.current) {
+            void (key ? videos.current[key] : null)?.replayAsync();
+          }
         }, REEL_END_SCREEN_MS);
         return;
       }
@@ -427,7 +441,8 @@ export default function ReelsScreen() {
   );
 
   const playActiveReel = useCallback(
-    async (reelId: string | null) => {
+    async (reelId: string | null, shouldPlay?: boolean) => {
+      const wantPlay = shouldPlay ?? mediaShouldPlayRef.current;
       activeReelIdRef.current = reelId;
       const slideIndex = reelId ? (activeMediaIndexRef.current[reelId] ?? 0) : 0;
       const activeSlideKey = reelId ? `${reelId}:${slideIndex}` : null;
@@ -438,7 +453,8 @@ export default function ReelsScreen() {
             const isActive =
               reelId != null && (id === reelId || id === activeSlideKey || id.startsWith(`${reelId}:`));
             if (isActive && (id === reelId || id === activeSlideKey)) {
-              await player.playAsync();
+              if (wantPlay) await player.playAsync();
+              else await player.pauseAsync();
             } else {
               await player.pauseAsync();
             }
@@ -450,6 +466,9 @@ export default function ReelsScreen() {
     },
     []
   );
+
+  const playActiveReelRef = useRef(playActiveReel);
+  playActiveReelRef.current = playActiveReel;
 
   const handleMediaIndexChange = useCallback(
     (reelId: string, mediaIndex: number) => {
@@ -476,20 +495,12 @@ export default function ReelsScreen() {
   );
 
   const onUseReelAudio = useCallback(
-    async (reel: ReelDTO) => {
+    (reel: ReelDTO) => {
       if (reel.sound?.id) {
         navigation.navigate('ReelSound', { soundId: reel.sound.id });
         return;
       }
-      try {
-        const { sound } = await api.reels.soundFromReel(reel.id);
-        navigation.navigate('ReelSound', { soundId: sound.id });
-      } catch (err) {
-        Alert.alert(
-          'Sound',
-          err instanceof ApiError ? err.message : 'Could not use audio from this reel'
-        );
-      }
+      navigation.navigate('ReelSound', { fromReelId: reel.id });
     },
     [navigation]
   );
@@ -589,7 +600,9 @@ export default function ReelsScreen() {
       if (!first) return;
       activeReelIdRef.current = first.id;
       setCurrentIndex(0);
-      warmReel(first);
+      for (const reel of reels.slice(0, 3)) {
+        warmReel(reel);
+      }
       prefetchAround(reels, 0);
       void playActiveReel(first.id);
       return;
@@ -597,33 +610,87 @@ export default function ReelsScreen() {
     prefetchAround(reels, currentIndex);
   }, [isFocused, reels, currentIndex, warmReel, prefetchAround, playActiveReel]);
 
+  // When the user is near the end of the currently loaded list, prefetch the next page
+  // so we don't show a noticeable loading gap.
+  useEffect(() => {
+    if (!isFocused) return;
+    if (!hasMore || loadingMore) return;
+    if (reels.length < 10) return;
+    if (currentIndex >= reels.length - 6) {
+      void loadMore();
+    }
+  }, [isFocused, hasMore, loadingMore, reels.length, currentIndex, loadMore]);
+
+  // Pre-warm profile content for the current/next reel author so opening the profile sheet
+  // feels instant (the store will fetch only if not already cached/fresh).
+  const ensureProfileLoaded = useReelProfileStore((s) => s.ensureLoaded);
+  const currentAuthorId = reels[currentIndex]?.author_id;
+  const nextAuthorId = reels[currentIndex + 1]?.author_id;
+  useEffect(() => {
+    if (!isFocused) return;
+    const ids = new Set<string>();
+    if (currentAuthorId) ids.add(currentAuthorId);
+    if (nextAuthorId) ids.add(nextAuthorId);
+    for (const id of ids) {
+      void ensureProfileLoaded(id, 24);
+    }
+  }, [isFocused, currentAuthorId, nextAuthorId, ensureProfileLoaded]);
+
   const onViewableItemsChanged = useRef(
     ({ viewableItems }: { viewableItems: { index: number | null; item: ReelDTO }[] }) => {
       if (viewableItems.length === 0) return;
-      const v = viewableItems[0];
-      if (v.index == null || !v.item?.id) return;
+      const candidates = viewableItems
+        .filter((v) => v.index != null && v.item?.id)
+        .map((v) => ({ index: v.index as number, item: v.item }));
+
+      if (candidates.length === 0) return;
+
+      const reelsLen = reelsRef.current.length;
+      if (reelsLen === 0) return;
+
+      const prevIndex = currentIndexRef.current;
+      // Pick the index that moved farthest from the previous one (this avoids selecting the
+      // old reel when both old+new are briefly in view during snapping).
+      const desiredIndex = candidates.reduce((best, c) => {
+        return Math.abs(c.index - prevIndex) > Math.abs(best.index - prevIndex) ? c : best;
+      }, candidates[0]).index;
+
+      // Enforce "one reel per swipe" even if viewability gives us a stale index.
+      const rawDelta = desiredIndex - prevIndex;
+      const delta = Math.abs(rawDelta) <= 1 ? rawDelta : Math.sign(rawDelta);
+      let nextIndex = prevIndex + delta;
+      nextIndex = Math.max(0, Math.min(reelsLen - 1, nextIndex));
+
+      const reel =
+        reelsRef.current[nextIndex] ??
+        candidates.find((c) => c.index === nextIndex)?.item ??
+        null;
+      if (!reel?.id) return;
+
       const prevId = activeReelIdRef.current;
-      setCurrentIndex(v.index);
+      activeReelIdRef.current = reel.id;
+      setCurrentIndex(nextIndex);
       setProgress(0);
       setBufferedProgress(0);
       setEndScreenReelId(null);
       if (endScreenTimerRef.current) clearTimeout(endScreenTimerRef.current);
-      if (prevId !== v.item.id) setBadgePlayCycle((c) => c + 1);
-      if (mediaShouldPlayRef.current) {
+      if (prevId !== reel.id) setBadgePlayCycle((c) => c + 1);
+      const shouldAutoplay = canAutoplayRef.current;
+      if (shouldAutoplay) {
         setIsPlaying(true);
         setPlaybackIcon(null);
-        void playActiveReel(v.item.id);
       }
-      if (prevId && prevId !== v.item.id) {
+      void playActiveReelRef.current(reel.id, shouldAutoplay);
+      if (prevId && prevId !== reel.id) {
         releasePinRef.current(prevId);
       }
 
-      const reel = v.item;
-      if (reel && !viewedReelIds.current.has(reel.id)) {
+      if (!viewedReelIds.current.has(reel.id)) {
         viewedReelIds.current.add(reel.id);
+        markReelWatched(reel.id);
         api.reels.view(reel.id).catch(() => undefined);
       }
-      void prefetchAroundRef.current(reelsRef.current, v.index);
+      void prefetchAroundRef.current(reelsRef.current, nextIndex);
     }
   ).current;
 
@@ -909,9 +976,9 @@ export default function ReelsScreen() {
         alwaysBounceVertical
         overScrollMode="always"
         removeClippedSubviews={Platform.OS === 'android' ? false : undefined}
-        windowSize={5}
-        maxToRenderPerBatch={2}
-        initialNumToRender={2}
+        windowSize={7}
+        maxToRenderPerBatch={3}
+        initialNumToRender={3}
         onEndReached={() => {
           if (hasMore && !loadingMore) loadMore();
         }}
@@ -1481,14 +1548,14 @@ const styles = StyleSheet.create({
   music: { color: 'rgba(255,255,255,0.85)', fontSize: 12, marginLeft: 6, flex: 1 },
   actionButtons: {
     position: 'absolute',
-    right: 6,
+    right: REEL_ACTION_RAIL_RIGHT,
     width: REEL_ACTION_RAIL_WIDTH - 8,
     alignItems: 'center',
     zIndex: 25,
     elevation: 25,
   },
   actionButtonsDesktop: {
-    right: 0,
+    right: REEL_ACTION_RAIL_RIGHT,
     width: REEL_ACTION_RAIL_WIDTH,
   },
   actionIconWrap: {

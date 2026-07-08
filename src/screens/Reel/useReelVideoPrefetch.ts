@@ -33,12 +33,17 @@ export function useReelVideoPrefetch(activeReelIdRef: RefObject<string | null>) 
 
   const resolveUri = useCallback(
     (reel: ReelDTO): string => {
+      const cachedUri = resolveReelPlaybackUri(reel);
+      if (isReelFullyCached(reel.id)) {
+        pinnedUris.current[reel.id] = cachedUri;
+        return cachedUri;
+      }
+
       const pinned = pinnedUris.current[reel.id];
       if (pinned) return pinned;
 
-      const uri = resolveReelPlaybackUri(reel);
-      pinnedUris.current[reel.id] = uri;
-      return uri;
+      pinnedUris.current[reel.id] = cachedUri;
+      return cachedUri;
     },
     [cacheVersion]
   );

@@ -16,7 +16,10 @@ export function getReelFrameDimensions(windowWidth: number, windowHeight: number
 }
 
 /** Space to keep captions from sitting under the right engagement column. */
-export const REEL_ACTION_RAIL_WIDTH = 72;
+export const REEL_ACTION_RAIL_WIDTH = 88;
+
+/** Distance from the right screen edge to the engagement column. */
+export const REEL_ACTION_RAIL_RIGHT = 2;
 
 /** Height of the progress scrubber touch zone above the tab bar. */
 export const REEL_PROGRESS_ZONE = 20;

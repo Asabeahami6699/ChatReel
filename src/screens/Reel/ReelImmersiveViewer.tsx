@@ -24,7 +24,8 @@ import ReelCommentSheet from './ReelCommentSheet';
 import ReelShareSheet from './ReelShareSheet';
 import ReelProfileSheet from './ReelProfileSheet';
 import { useReelVideoPrefetch } from './useReelVideoPrefetch';
-import { REEL_ACTION_RAIL_WIDTH, REEL_BOTTOM_INSET, REEL_PHONE_MAX_WIDTH, getReelFrameDimensions } from './reelVideoLayout';
+import { markReelWatched } from './reelVideoCache';
+import { REEL_ACTION_RAIL_RIGHT, REEL_ACTION_RAIL_WIDTH, REEL_BOTTOM_INSET, REEL_PHONE_MAX_WIDTH, getReelFrameDimensions } from './reelVideoLayout';
 import { ExpandableCaption } from './ExpandableCaption';
 import { ReelSoundStrip } from './ReelSoundStrip';
 import { ReelBrandBadge } from './ReelBrandBadge';
@@ -80,6 +81,8 @@ export function ReelImmersiveViewer({
   const mediaShouldPlay = isPlaying && !sheetOpen && !gateActive;
   const mediaShouldPlayRef = useRef(mediaShouldPlay);
   mediaShouldPlayRef.current = mediaShouldPlay;
+  const canAutoplayRef = useRef(false);
+  canAutoplayRef.current = !sheetOpen && !gateActive;
 
   const [endScreenReelId, setEndScreenReelId] = useState<string | null>(null);
   const [badgePlayCycle, setBadgePlayCycle] = useState(0);
@@ -182,24 +185,36 @@ export function ReelImmersiveViewer({
     return () => unregisterPause();
   }, [pauseAllVideos]);
 
-  const playActiveReel = useCallback(async (reelId: string | null) => {
+  const playActiveReel = useCallback(async (reelId: string | null, shouldPlay?: boolean) => {
+    const wantPlay = shouldPlay ?? mediaShouldPlayRef.current;
     activeReelIdRef.current = reelId;
     const slideIndex = reelId ? (activeMediaIndexRef.current[reelId] ?? 0) : 0;
     const activeSlideKey = reelId ? `${reelId}:${slideIndex}` : null;
     await Promise.all(
       Object.entries(videos.current).map(async ([id, player]) => {
         if (!player) return;
-        const isActive =
-          reelId != null && (id === reelId || id === activeSlideKey || id.startsWith(`${reelId}:`));
-        if (isActive && (id === reelId || id === activeSlideKey)) {
-          const status = await player.getStatusAsync();
-          if (status.isLoaded) await player.playAsync();
-        } else {
-          await player.pauseAsync();
+        try {
+          const isActive =
+            reelId != null && (id === reelId || id === activeSlideKey || id.startsWith(`${reelId}:`));
+          if (isActive && (id === reelId || id === activeSlideKey)) {
+            if (wantPlay) {
+              const status = await player.getStatusAsync();
+              if (status.isLoaded) await player.playAsync();
+            } else {
+              await player.pauseAsync();
+            }
+          } else {
+            await player.pauseAsync();
+          }
+        } catch {
+          /* ignore */
         }
       })
     );
   }, []);
+
+  const playActiveReelRef = useRef(playActiveReel);
+  playActiveReelRef.current = playActiveReel;
 
   const seekToProgress = useCallback(
     (ratio: number) => {
@@ -355,17 +370,20 @@ export function ReelImmersiveViewer({
       const v = viewableItems[0];
       if (v.index == null || !v.item?.id) return;
       const prevId = activeReelIdRef.current;
+      activeReelIdRef.current = v.item.id;
       setCurrentIndex(v.index);
       setProgress(0);
       setEndScreenReelId(null);
       if (endScreenTimerRef.current) clearTimeout(endScreenTimerRef.current);
       if (prevId !== v.item.id) setBadgePlayCycle((c) => c + 1);
-      if (mediaShouldPlayRef.current) {
+      const shouldAutoplay = canAutoplayRef.current;
+      if (shouldAutoplay) {
         setIsPlaying(true);
-        void playActiveReel(v.item.id);
       }
+      void playActiveReelRef.current(v.item.id, shouldAutoplay);
       if (!viewedReelIds.current.has(v.item.id)) {
         viewedReelIds.current.add(v.item.id);
+        markReelWatched(v.item.id);
         api.reels.view(v.item.id).catch(() => undefined);
         setReels((prev) =>
           prev.map((r) => (r.id === v.item.id ? { ...r, view_count: r.view_count + 1 } : r))
@@ -376,20 +394,12 @@ export function ReelImmersiveViewer({
   ).current;
 
   const onUseReelAudio = useCallback(
-    async (reel: ReelDTO) => {
+    (reel: ReelDTO) => {
       if (reel.sound?.id) {
         navigation.navigate('ReelSound', { soundId: reel.sound.id });
         return;
       }
-      try {
-        const { sound } = await api.reels.soundFromReel(reel.id);
-        navigation.navigate('ReelSound', { soundId: sound.id });
-      } catch (err) {
-        Alert.alert(
-          'Sound',
-          err instanceof ApiError ? err.message : 'Could not use audio from this reel'
-        );
-      }
+      navigation.navigate('ReelSound', { fromReelId: reel.id });
     },
     [navigation]
   );
@@ -486,19 +496,19 @@ export function ReelImmersiveViewer({
 
           <View style={[styles.actionButtons, { bottom: metaBottom }]}>
             <TouchableOpacity style={styles.actionButton} onPress={() => toggleLike(item)}>
-              <Ionicons name={isLiked ? 'heart' : 'heart-outline'} size={26} color={isLiked ? REEL_ACCENT : '#fff'} />
+              <Ionicons name={isLiked ? 'heart' : 'heart-outline'} size={32} color={isLiked ? REEL_ACCENT : '#fff'} />
               <Text style={styles.actionText}>{formatCount(item.like_count)}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.actionButton} onPress={() => openSheet(setOpenComments, item)}>
-              <Ionicons name="chatbubble-ellipses-outline" size={26} color="#fff" />
+              <Ionicons name="chatbubble-ellipses-outline" size={30} color="#fff" />
               <Text style={styles.actionText}>{formatCount(item.comment_count)}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.actionButton} onPress={() => openSheet(setOpenShare, item)}>
-              <Ionicons name="paper-plane-outline" size={24} color="#fff" />
+              <Ionicons name="paper-plane-outline" size={28} color="#fff" />
               <Text style={styles.actionText}>Share</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.actionButton}>
-              <Ionicons name="eye-outline" size={22} color="#fff" />
+              <Ionicons name="eye-outline" size={26} color="#fff" />
               <Text style={styles.actionText}>{formatCount(item.view_count)}</Text>
             </TouchableOpacity>
           </View>
@@ -664,7 +674,7 @@ const styles = StyleSheet.create({
   music: { color: 'rgba(255,255,255,0.85)', fontSize: 12, flex: 1 },
   actionButtons: {
     position: 'absolute',
-    right: 8,
+    right: REEL_ACTION_RAIL_RIGHT,
     alignItems: 'center',
     gap: 18,
     zIndex: 10,

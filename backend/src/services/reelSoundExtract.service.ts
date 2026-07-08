@@ -10,12 +10,6 @@ import { createReelSound, type ReelSoundRow } from './reelSounds.service';
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
-async function downloadToFile(url: string, destPath: string): Promise<void> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Download failed (${res.status})`);
-  await fs.writeFile(destPath, Buffer.from(await res.arrayBuffer()));
-}
-
 function storagePathFromPublicUrl(url: string): string | null {
   const match = /\/storage\/v1\/object\/(?:public|sign)\/reels\/(.+)$/.exec(url.split('?')[0]);
   return match ? decodeURIComponent(match[1]) : null;
@@ -25,6 +19,11 @@ async function deleteStorageObjectIfPresent(url: string): Promise<void> {
   const storagePath = storagePathFromPublicUrl(url);
   if (!storagePath) return;
   await supabaseAdmin.storage.from('reels').remove([storagePath]).catch(() => undefined);
+}
+
+function extractMaxDurationSec(durationSec?: number | null): number {
+  if (durationSec != null && durationSec > 0) return Math.min(durationSec, 90);
+  return 90;
 }
 
 /** Extract the audio track from a reels-bucket video into a new library sound. */
@@ -38,38 +37,34 @@ export async function extractSoundFromVideoUrl(input: {
   sourceReelId?: string | null;
 }): Promise<ReelSoundRow> {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'reel-sound-extract-'));
-  const inputPath = path.join(tmpDir, 'input.mp4');
   const outputPath = path.join(tmpDir, 'extracted.mp3');
+  const maxDur = extractMaxDurationSec(input.durationSec);
 
   try {
-    await downloadToFile(input.videoUrl, inputPath);
-
-    const probeStderr = await new Promise<string>((resolve, reject) => {
-      const proc = spawn(ffmpegInstaller.path, ['-hide_banner', '-i', inputPath], {
-        stdio: ['ignore', 'ignore', 'pipe'],
-      });
-      let stderr = '';
-      proc.stderr.on('data', (chunk: Buffer) => {
-        stderr += chunk.toString();
-      });
-      proc.on('error', reject);
-      proc.on('close', () => resolve(stderr));
-    });
-
-    if (!videoHasAudioFromFfmpegStderr(probeStderr)) {
-      throw new Error('This video has no audio track to extract');
-    }
-
+    let stderr = '';
     await new Promise<void>((resolve, reject) => {
-      ffmpeg(inputPath)
-        .noVideo()
+      ffmpeg(input.videoUrl)
+        .inputOptions(['-nostdin', '-rw_timeout', '15000000'])
+        .outputOptions(['-vn'])
+        .duration(maxDur)
         .audioCodec('libmp3lame')
-        .audioBitrate('128k')
+        .audioBitrate('96k')
         .output(outputPath)
+        .on('stderr', (line: string) => {
+          stderr += line;
+        })
         .on('end', () => resolve())
         .on('error', (err) => reject(err))
         .run();
     });
+
+    const stat = await fs.stat(outputPath).catch(() => null);
+    if (!stat || stat.size < 500) {
+      throw new Error('This video has no audio track to extract');
+    }
+    if (!videoHasAudioFromFfmpegStderr(stderr)) {
+      throw new Error('This video has no audio track to extract');
+    }
 
     const storagePath = `sounds/extracted-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp3`;
     const body = await fs.readFile(outputPath);

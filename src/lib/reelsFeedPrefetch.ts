@@ -33,17 +33,17 @@ export function upsertReelsFeedCache(key: ReelsFeedCacheKey, reels: ReelDTO[], n
   setCache(key, reels, next_cursor);
 }
 
-function warmFirstReel(reels: ReelDTO[]) {
-  const first = reels[0];
-  if (!first) return;
-  void prefetchReelNow(first, () => undefined);
+function warmFirstReels(reels: ReelDTO[]) {
+  for (const reel of reels.slice(0, 3)) {
+    void prefetchReelNow(reel, () => undefined);
+  }
 }
 
 /**
  * Prefetch the reels feed after app idle time so opening the Reels tab shows
  * content immediately without blocking initial app load.
  */
-export function scheduleReelsFeedPrefetch(delayMs = 1800) {
+export function scheduleReelsFeedPrefetch(delayMs = 600) {
   if (prefetchPromise) return prefetchPromise;
 
   prefetchPromise = new Promise<void>((resolve) => {
@@ -53,10 +53,10 @@ export function scheduleReelsFeedPrefetch(delayMs = 1800) {
           const session = await sessionStorage.load();
           if (!session?.access_token) return;
 
-          const { reels, next_cursor } = await api.reels.feed({ limit: 15 });
+          const { reels, next_cursor } = await api.reels.feed({ limit: 50 });
           if (reels.length > 0) {
             setCache('feed', reels, next_cursor ?? null);
-            warmFirstReel(reels);
+            warmFirstReels(reels);
           }
         } catch {
           /* silent — ReelsScreen will fetch on mount */
