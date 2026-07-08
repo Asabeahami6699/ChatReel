@@ -1549,8 +1549,8 @@ const styles = StyleSheet.create({
   actionButtons: {
     position: 'absolute',
     right: REEL_ACTION_RAIL_RIGHT,
-    width: REEL_ACTION_RAIL_WIDTH - 8,
-    alignItems: 'center',
+    width: REEL_ACTION_RAIL_WIDTH,
+    alignItems: 'flex-end',
     zIndex: 25,
     elevation: 25,
   },

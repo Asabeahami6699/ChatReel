@@ -308,7 +308,7 @@ const styles = StyleSheet.create({
     right: REEL_ACTION_RAIL_RIGHT,
     zIndex: 16,
     elevation: 16,
-    alignItems: 'center',
+    alignItems: 'flex-end',
     gap: 16,
     width: REEL_ACTION_RAIL_WIDTH,
   },
