@@ -20,11 +20,27 @@ export function reelHasExtractableAudio(reel: ReelDTO): boolean {
   return reel.media?.some((m) => m.media_type === 'video') ?? false;
 }
 
+export function soundTrackDurationSec(sound: ReelSoundDTO, clipLenSec: number): number {
+  return sound.duration_sec ?? Math.max(clipLenSec + 30, 60);
+}
+
+/** Default clip window on the full track — user drags to pick which section. */
 export function defaultSoundRange(
   sound: ReelSoundDTO,
   clipLenSec: number
 ): { start: number; end: number } {
-  const trackLen = sound.duration_sec ?? Math.max(clipLenSec + 30, 60);
-  const end = Math.min(trackLen, Math.max(clipLenSec, 1));
-  return { start: 0, end };
+  return soundClipWindow(soundTrackDurationSec(sound, clipLenSec), clipLenSec, 0);
+}
+
+/** Fixed-length clip window; `startSec` chooses where on the full track to crop. */
+export function soundClipWindow(
+  trackLenSec: number,
+  clipLenSec: number,
+  startSec = 0
+): { start: number; end: number } {
+  const track = Math.max(clipLenSec, trackLenSec);
+  const clip = Math.min(Math.max(clipLenSec, 1), track);
+  const maxStart = Math.max(0, track - clip);
+  const start = Math.max(0, Math.min(startSec, maxStart));
+  return { start, end: start + clip };
 }

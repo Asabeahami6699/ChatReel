@@ -39,7 +39,7 @@ import ReelProfileSheet from './ReelProfileSheet';
 import {
   SCREEN_HEIGHT,
   SCREEN_WIDTH,
-  REEL_ACTION_RAIL_RIGHT,
+  REEL_ACTION_RAIL_LEFT,
   REEL_ACTION_RAIL_WIDTH,
   REEL_BOTTOM_INSET,
   REEL_PHONE_MAX_WIDTH,
@@ -1449,8 +1449,8 @@ const styles = StyleSheet.create({
   },
   scrubArea: {
     position: 'absolute',
-    left: 0,
-    right: REEL_ACTION_RAIL_WIDTH,
+    left: REEL_ACTION_RAIL_WIDTH,
+    right: 0,
     zIndex: 17,
     elevation: 17,
     paddingHorizontal: 12,
@@ -1469,8 +1469,8 @@ const styles = StyleSheet.create({
   compactStat: { color: 'rgba(255,255,255,0.9)', fontSize: 11, fontWeight: '700' },
   captionStrip: {
     position: 'absolute',
-    left: 12,
-    right: REEL_ACTION_RAIL_WIDTH + 8,
+    left: REEL_ACTION_RAIL_WIDTH + 8,
+    right: 12,
     zIndex: 16,
   },
   captionSmall: { color: 'rgba(255,255,255,0.85)', fontSize: 12, fontWeight: '500' },
@@ -1548,14 +1548,14 @@ const styles = StyleSheet.create({
   music: { color: 'rgba(255,255,255,0.85)', fontSize: 12, marginLeft: 6, flex: 1 },
   actionButtons: {
     position: 'absolute',
-    right: REEL_ACTION_RAIL_RIGHT,
+    left: REEL_ACTION_RAIL_LEFT,
     width: REEL_ACTION_RAIL_WIDTH - 8,
     alignItems: 'center',
     zIndex: 25,
     elevation: 25,
   },
   actionButtonsDesktop: {
-    right: REEL_ACTION_RAIL_RIGHT,
+    left: REEL_ACTION_RAIL_LEFT,
     width: REEL_ACTION_RAIL_WIDTH,
   },
   actionIconWrap: {

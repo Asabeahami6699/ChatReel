@@ -13,7 +13,7 @@ type Props = {
   onPreviewComplete?: (sec: number) => void;
 };
 
-/** Music clip trim — same single-bar UI, synced to sound preview. */
+/** Music clip trim — full track shown; drag handles to pick which section. */
 export function ReelSoundTrimTimeline({
   duration,
   startSec,
@@ -38,6 +38,7 @@ export function ReelSoundTrimTimeline({
       onPositionChange={onPreviewChange}
       onScrubStart={onPreviewStart}
       onScrubEnd={onPreviewComplete}
+      hint="Drag along the full track to choose which part of the song to use"
     />
   );
 };

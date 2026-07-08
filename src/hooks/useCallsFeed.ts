@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ApiError, api, type CallHistoryItemDTO } from '../lib/api';
 import {
   getCallsPrefetchCache,
-  scheduleCallsPrefetch,
   upsertCallsPrefetchCache,
 } from '../lib/callsPrefetch';
 import { friendshipsToCallFriends, type CallFriendRow } from '../lib/callFriends';
@@ -18,13 +17,6 @@ export function useCallsFeed(myProfileId: string | null) {
   const [loading, setLoading] = useState(() => !(cached?.calls.length ?? 0));
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const applyCache = useCallback((entry: NonNullable<ReturnType<typeof getCallsPrefetchCache>>) => {
-    if (entry.calls.length > 0) setCalls(entry.calls);
-    if (entry.friends.length > 0) setFriends(entry.friends);
-    if (entry.callsEnabled != null) setCallsEnabled(entry.callsEnabled);
-    if (entry.calls.length > 0) setLoading(false);
-  }, []);
 
   const load = useCallback(
     async (isRefresh = false) => {
@@ -90,19 +82,14 @@ export function useCallsFeed(myProfileId: string | null) {
     }
   }, [myProfileId]);
 
-  const initialLoadDone = useRef(false);
   useEffect(() => {
-    if (initialLoadDone.current) return;
-    initialLoadDone.current = true;
-    void (async () => {
-      if (!(getCallsPrefetchCache()?.calls.length ?? 0)) {
-        await scheduleCallsPrefetch();
-        const warmed = getCallsPrefetchCache();
-        if (warmed) applyCache(warmed);
-      }
-      void load();
-    })();
-  }, [applyCache, load]);
+    const entry = getCallsPrefetchCache();
+    if (entry && entry.calls.length > 0) {
+      void silentRefresh();
+      return;
+    }
+    void load();
+  }, [load, silentRefresh]);
 
   useEffect(() => {
     if (!myProfileId || friends.length > 0) return;

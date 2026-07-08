@@ -3,7 +3,7 @@ import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { ReelDTO } from '../../lib/api';
 import type { ReelPlaybackStatus, ReelPlayerHandle } from '../../components/ReelPlayer';
-import { REEL_ACTION_RAIL_RIGHT, REEL_ACTION_RAIL_WIDTH } from './reelVideoLayout';
+import { REEL_ACTION_RAIL_LEFT, REEL_ACTION_RAIL_WIDTH } from './reelVideoLayout';
 import { ReelFeedMedia } from './ReelFeedMedia';
 import { ExpandableCaption } from './ExpandableCaption';
 import { ReelSoundStrip } from './ReelSoundStrip';
@@ -143,7 +143,8 @@ function ReelFeedRowComponent({
             styles.captionContainer,
             {
               marginBottom: metaBottom,
-              paddingRight: usePhoneFrame ? 8 : REEL_ACTION_RAIL_WIDTH + 8,
+              paddingLeft: usePhoneFrame ? 8 : REEL_ACTION_RAIL_WIDTH + 12,
+              paddingRight: usePhoneFrame ? 8 : 12,
             },
           ]}
         >
@@ -209,7 +210,7 @@ function ReelFeedRowComponent({
         <TouchableOpacity style={styles.actionButton} onPress={() => onToggleLike(item)}>
           <ActionIcon
             name={isLiked ? 'heart' : 'heart-outline'}
-            size={32}
+            size={28}
             color={isLiked ? REEL_ACCENT : '#fff'}
           />
           <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>
@@ -217,17 +218,17 @@ function ReelFeedRowComponent({
           </Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.actionButton} onPress={() => onOpenComments(item)}>
-          <ActionIcon name="chatbubble-ellipses-outline" size={30} />
+          <ActionIcon name="chatbubble-ellipses-outline" size={26} />
           <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>
             {formatReelCount(item.comment_count)}
           </Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.actionButton} onPress={() => onOpenShare(item)}>
-          <ActionIcon name="paper-plane-outline" size={28} />
+          <ActionIcon name="paper-plane-outline" size={24} />
           <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>Share</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.actionButton}>
-          <ActionIcon name="eye-outline" size={26} />
+          <ActionIcon name="eye-outline" size={22} />
           <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>
             {formatReelCount(item.view_count)}
           </Text>
@@ -305,14 +306,14 @@ const styles = StyleSheet.create({
   musicContainer: { marginTop: 4 },
   actionButtons: {
     position: 'absolute',
-    right: REEL_ACTION_RAIL_RIGHT,
+    left: REEL_ACTION_RAIL_LEFT,
     zIndex: 16,
     elevation: 16,
     alignItems: 'center',
-    gap: 16,
+    gap: 14,
     width: REEL_ACTION_RAIL_WIDTH,
   },
-  actionButtonsDesktop: { right: REEL_ACTION_RAIL_RIGHT },
+  actionButtonsDesktop: { left: REEL_ACTION_RAIL_LEFT },
   actionButton: { alignItems: 'center', gap: 3 },
   actionText: { color: '#fff', fontSize: 13, fontWeight: '700' },
   actionTextDesktop: { fontSize: 11 },

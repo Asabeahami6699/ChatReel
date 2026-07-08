@@ -12,9 +12,8 @@ import { Provider as PaperProvider } from 'react-native-paper';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { ReelUploadToast } from './src/components/ReelUploadToast';
 import { ReelUploadQueueRegistrar } from './src/components/ReelUploadQueueRegistrar';
-import { ReelsPrefetchRegistrar } from './src/components/ReelsPrefetchRegistrar';
-import { CallsPrefetchRegistrar } from './src/components/CallsPrefetchRegistrar';
-import { ExplorePrefetchRegistrar } from './src/components/ExplorePrefetchRegistrar';
+import { AppPrefetchRegistrar } from './src/components/AppPrefetchRegistrar';
+import { AudioExtractToast } from './src/components/AudioExtractToast';
 import { MomentUploadToast } from './src/components/MomentUploadToast';
 import { PresenceSyncRegistrar } from './src/components/PresenceSyncRegistrar';
 import { useWebIconFonts } from './src/lib/loadWebIconFonts';
@@ -38,12 +37,11 @@ export default function App() {
             <RealtimeProvider>
               <PushNotificationRegistrar />
               <PresenceSyncRegistrar />
-              <ReelsPrefetchRegistrar />
-              <ExplorePrefetchRegistrar />
-              <CallsPrefetchRegistrar />
+              <AppPrefetchRegistrar />
               <ReelUploadQueueRegistrar />
               <RootNavigator />
               <ReelUploadToast />
+              <AudioExtractToast />
               <MomentUploadToast />
             </RealtimeProvider>
             <StatusBar style="auto" />

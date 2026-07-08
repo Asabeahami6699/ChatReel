@@ -27,7 +27,7 @@ import {
 import { REEL_ACCENT } from './reelTheme';
 import { ReelSchedulePicker } from './ReelProfileMenuFloat';
 import { pauseReelFeedPlayback } from '../../lib/reelPlaybackBridge';
-import { defaultSoundRange } from './reelSoundUtils';
+import { defaultSoundRange, soundClipWindow, soundTrackDurationSec } from './reelSoundUtils';
 
 export { defaultSoundRange } from './reelSoundUtils';
 
@@ -143,7 +143,10 @@ export function PostReelVideoComposer({
   const soundWatchRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const clipLenSec = Math.max(0.5, video.trimEndSec - video.trimStartSec);
-  const soundDuration = selectedSound?.duration_sec ?? Math.max(clipLenSec + 30, 60);
+  const soundDuration = selectedSound
+    ? soundTrackDurationSec(selectedSound, clipLenSec)
+    : clipLenSec;
+  const soundClipLen = Math.min(clipLenSec, soundDuration);
 
   /** Overlay sound on video preview — disabled on Sound tab (dedicated trim player there). */
   const overlaySound = useMemo(
@@ -367,14 +370,18 @@ export function PostReelVideoComposer({
               previewSec={Math.max(soundStartSec, Math.min(soundPreviewSec, soundEndSec))}
               onStartChange={(v) => {
                 void stopSoundPreview();
-                onSoundStartChange(v);
-                if (v >= soundEndSec - 0.5) onSoundEndChange(Math.min(soundDuration, v + clipLenSec));
-                setSoundPreviewSec(v);
+                const { start, end } = soundClipWindow(soundDuration, soundClipLen, v);
+                onSoundStartChange(start);
+                onSoundEndChange(end);
+                setSoundPreviewSec(start);
               }}
               onEndChange={(v) => {
                 void stopSoundPreview();
-                onSoundEndChange(v);
-                if (soundPreviewSec > v) setSoundPreviewSec(v);
+                const { start, end } = soundClipWindow(soundDuration, soundClipLen, v - soundClipLen);
+                onSoundStartChange(start);
+                onSoundEndChange(end);
+                if (soundPreviewSec > end) setSoundPreviewSec(end);
+                else if (soundPreviewSec < start) setSoundPreviewSec(start);
               }}
               onPreviewChange={(sec) => {
                 setSoundPreviewSec(sec);

@@ -28,7 +28,7 @@ import { ReelPlayer, type ReelPlaybackStatus } from '../../components/ReelPlayer
 import { ComposeVideoPreview } from '../../components/ComposeVideoPreview';
 import { ReelSoundPicker, soundLabel } from '../Reel/ReelSoundPicker';
 import { ReelSoundTrimTimeline } from '../Reel/ReelSoundTrimTimeline';
-import { defaultSoundRange, IMAGE_SOUND_CLIP_SEC } from '../Reel/reelSoundUtils';
+import { defaultSoundRange, IMAGE_SOUND_CLIP_SEC, soundClipWindow, soundTrackDurationSec } from '../Reel/reelSoundUtils';
 import { useOverlaySoundLoop } from '../../hooks/useOverlaySoundLoop';
 
 export type MomentDraftItem = {
@@ -121,7 +121,10 @@ export function MomentComposer({
     1,
     currentItem?.mediaType === 'image' ? IMAGE_SOUND_CLIP_SEC : videoDurationSec
   );
-  const soundDuration = selectedSound?.duration_sec ?? Math.max(clipLenSec + 30, 60);
+  const soundDuration = selectedSound
+    ? soundTrackDurationSec(selectedSound, clipLenSec)
+    : clipLenSec;
+  const soundClipLen = Math.min(clipLenSec, soundDuration);
 
   const overlaySound = useMemo(
     () =>
@@ -438,8 +441,17 @@ export function MomentComposer({
                       soundStartSec,
                       Math.min(soundPreviewSec, soundEndSec - 0.05)
                     )}
-                    onStartChange={(v) => onUpdateItem(previewIndex, { soundStartSec: v })}
-                    onEndChange={(v) => onUpdateItem(previewIndex, { soundEndSec: v })}
+                    onStartChange={(v) => {
+                      const { start, end } = soundClipWindow(soundDuration, soundClipLen, v);
+                      onUpdateItem(previewIndex, { soundStartSec: start, soundEndSec: end });
+                      setSoundPreviewSec(start);
+                    }}
+                    onEndChange={(v) => {
+                      const { start, end } = soundClipWindow(soundDuration, soundClipLen, v - soundClipLen);
+                      onUpdateItem(previewIndex, { soundStartSec: start, soundEndSec: end });
+                      if (soundPreviewSec > end) setSoundPreviewSec(end);
+                      else if (soundPreviewSec < start) setSoundPreviewSec(start);
+                    }}
                     onPreviewChange={(v) => setSoundPreviewSec(v)}
                     onPreviewStart={() => {}}
                     onPreviewComplete={(v) => setSoundPreviewSec(v)}

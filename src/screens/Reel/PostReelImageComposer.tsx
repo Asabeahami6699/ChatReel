@@ -14,7 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ReelSoundPicker, soundLabel } from './ReelSoundPicker';
 import { ReelSoundTrimTimeline } from './ReelSoundTrimTimeline';
-import { defaultSoundRange, IMAGE_SOUND_CLIP_SEC } from './reelSoundUtils';
+import { defaultSoundRange, IMAGE_SOUND_CLIP_SEC, soundClipWindow, soundTrackDurationSec } from './reelSoundUtils';
 import type { ReelSoundDTO } from '../../lib/api';
 import type { ReelUploadVisibility } from '../../lib/reelUploadQueue';
 import {
@@ -102,7 +102,10 @@ export function PostReelImageComposer({
   const overlayWatchRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const clipLenSec = IMAGE_REEL_CLIP_SEC;
-  const soundDuration = selectedSound?.duration_sec ?? Math.max(clipLenSec + 30, 60);
+  const soundDuration = selectedSound
+    ? soundTrackDurationSec(selectedSound, clipLenSec)
+    : clipLenSec;
+  const soundClipLen = Math.min(clipLenSec, soundDuration);
   const filterId = image.filterId ?? 'none';
   const filterOverlay = getReelFilterOverlay(filterId);
   const previewHeight = Math.max(220, windowHeight * 0.48);
@@ -363,14 +366,18 @@ export function PostReelImageComposer({
               previewSec={Math.max(soundStartSec, Math.min(soundPreviewSec, soundEndSec))}
               onStartChange={(v) => {
                 void stopSoundPreview();
-                onSoundStartChange(v);
-                if (v >= soundEndSec - 0.5) onSoundEndChange(Math.min(soundDuration, v + clipLenSec));
-                setSoundPreviewSec(v);
+                const { start, end } = soundClipWindow(soundDuration, soundClipLen, v);
+                onSoundStartChange(start);
+                onSoundEndChange(end);
+                setSoundPreviewSec(start);
               }}
               onEndChange={(v) => {
                 void stopSoundPreview();
-                onSoundEndChange(v);
-                if (soundPreviewSec > v) setSoundPreviewSec(v);
+                const { start, end } = soundClipWindow(soundDuration, soundClipLen, v - soundClipLen);
+                onSoundStartChange(start);
+                onSoundEndChange(end);
+                if (soundPreviewSec > end) setSoundPreviewSec(end);
+                else if (soundPreviewSec < start) setSoundPreviewSec(start);
               }}
               onPreviewChange={(sec) => {
                 setSoundPreviewSec(sec);

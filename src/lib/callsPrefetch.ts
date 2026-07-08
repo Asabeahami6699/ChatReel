@@ -49,7 +49,7 @@ function warmLiveKitModule() {
 /**
  * Prefetch call history, friends, and LiveKit after idle so the Calls tab opens instantly.
  */
-export function scheduleCallsPrefetch(delayMs = 2200) {
+export function scheduleCallsPrefetch(delayMs = 400) {
   if (prefetchPromise) return prefetchPromise;
 
   prefetchPromise = new Promise<void>((resolve) => {

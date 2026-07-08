@@ -29,6 +29,7 @@ export type ReelRangeTrimBarProps = {
   onPositionChange: (sec: number) => void;
   onScrubStart?: () => void;
   onScrubEnd?: (sec: number) => void;
+  hint?: string;
 };
 
 function formatTime(sec: number): string {
@@ -59,6 +60,7 @@ export function ReelRangeTrimBar({
   onPositionChange,
   onScrubStart,
   onScrubEnd,
+  hint = 'Drag handles to trim · drag inside to scrub',
 }: ReelRangeTrimBarProps) {
   const [trackWidth, setTrackWidth] = useState(1);
   const dragModeRef = useRef<DragMode | null>(null);
@@ -221,7 +223,7 @@ export function ReelRangeTrimBar({
         </View>
       </View>
 
-      <Text style={styles.hint}>Drag handles to trim · drag inside to scrub</Text>
+      <Text style={styles.hint}>{hint}</Text>
     </View>
   );
 }
