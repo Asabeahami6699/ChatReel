@@ -25,7 +25,7 @@ import ReelShareSheet from './ReelShareSheet';
 import ReelProfileSheet from './ReelProfileSheet';
 import { useReelVideoPrefetch } from './useReelVideoPrefetch';
 import { markReelWatched } from './reelVideoCache';
-import { REEL_ACTION_RAIL_LEFT, REEL_ACTION_RAIL_WIDTH, REEL_BOTTOM_INSET, REEL_PHONE_MAX_WIDTH, getReelFrameDimensions } from './reelVideoLayout';
+import { REEL_ACTION_RAIL_RIGHT, REEL_ACTION_RAIL_WIDTH, REEL_BOTTOM_INSET, REEL_PHONE_MAX_WIDTH, getReelFrameDimensions } from './reelVideoLayout';
 import { ExpandableCaption } from './ExpandableCaption';
 import { ReelSoundStrip } from './ReelSoundStrip';
 import { ReelBrandBadge } from './ReelBrandBadge';
@@ -467,7 +467,7 @@ export function ReelImmersiveViewer({
           )}
 
           <View style={styles.bottomMeta} pointerEvents="box-none">
-            <View style={[styles.captionContainer, { marginBottom: metaBottom, paddingLeft: REEL_ACTION_RAIL_WIDTH + 12 }]}>
+            <View style={[styles.captionContainer, { marginBottom: metaBottom, paddingRight: REEL_ACTION_RAIL_WIDTH + 8 }]}>
               <View style={styles.userInfo}>
                 {disableProfileNavigation ? (
                   <Text style={styles.username}>@{authorLabel(item)}</Text>
@@ -674,9 +674,9 @@ const styles = StyleSheet.create({
   music: { color: 'rgba(255,255,255,0.85)', fontSize: 12, flex: 1 },
   actionButtons: {
     position: 'absolute',
-    left: REEL_ACTION_RAIL_LEFT,
+    right: REEL_ACTION_RAIL_RIGHT,
     alignItems: 'center',
-    gap: 16,
+    gap: 18,
     zIndex: 10,
   },
   actionButton: { alignItems: 'center' },
