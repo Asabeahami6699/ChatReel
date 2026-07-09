@@ -221,7 +221,7 @@ export function ReelVideoEditor({
   );
 
   const previewHeight = previewMode
-    ? Math.max(280, windowHeight * 0.72)
+    ? undefined
     : immersive
       ? COMPOSE_PREVIEW_HEIGHT
       : Math.min(480, windowWidth * 1.35);
@@ -231,9 +231,12 @@ export function ReelVideoEditor({
       style={[
         styles.previewWrap,
         (immersive || previewMode) && styles.previewWrapImmersive,
-        !immersive && !previewMode
+        previewMode && styles.previewWrapFull,
+        !immersive && !previewMode && previewHeight != null
           ? { width: windowWidth - 32, height: previewHeight }
-          : { height: previewHeight },
+          : previewHeight != null
+            ? { height: previewHeight }
+            : null,
       ]}
     >
       <TouchableOpacity activeOpacity={1} onPress={() => void togglePlay()} style={styles.videoTap}>
@@ -241,7 +244,7 @@ export function ReelVideoEditor({
           ref={playerRef}
           source={video.uri}
           style={styles.preview}
-          contentFit="contain"
+          contentFit={previewMode || immersive ? 'cover' : 'contain'}
           isLooping={false}
           shouldPlay={isPlaying && !forcePaused}
           isMuted={overlaySound ? true : isMuted}
@@ -278,11 +281,18 @@ export function ReelVideoEditor({
   );
 
   return (
-    <View style={[styles.wrap, (immersive || previewMode) && styles.wrapImmersive]}>
-      {immersive || previewMode ? (
+    <View style={[styles.wrap, (immersive || previewMode) && styles.wrapImmersive, previewMode && styles.wrapPreview]}>
+      {previewMode ? (
+        <View style={styles.previewModeShell}>
+          {previewCard}
+          <Text style={styles.previewHintOverlay}>
+            Previewing your trimmed clip — tap video to play or pause
+          </Text>
+        </View>
+      ) : immersive ? (
         <ComposeVideoPreview
-          height={previewHeight}
-          style={immersive ? styles.composeCard : undefined}
+          height={previewHeight ?? COMPOSE_PREVIEW_HEIGHT}
+          style={styles.composeCard}
         >
           {previewCard}
         </ComposeVideoPreview>
@@ -345,10 +355,6 @@ export function ReelVideoEditor({
         />
       ) : null}
 
-      {previewMode ? (
-        <Text style={styles.previewHint}>Previewing your trimmed clip — tap video to play or pause</Text>
-      ) : null}
-
       {!previewMode && !immersive ? (
         <TouchableOpacity style={styles.thumbFrameBtn} onPress={() => onPickThumbnailFrame(positionSec)}>
           <Text style={styles.thumbFrameBtnText}>Use current frame as cover</Text>
@@ -361,6 +367,7 @@ export function ReelVideoEditor({
 const styles = StyleSheet.create({
   wrap: { marginBottom: 8 },
   wrapImmersive: { marginBottom: 0 },
+  wrapPreview: { flex: 1, marginBottom: 0 },
   composeCard: { marginHorizontal: 14 },
   previewWrap: {
     backgroundColor: '#000',
@@ -377,6 +384,14 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
     marginHorizontal: 0,
     borderWidth: 0,
+  },
+  previewWrapFull: {
+    flex: 1,
+    minHeight: 280,
+  },
+  previewModeShell: {
+    flex: 1,
+    width: '100%',
   },
   videoTap: { width: '100%', height: '100%' },
   preview: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
@@ -421,7 +436,27 @@ const styles = StyleSheet.create({
   },
   filterLabel: { color: '#888', fontSize: 11, fontWeight: '600' },
   filterLabelActive: { color: '#fff' },
-  previewHint: { color: '#aaa', fontSize: 12, marginTop: 10, textAlign: 'center' },
+  previewHint: {
+    color: '#aaa',
+    fontSize: 12,
+    marginTop: 10,
+    textAlign: 'center',
+    paddingHorizontal: 16,
+  },
+  previewHintOverlay: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    bottom: 16,
+    color: 'rgba(255,255,255,0.9)',
+    fontSize: 12,
+    textAlign: 'center',
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
   thumbFrameBtn: { marginTop: 12, alignSelf: 'flex-start' },
   thumbFrameBtnText: { color: '#1e90ff', fontSize: 13, fontWeight: '600' },
 });

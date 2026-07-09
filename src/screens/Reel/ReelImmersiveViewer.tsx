@@ -25,7 +25,7 @@ import ReelShareSheet from './ReelShareSheet';
 import ReelProfileSheet from './ReelProfileSheet';
 import { useReelVideoPrefetch } from './useReelVideoPrefetch';
 import { markReelWatched } from './reelVideoCache';
-import { REEL_ACTION_RAIL_RIGHT, REEL_ACTION_RAIL_WIDTH, REEL_BOTTOM_INSET, REEL_PHONE_MAX_WIDTH, getReelFrameDimensions } from './reelVideoLayout';
+import { REEL_ACTION_RAIL_RIGHT, REEL_ACTION_RAIL_WIDTH, REEL_BOTTOM_INSET, REEL_PHONE_MAX_WIDTH, REEL_PROGRESS_BAR_HEIGHT, getReelFrameDimensions } from './reelVideoLayout';
 import { ExpandableCaption } from './ExpandableCaption';
 import { ReelSoundStrip } from './ReelSoundStrip';
 import { ReelBrandBadge } from './ReelBrandBadge';
@@ -653,8 +653,17 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     zIndex: 15,
   },
-  progressBg: { height: 4, backgroundColor: 'rgba(255,255,255,0.25)' },
-  progressFill: { height: 4, backgroundColor: '#fff' },
+  progressBg: {
+    height: REEL_PROGRESS_BAR_HEIGHT,
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    borderRadius: REEL_PROGRESS_BAR_HEIGHT / 2,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: '#fff',
+    borderRadius: REEL_PROGRESS_BAR_HEIGHT / 2,
+  },
   bottomMeta: {
     position: 'absolute',
     left: 0,

@@ -5,6 +5,7 @@ import type { ReelDTO } from '../../lib/api';
 import { ReelBrandBadge } from './ReelBrandBadge';
 import { ReelEndScreen } from './ReelEndScreen';
 import { REEL_ACCENT } from './reelTheme';
+import { REEL_CONTENT_SHIFT_DOWN, REEL_PROGRESS_BAR_HEIGHT } from './reelVideoLayout';
 import { reelAuthorLabel } from './reelFeedRowUtils';
 
 type Props = {
@@ -50,6 +51,7 @@ export function ReelFeedOverlays({
       style={[
         styles.layer,
         { height: reelHeight },
+        !usePhoneFrame && { transform: [{ translateY: REEL_CONTENT_SHIFT_DOWN }] },
         usePhoneFrame && { width: reelWidth, alignSelf: 'center' },
       ]}
       pointerEvents="box-none"
@@ -128,9 +130,9 @@ const styles = StyleSheet.create({
     cursor: 'grabbing',
   } as object,
   progressBg: {
-    height: 4,
+    height: REEL_PROGRESS_BAR_HEIGHT,
     backgroundColor: 'rgba(255,255,255,0.18)',
-    borderRadius: 2,
+    borderRadius: REEL_PROGRESS_BAR_HEIGHT / 2,
     overflow: 'hidden',
     position: 'relative',
   },
@@ -140,9 +142,13 @@ const styles = StyleSheet.create({
     top: 0,
     bottom: 0,
     backgroundColor: 'rgba(255,255,255,0.45)',
-    borderRadius: 2,
+    borderRadius: REEL_PROGRESS_BAR_HEIGHT / 2,
   },
-  progressFill: { height: '100%', backgroundColor: '#fff', borderRadius: 2 },
+  progressFill: {
+    height: '100%',
+    backgroundColor: '#fff',
+    borderRadius: REEL_PROGRESS_BAR_HEIGHT / 2,
+  },
   playbackIconOverlay: {
     position: 'absolute',
     top: '50%',

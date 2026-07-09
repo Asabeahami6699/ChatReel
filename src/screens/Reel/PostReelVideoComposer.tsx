@@ -329,7 +329,7 @@ export function PostReelVideoComposer({
           showFilterControls={dock === 'filter'}
         />
 
-        {selectedSound ? (
+        {selectedSound && dock !== 'sound' ? (
           <TouchableOpacity style={styles.soundNameRow} onPress={openSoundPicker} activeOpacity={0.85}>
             <Text style={styles.soundNameText} numberOfLines={1}>
               {soundLabel(selectedSound)}
@@ -542,16 +542,18 @@ export function PostReelVideoComposer({
               <Text style={styles.postPillText}>Post</Text>
             </TouchableOpacity>
           </View>
-          <ReelVideoEditor
-            video={video}
-            onChange={() => undefined}
-            onEditNative={onReplaceMedia}
-            onPickThumbnailFrame={() => undefined}
-            overlaySound={overlaySound}
-            previewMode
-            showTrimControls={false}
-            showFilterControls={false}
-          />
+          <View style={styles.previewBody}>
+            <ReelVideoEditor
+              video={video}
+              onChange={() => undefined}
+              onEditNative={onReplaceMedia}
+              onPickThumbnailFrame={() => undefined}
+              overlaySound={overlaySound}
+              previewMode
+              showTrimControls={false}
+              showFilterControls={false}
+            />
+          </View>
         </View>
       </Modal>
 
@@ -700,6 +702,7 @@ const styles = StyleSheet.create({
   groupChipText: { color: '#888', fontSize: 12, fontWeight: '600' },
   groupChipTextActive: { color: '#fff' },
   previewModal: { flex: 1, backgroundColor: '#000' },
+  previewBody: { flex: 1 },
   previewTop: {
     flexDirection: 'row',
     alignItems: 'center',

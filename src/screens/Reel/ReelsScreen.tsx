@@ -95,13 +95,13 @@ export default function ReelsScreen() {
   const isReelTabFocused = useIsFocused();
   const isMainAppTabFocused = useReelsMainTabFocused();
   const isFocused = isReelTabFocused && isMainAppTabFocused;
+  const { feedMode, setFeedMode } = useReelFeedMode();
   const bottomNavOffset = reelTabBarOffset(insets.bottom, usePhoneFrame);
   const reelHeight = Math.max(320, usePhoneFrame
     ? windowHeight - 32
     : windowHeight - bottomNavOffset
   );
 
-  const { feedMode, setFeedMode } = useReelFeedMode();
   const feedSource = feedMode === 'forYou' ? 'feed' : 'following';
 
   const {

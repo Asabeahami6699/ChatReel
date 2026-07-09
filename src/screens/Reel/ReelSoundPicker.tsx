@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api, type ReelSoundDTO } from '../../lib/api';
+import { subscribeReelAudioExtract } from '../../lib/reelAudioExtractNotify';
 import {
   formatDeviceAudioDuration,
   isDeviceAudioLibrarySupported,
@@ -206,6 +207,14 @@ export function ReelSoundPicker({ visible, selectedId, onClose, onSelect }: Prop
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, [query, visible, tab, uploadSubTab, loadDeviceTracks]);
+
+  useEffect(() => {
+    return subscribeReelAudioExtract((event) => {
+      if (event.type === 'done') {
+        void loadMySounds(query);
+      }
+    });
+  }, [loadMySounds, query]);
 
   const togglePreview = useCallback(
     async (sound: ReelSoundDTO) => {
@@ -449,54 +458,52 @@ export function ReelSoundPicker({ visible, selectedId, onClose, onSelect }: Prop
         </View>
 
         {tab === 'trending' || tab === 'new' ? (
-          <>
-            <View style={styles.searchRow}>
-              <Ionicons name="search" size={17} color="#888" />
-              <TextInput
-                style={styles.searchInput}
-                placeholder={tab === 'new' ? 'Search new sounds…' : 'Search viral sounds…'}
-                placeholderTextColor="#666"
-                value={query}
-                onChangeText={setQuery}
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
+          <View style={styles.catalogBody}>
+            <View style={styles.catalogFilters}>
+              <View style={styles.searchRow}>
+                <Ionicons name="search" size={17} color="#888" />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder={tab === 'new' ? 'Search new sounds…' : 'Search viral sounds…'}
+                  placeholderTextColor="#666"
+                  value={query}
+                  onChangeText={setQuery}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.genreRow}
+              >
+                <TouchableOpacity
+                  style={[styles.genreChip, !selectedGenre && styles.genreChipActive]}
+                  onPress={() => setSelectedGenre(null)}
+                >
+                  <Text style={[styles.genreChipText, !selectedGenre && styles.genreChipTextActive]}>
+                    All
+                  </Text>
+                </TouchableOpacity>
+                {REEL_SOUND_GENRES.map((genre) => {
+                  const active = selectedGenre === genre;
+                  return (
+                    <TouchableOpacity
+                      key={genre}
+                      style={[styles.genreChip, active && styles.genreChipActive]}
+                      onPress={() => setSelectedGenre(active ? null : genre)}
+                    >
+                      <Text style={[styles.genreChipText, active && styles.genreChipTextActive]}>
+                        {genre}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
             </View>
 
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.genreRow}
-            >
-              <TouchableOpacity
-                style={[styles.genreChip, !selectedGenre && styles.genreChipActive]}
-                onPress={() => setSelectedGenre(null)}
-              >
-                <Text style={[styles.genreChipText, !selectedGenre && styles.genreChipTextActive]}>
-                  All
-                </Text>
-              </TouchableOpacity>
-              {REEL_SOUND_GENRES.map((genre) => {
-                const active = selectedGenre === genre;
-                return (
-                  <TouchableOpacity
-                    key={genre}
-                    style={[styles.genreChip, active && styles.genreChipActive]}
-                    onPress={() => setSelectedGenre(active ? null : genre)}
-                  >
-                    <Text style={[styles.genreChipText, active && styles.genreChipTextActive]}>
-                      {genre}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-
-            {loading && sounds.length === 0 ? (
-              <View style={styles.center}>
-                <ActivityIndicator color={REEL_ACCENT} />
-              </View>
-            ) : error ? (
+            {error ? (
               <View style={styles.center}>
                 <Text style={styles.error}>{error}</Text>
                 <TouchableOpacity
@@ -513,19 +520,25 @@ export function ReelSoundPicker({ visible, selectedId, onClose, onSelect }: Prop
               <FlatList
                 data={sounds}
                 keyExtractor={(item) => item.id}
-                style={styles.list}
+                style={styles.listFlex}
                 keyboardShouldPersistTaps="handled"
                 renderItem={({ item, index }) =>
                   renderSoundRow(item, index, { showRank: tab === 'trending' })
                 }
                 ListEmptyComponent={
-                  <View style={styles.center}>
-                    <Text style={styles.empty}>No sounds yet — upload your own</Text>
-                  </View>
+                  loading ? (
+                    <View style={styles.center}>
+                      <ActivityIndicator color={REEL_ACCENT} />
+                    </View>
+                  ) : (
+                    <View style={styles.center}>
+                      <Text style={styles.empty}>No sounds yet — upload your own</Text>
+                    </View>
+                  )
                 }
               />
             )}
-          </>
+          </View>
         ) : (
           <>
             <View style={styles.subTabs}>
@@ -701,11 +714,13 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
+    height: '78%',
     maxHeight: '78%',
     backgroundColor: '#111',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     paddingTop: 8,
+    flexDirection: 'column',
   },
   handle: {
     alignSelf: 'center',
@@ -784,6 +799,13 @@ const styles = StyleSheet.create({
   },
   searchInput: { flex: 1, color: '#fff', fontSize: 15, padding: 0 },
   genreRow: { paddingHorizontal: 16, paddingBottom: 10, gap: 8 },
+  catalogBody: { flex: 1, minHeight: 0 },
+  catalogFilters: {
+    zIndex: 2,
+    backgroundColor: '#111',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#222',
+  },
   genreChip: {
     paddingHorizontal: 12,
     paddingVertical: 7,
@@ -795,6 +817,7 @@ const styles = StyleSheet.create({
   genreChipText: { color: '#888', fontSize: 12, fontWeight: '600', textTransform: 'capitalize' },
   genreChipTextActive: { color: '#fff' },
   list: { maxHeight: 360 },
+  listFlex: { flex: 1 },
   center: { alignItems: 'center', justifyContent: 'center', padding: 28 },
   footerLoader: { paddingVertical: 12 },
   error: { color: '#ff6b6b', textAlign: 'center', marginTop: 8 },

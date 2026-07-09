@@ -186,6 +186,7 @@ export function ReelRangeTrimBar({
 
       <View style={styles.barTouch} onLayout={onTrackLayout} {...panResponder.panHandlers}>
         <View style={styles.track}>
+          <View style={styles.trackLine} pointerEvents="none" />
           {/* Dimmed regions outside selection */}
           {startX > 0 ? (
             <View style={[styles.dim, { left: 0, width: startX }]} />
@@ -247,36 +248,48 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: '#1e1e1e',
     position: 'relative',
-    overflow: 'visible',
+    overflow: 'hidden',
+  },
+  trackLine: {
+    position: 'absolute',
+    left: 6,
+    right: 6,
+    top: '50%',
+    height: StyleSheet.hairlineWidth,
+    marginTop: -StyleSheet.hairlineWidth / 2,
+    backgroundColor: 'rgba(255,255,255,0.28)',
+    zIndex: 2,
   },
   dim: {
     position: 'absolute',
-    top: 0,
-    bottom: 0,
+    top: 6,
+    bottom: 6,
     backgroundColor: 'rgba(0,0,0,0.55)',
-    borderRadius: 8,
+    borderRadius: 6,
+    zIndex: 1,
   },
   selection: {
     position: 'absolute',
-    top: 0,
-    bottom: 0,
+    top: 6,
+    bottom: 6,
     borderRadius: 4,
+    zIndex: 1,
   },
   playhead: {
     position: 'absolute',
-    top: 4,
-    bottom: 4,
+    top: 8,
+    bottom: 8,
     width: 2,
     backgroundColor: '#fff',
     borderRadius: 1,
-    zIndex: 2,
+    zIndex: 3,
   },
   handle: {
     position: 'absolute',
-    top: 0,
-    bottom: 0,
+    top: 4,
+    bottom: 4,
     width: HANDLE_W,
-    zIndex: 3,
+    zIndex: 4,
     justifyContent: 'center',
     alignItems: 'center',
   },

@@ -3,7 +3,7 @@ import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { ReelDTO } from '../../lib/api';
 import type { ReelPlaybackStatus, ReelPlayerHandle } from '../../components/ReelPlayer';
-import { REEL_ACTION_RAIL_RIGHT, REEL_ACTION_RAIL_WIDTH } from './reelVideoLayout';
+import { REEL_ACTION_RAIL_RIGHT, REEL_ACTION_RAIL_WIDTH, REEL_CONTENT_SHIFT_DOWN } from './reelVideoLayout';
 import { ReelFeedMedia } from './ReelFeedMedia';
 import { ExpandableCaption } from './ExpandableCaption';
 import { ReelSoundStrip } from './ReelSoundStrip';
@@ -102,6 +102,12 @@ function ReelFeedRowComponent({
         usePhoneFrame && styles.reelContainerDesktop,
       ]}
     >
+      <View
+        style={[
+          styles.reelContent,
+          !usePhoneFrame && { transform: [{ translateY: REEL_CONTENT_SHIFT_DOWN }] },
+        ]}
+      >
       <TouchableOpacity
         activeOpacity={1}
         onPress={() => onVideoPress(item)}
@@ -233,6 +239,7 @@ function ReelFeedRowComponent({
           </Text>
         </TouchableOpacity>
       </View>
+      </View>
     </View>
   );
 }
@@ -270,6 +277,7 @@ export const ReelFeedRow = memo(ReelFeedRowComponent, propsAreEqual);
 const styles = StyleSheet.create({
   reelContainer: { position: 'relative', backgroundColor: '#000', overflow: 'hidden' },
   reelContainerDesktop: { borderRadius: 16, overflow: 'hidden' },
+  reelContent: { ...StyleSheet.absoluteFillObject },
   videoTouchLayer: { ...StyleSheet.absoluteFillObject, zIndex: 1 },
   videoTouchLayerDesktop: {
     position: 'absolute' as const,

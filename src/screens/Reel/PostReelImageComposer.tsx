@@ -328,7 +328,7 @@ export function PostReelImageComposer({
           </ScrollView>
         ) : null}
 
-        {selectedSound ? (
+        {selectedSound && dock !== 'sound' ? (
           <TouchableOpacity style={styles.soundNameRow} onPress={openSoundPicker} activeOpacity={0.85}>
             <Text style={styles.soundNameText} numberOfLines={1}>
               {soundLabel(selectedSound)}

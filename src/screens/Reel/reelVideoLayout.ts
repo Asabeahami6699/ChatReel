@@ -24,6 +24,12 @@ export const REEL_ACTION_RAIL_RIGHT = -2;
 /** Height of the progress scrubber touch zone above the tab bar. */
 export const REEL_PROGRESS_ZONE = 20;
 
+/** Visible progress track height (pixels). */
+export const REEL_PROGRESS_BAR_HEIGHT = 6;
+
+/** Shift video + engagement down to cover the seam above the bottom nav. */
+export const REEL_CONTENT_SHIFT_DOWN = 10;
+
 /** Gap between caption/engagement row and the progress bar. */
 export const REEL_META_GAP = 6;
 

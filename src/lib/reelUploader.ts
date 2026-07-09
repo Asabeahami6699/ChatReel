@@ -1,4 +1,5 @@
 import { FileSystemUploadType, createUploadTask } from 'expo-file-system/legacy';
+import * as FileSystem from 'expo-file-system/legacy';
 import { Platform } from 'react-native';
 import { api } from './api';
 import { config } from './config';
@@ -109,7 +110,25 @@ export async function uploadReelExtractTemp(params: {
 }): Promise<string> {
   const ext = inferExtension(params.uri, params.fileName, params.contentType) || 'mp4';
   const path = `extract-temp/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${ext}`;
-  return uploadReelVideo({ ...params, storagePath: path });
+  const uploadUri = await resolveExtractUploadUri(params.uri, params.fileName, params.contentType);
+  return uploadReelVideo({ ...params, uri: uploadUri, storagePath: path });
+}
+
+async function resolveExtractUploadUri(
+  uri: string,
+  fileName?: string,
+  contentType?: string
+): Promise<string> {
+  if (Platform.OS === 'web') return uri;
+  if (uri.startsWith('file://')) return uri;
+
+  const baseDir = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
+  if (!baseDir) return uri;
+
+  const ext = inferExtension(uri, fileName, contentType) || 'mp4';
+  const dest = `${baseDir}reel-extract-${Date.now()}.${ext}`;
+  await FileSystem.copyAsync({ from: uri, to: dest });
+  return dest;
 }
 
 /**

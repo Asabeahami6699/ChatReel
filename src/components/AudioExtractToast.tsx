@@ -9,7 +9,12 @@ import {
 import { uploadReelExtractTemp } from '../lib/reelUploader';
 import { api } from '../lib/api';
 
-type SnackState = { visible: boolean; message: string; isError?: boolean };
+type SnackState = {
+  visible: boolean;
+  message: string;
+  isError?: boolean;
+  pending?: boolean;
+};
 
 /** Global toast for background reel audio extraction. */
 export function AudioExtractToast() {
@@ -17,17 +22,26 @@ export function AudioExtractToast() {
 
   useEffect(() => {
     return subscribeReelAudioExtract((event: ReelAudioExtractEvent) => {
-      if (event.type === 'done') {
+      if (event.type === 'started') {
+        setSnackbar({
+          visible: true,
+          message: 'Extracting audio in background…',
+          isError: false,
+          pending: true,
+        });
+      } else if (event.type === 'done') {
         setSnackbar({
           visible: true,
           message: 'Audio saved to My uploads',
           isError: false,
+          pending: false,
         });
       } else if (event.type === 'error') {
         setSnackbar({
           visible: true,
           message: event.message,
           isError: true,
+          pending: false,
         });
       }
     });
@@ -37,8 +51,8 @@ export function AudioExtractToast() {
     <Portal>
       <Snackbar
         visible={snackbar.visible}
-        onDismiss={() => setSnackbar((s) => ({ ...s, visible: false }))}
-        duration={3500}
+        onDismiss={() => setSnackbar((s) => ({ ...s, visible: false, pending: false }))}
+        duration={snackbar.pending ? Snackbar.DURATION_INDEFINITE : 4000}
         style={snackbar.isError ? styles.error : styles.ok}
         theme={{ colors: { onSurface: snackbar.isError ? '#fff' : '#111' } }}
       >
