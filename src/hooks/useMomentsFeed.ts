@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ApiError, api, type MomentAuthorFeedDTO } from '../lib/api';
-import { getMomentsFeedCache, upsertMomentsFeedCache } from '../lib/momentsFeedPrefetch';
+import {
+  awaitExplorePrefetch,
+  getMomentsFeedCache,
+  upsertMomentsFeedCache,
+} from '../lib/momentsFeedPrefetch';
 import { dedupeMomentSlides } from '../lib/momentSlides';
 import { useRealtimeTopic } from './useRealtimeTopic';
 
@@ -43,7 +47,7 @@ function dedupeAuthors(authors: MomentAuthorFeedDTO[]): MomentAuthorFeedDTO[] {
 export function useMomentsFeed() {
   const cached = getMomentsFeedCache();
   const [authors, setAuthors] = useState<MomentAuthorFeedDTO[]>(() => cached?.authors ?? []);
-  const [loading, setLoading] = useState(() => !(cached?.authors.length ?? 0));
+  const [loading, setLoading] = useState(() => cached == null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -55,7 +59,7 @@ export function useMomentsFeed() {
       const { authors: data } = await api.moments.feed();
       const next = dedupeAuthors(data);
       setAuthors(next);
-      if (next.length > 0) upsertMomentsFeedCache(next);
+      upsertMomentsFeedCache(next);
     } catch (err) {
       const message = err instanceof ApiError ? err.message : 'Failed to load feed';
       setError(message);
@@ -70,19 +74,33 @@ export function useMomentsFeed() {
       const { authors: data } = await api.moments.feed();
       const next = dedupeAuthors(data);
       setAuthors(next);
-      if (next.length > 0) upsertMomentsFeedCache(next);
+      upsertMomentsFeedCache(next);
     } catch {
       /* ignore background refresh errors */
     }
   }, []);
 
   useEffect(() => {
-    const entry = getMomentsFeedCache();
-    if (entry && entry.authors.length > 0) {
-      void silentRefresh();
-      return;
-    }
-    void load();
+    let cancelled = false;
+
+    void (async () => {
+      await awaitExplorePrefetch();
+      if (cancelled) return;
+
+      const entry = getMomentsFeedCache();
+      if (entry) {
+        setAuthors(dedupeAuthors(entry.authors));
+        setLoading(false);
+        void silentRefresh();
+        return;
+      }
+
+      void load();
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [load, silentRefresh]);
 
   useRealtimeTopic('moments', () => void silentRefresh());

@@ -181,6 +181,10 @@ function ReelFeedMediaComponent({
 
 function feedMediaPropsEqual(prev: Props, next: Props): boolean {
   if (prev.reel.id !== next.reel.id) return false;
+  if (prev.reel.sound_id !== next.reel.sound_id) return false;
+  if (prev.reel.sound?.id !== next.reel.sound?.id) return false;
+  if (prev.reel.transcode_status !== next.reel.transcode_status) return false;
+  if (prev.reel.hls_url !== next.reel.hls_url) return false;
   if (prev.reelIndex !== next.reelIndex) return false;
   if (prev.videoUri !== next.videoUri) return false;
   if (prev.frameWidth !== next.frameWidth || prev.frameHeight !== next.frameHeight) return false;

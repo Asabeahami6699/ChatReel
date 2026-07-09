@@ -203,13 +203,13 @@ function ReelFeedRowComponent({
             )}
           </TouchableOpacity>
           <TouchableOpacity style={styles.profileFollowPlus} onPress={() => onQuickFollow(item)}>
-            <Ionicons name={isFollowing ? 'checkmark' : 'add'} size={13} color="#fff" />
+            <Ionicons name={isFollowing ? 'checkmark' : 'add'} size={17} color="#fff" />
           </TouchableOpacity>
         </View>
         <TouchableOpacity style={styles.actionButton} onPress={() => onToggleLike(item)}>
           <ActionIcon
             name={isLiked ? 'heart' : 'heart-outline'}
-            size={32}
+            size={36}
             color={isLiked ? REEL_ACCENT : '#fff'}
           />
           <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>
@@ -217,17 +217,17 @@ function ReelFeedRowComponent({
           </Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.actionButton} onPress={() => onOpenComments(item)}>
-          <ActionIcon name="chatbubble-ellipses-outline" size={30} />
+          <ActionIcon name="chatbubble-ellipses-outline" size={34} />
           <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>
             {formatReelCount(item.comment_count)}
           </Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.actionButton} onPress={() => onOpenShare(item)}>
-          <ActionIcon name="paper-plane-outline" size={28} />
+          <ActionIcon name="paper-plane-outline" size={32} />
           <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>Share</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.actionButton}>
-          <ActionIcon name="eye-outline" size={26} />
+          <ActionIcon name="eye-outline" size={30} />
           <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>
             {formatReelCount(item.view_count)}
           </Text>
@@ -308,20 +308,19 @@ const styles = StyleSheet.create({
     right: REEL_ACTION_RAIL_RIGHT,
     zIndex: 16,
     elevation: 16,
-    alignItems: 'flex-end',
-    gap: 16,
-    width: REEL_ACTION_RAIL_WIDTH,
+    alignItems: 'center',
+    gap: 10,
   },
   actionButtonsDesktop: { right: REEL_ACTION_RAIL_RIGHT },
-  actionButton: { alignItems: 'center', gap: 3 },
-  actionText: { color: '#fff', fontSize: 13, fontWeight: '700' },
-  actionTextDesktop: { fontSize: 11 },
-  profileActionWrap: { alignItems: 'center', marginBottom: 4 },
-  profileButton: { marginBottom: -6 },
+  actionButton: { alignItems: 'center', gap: 1, minWidth: 52 },
+  actionText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  actionTextDesktop: { fontSize: 10 },
+  profileActionWrap: { alignItems: 'center', marginBottom: 2 },
+  profileButton: { marginBottom: -8 },
   profileAvatar: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     borderWidth: 2,
     borderColor: '#fff',
   },
@@ -332,13 +331,14 @@ const styles = StyleSheet.create({
   },
   avatarFallbackText: { color: '#fff', fontSize: 18, fontWeight: '800' },
   profileFollowPlus: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     backgroundColor: REEL_ACCENT,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
     borderColor: '#000',
+    marginTop: -13,
   },
 });

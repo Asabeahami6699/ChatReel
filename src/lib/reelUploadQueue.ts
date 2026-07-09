@@ -301,6 +301,15 @@ async function processOne(item: { id: string; draft: ReelUploadDraft }) {
       thumbnail_url: imageUrl,
       caption: caption?.trim() || undefined,
       duration: IMAGE_REEL_CLIP_SEC,
+      media: [
+        {
+          media_url: imageUrl,
+          media_type: 'image',
+          thumbnail_url: imageUrl,
+          width: video.width,
+          height: video.height,
+        },
+      ],
       ...publishVisibility,
       ...soundPublishFields(draft),
       ...schedulePublishFields(draft),

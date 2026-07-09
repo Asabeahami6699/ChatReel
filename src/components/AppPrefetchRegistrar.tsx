@@ -4,7 +4,7 @@ import { scheduleCallsPrefetch } from '../lib/callsPrefetch';
 import { scheduleExplorePrefetch } from '../lib/momentsFeedPrefetch';
 import { scheduleReelsFeedPrefetch } from '../lib/reelsFeedPrefetch';
 
-const APP_PREFETCH_DELAY_MS = 400;
+const APP_PREFETCH_DELAY_MS = 0;
 
 /** Warm Explore, Calls, and Reels feeds shortly after login so tabs open instantly. */
 export function AppPrefetchRegistrar() {

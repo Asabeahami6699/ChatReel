@@ -1549,14 +1549,12 @@ const styles = StyleSheet.create({
   actionButtons: {
     position: 'absolute',
     right: REEL_ACTION_RAIL_RIGHT,
-    width: REEL_ACTION_RAIL_WIDTH,
-    alignItems: 'flex-end',
+    alignItems: 'center',
     zIndex: 25,
     elevation: 25,
   },
   actionButtonsDesktop: {
     right: REEL_ACTION_RAIL_RIGHT,
-    width: REEL_ACTION_RAIL_WIDTH,
   },
   actionIconWrap: {
     width: 46,

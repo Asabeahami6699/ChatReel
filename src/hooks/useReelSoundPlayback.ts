@@ -7,6 +7,7 @@ import {
   seekPlaybackPlayer,
   type AudioPlayer,
 } from '../lib/appAudio';
+import { getReelMediaItems, isImageReelUrl } from '../lib/reelPlayback';
 
 /** Minimal fields needed for overlay music playback (reels + moments). */
 export type SoundPlaybackItem = Pick<
@@ -19,10 +20,21 @@ export type SoundPlaybackItem = Pick<
   | 'duration'
   | 'transcode_status'
   | 'hls_url'
+  | 'video_url'
+  | 'media'
 >;
+
+/** Photo reels never have baked audio — they always need overlay playback. */
+export function reelIsImageReel(item: Pick<ReelDTO, 'video_url' | 'media'>): boolean {
+  const items = getReelMediaItems(item as ReelDTO);
+  return items.every(
+    (m) => m.media_type === 'image' || isImageReelUrl(m.media_url)
+  );
+}
 
 /** True when the published file already has music baked in (HLS or muxed MP4). */
 export function reelHasMuxedSound(item: SoundPlaybackItem): boolean {
+  if (reelIsImageReel(item)) return false;
   if (item.transcode_status === 'ready' && item.hls_url) return true;
   if (item.transcode_status === 'ready' && item.sound_id && !item.hls_url) return true;
   return false;
@@ -33,6 +45,7 @@ export function reelHasMuxedSound(item: SoundPlaybackItem): boolean {
  */
 export function reelNeedsOverlaySound(item: SoundPlaybackItem | null | undefined): boolean {
   if (!item?.sound?.audio_url && !item?.sound?.preview_url) return false;
+  if (reelIsImageReel(item)) return true;
   if (reelHasMuxedSound(item)) return false;
   return true;
 }

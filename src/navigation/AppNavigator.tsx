@@ -201,6 +201,7 @@ const MainTabNavigator = () => {
         name="Explore"
         component={ExploreNavigator}
         options={{
+          lazy: false,
           tabBarIcon: ({ color }) => (
             <Ionicons name="compass-outline" size={22} color={color} />
           ),
@@ -290,6 +291,7 @@ const WebDesktopMain = () => {
             name="Chats"
             listeners={{ focus: () => setSelectedChat(null) }}
             options={{
+              lazy: false,
               tabBarIcon: ({ color }) => (
                 <Ionicons name="chatbubble-outline" size={22} color={color} />
               ),
@@ -301,6 +303,7 @@ const WebDesktopMain = () => {
             name="Explore"
             component={ExploreNavigator}
             options={{
+              lazy: false,
               tabBarIcon: ({ color }) => (
                 <Ionicons name="compass-outline" size={22} color={color} />
               ),

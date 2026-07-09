@@ -37,7 +37,8 @@ function useIsDesktop(): boolean {
 
 export function reelTabBarOffset(insetsBottom: number, isDesktop?: boolean): number {
   if (isDesktop) return 0;
-  return REEL_TAB_BAR_HEIGHT + Math.max(insetsBottom, 6);
+  // Tab bar = paddingTop (8) + minHeight (52) + safe-area paddingBottom.
+  return REEL_TAB_BAR_HEIGHT + 8 + Math.max(insetsBottom, 6);
 }
 
 type ReelsTabBarProps = BottomTabBarProps & {

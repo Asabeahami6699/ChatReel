@@ -100,7 +100,7 @@ export function ReelUploadToast() {
     };
   }, [activeTasks.length, fade, visible]);
 
-  const showIndicator = visible && activeTasks.length > 0;
+  const showIndicator = false;
 
   return (
     <Portal>

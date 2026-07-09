@@ -5,7 +5,7 @@ import NetInfo from '@react-native-community/netinfo';
 import { api } from '../lib/api';
 import { useAuth } from './useAuth';
 import { useRealtimeTopic } from './useRealtimeTopic';
-import { subscribeToMessageRows } from '../lib/chatRealtime';
+import { subscribeChatListMessageEvents } from '../lib/chatListRealtimeBridge';
 
 export type Group = {
   id: string;
@@ -316,7 +316,7 @@ export const useGroupList = (searchQuery = '') => {
   useEffect(() => {
     if (!user?.id) return;
 
-    return subscribeToMessageRows((row, event) => {
+    return subscribeChatListMessageEvents(({ row, event }) => {
       if (event !== 'INSERT') return;
       const groupId = row.group_id as string | undefined;
       if (!groupId) return;

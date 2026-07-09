@@ -13,6 +13,7 @@ import { RootNavigator } from './src/navigation/RootNavigator';
 import { ReelUploadToast } from './src/components/ReelUploadToast';
 import { ReelUploadQueueRegistrar } from './src/components/ReelUploadQueueRegistrar';
 import { AppPrefetchRegistrar } from './src/components/AppPrefetchRegistrar';
+import { ChatListRealtimeRegistrar } from './src/components/ChatListRealtimeRegistrar';
 import { AudioExtractToast } from './src/components/AudioExtractToast';
 import { MomentUploadToast } from './src/components/MomentUploadToast';
 import { PresenceSyncRegistrar } from './src/components/PresenceSyncRegistrar';
@@ -38,6 +39,7 @@ export default function App() {
               <PushNotificationRegistrar />
               <PresenceSyncRegistrar />
               <AppPrefetchRegistrar />
+              <ChatListRealtimeRegistrar />
               <ReelUploadQueueRegistrar />
               <RootNavigator />
               <ReelUploadToast />

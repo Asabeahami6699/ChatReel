@@ -83,6 +83,12 @@ function warmMomentViewerModule() {
   void import('../screens/Explore/MomentViewer').catch(() => undefined);
 }
 
+function warmExploreScreens() {
+  void import('../screens/Explore/FeedScreen').catch(() => undefined);
+  void import('../screens/Explore/MomentComposer').catch(() => undefined);
+  warmMomentViewerModule();
+}
+
 /** Prefetch Explore (moments feed + avatars/previews + profile) after idle. */
 export function scheduleMomentsFeedPrefetch(delayMs = 600) {
   if (prefetchPromise) return prefetchPromise;
@@ -94,16 +100,18 @@ export function scheduleMomentsFeedPrefetch(delayMs = 600) {
           const session = await sessionStorage.load();
           if (!session?.access_token) return;
 
-          warmMomentViewerModule();
+          warmExploreScreens();
 
           const [feedRes, profileRes] = await Promise.allSettled([
             api.moments.feed(),
             api.profiles.me(),
           ]);
 
-          if (feedRes.status === 'fulfilled' && feedRes.value.authors.length > 0) {
+          if (feedRes.status === 'fulfilled') {
             upsertMomentsFeedCache(feedRes.value.authors);
-            warmMomentPreviews(feedRes.value.authors);
+            if (feedRes.value.authors.length > 0) {
+              warmMomentPreviews(feedRes.value.authors);
+            }
           }
 
           if (profileRes.status === 'fulfilled' && profileRes.value.profile) {
@@ -136,4 +144,9 @@ export function scheduleMomentsFeedPrefetch(delayMs = 600) {
 
 export function scheduleExplorePrefetch(delayMs = 600) {
   return scheduleMomentsFeedPrefetch(delayMs);
+}
+
+/** Wait for in-flight Explore prefetch (or start one immediately). */
+export function awaitExplorePrefetch(): Promise<void> {
+  return prefetchPromise ?? scheduleExplorePrefetch(0);
 }

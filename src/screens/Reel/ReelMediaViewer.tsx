@@ -11,6 +11,7 @@ import type { ReelDTO } from '../../lib/api';
 import { getReelMediaItems } from '../../lib/reelPlayback';
 import { ReelMediaSlide } from './ReelMediaSlide';
 import type { ReelPlaybackStatus, ReelPlayerHandle } from '../../components/ReelPlayer';
+import { useReelSoundPlayback } from '../../hooks/useReelSoundPlayback';
 
 type Props = {
   reel: ReelDTO;
@@ -25,6 +26,14 @@ export function ReelMediaViewer({ reel, shouldPlay = true, isMuted = false }: Pr
   const mediaIndexRef = useRef(0);
   const listRef = useRef<FlatList>(null);
   const playersRef = useRef<Record<string, ReelPlayerHandle | null>>({});
+
+  useReelSoundPlayback(reel, {
+    active: shouldPlay,
+    playing: shouldPlay,
+    muted: isMuted,
+    focused: true,
+    masterVolume: isMuted ? 0 : 1,
+  });
 
   useEffect(() => {
     mediaIndexRef.current = mediaIndex;

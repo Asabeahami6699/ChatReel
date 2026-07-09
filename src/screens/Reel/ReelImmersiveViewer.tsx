@@ -496,19 +496,19 @@ export function ReelImmersiveViewer({
 
           <View style={[styles.actionButtons, { bottom: metaBottom }]}>
             <TouchableOpacity style={styles.actionButton} onPress={() => toggleLike(item)}>
-              <Ionicons name={isLiked ? 'heart' : 'heart-outline'} size={32} color={isLiked ? REEL_ACCENT : '#fff'} />
+              <Ionicons name={isLiked ? 'heart' : 'heart-outline'} size={36} color={isLiked ? REEL_ACCENT : '#fff'} />
               <Text style={styles.actionText}>{formatCount(item.like_count)}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.actionButton} onPress={() => openSheet(setOpenComments, item)}>
-              <Ionicons name="chatbubble-ellipses-outline" size={30} color="#fff" />
+              <Ionicons name="chatbubble-ellipses-outline" size={34} color="#fff" />
               <Text style={styles.actionText}>{formatCount(item.comment_count)}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.actionButton} onPress={() => openSheet(setOpenShare, item)}>
-              <Ionicons name="paper-plane-outline" size={28} color="#fff" />
+              <Ionicons name="paper-plane-outline" size={32} color="#fff" />
               <Text style={styles.actionText}>Share</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.actionButton}>
-              <Ionicons name="eye-outline" size={26} color="#fff" />
+              <Ionicons name="eye-outline" size={30} color="#fff" />
               <Text style={styles.actionText}>{formatCount(item.view_count)}</Text>
             </TouchableOpacity>
           </View>
@@ -675,12 +675,12 @@ const styles = StyleSheet.create({
   actionButtons: {
     position: 'absolute',
     right: REEL_ACTION_RAIL_RIGHT,
-    alignItems: 'flex-end',
-    gap: 18,
+    alignItems: 'center',
+    gap: 10,
     zIndex: 10,
   },
-  actionButton: { alignItems: 'center' },
-  actionText: { color: '#fff', fontSize: 11, marginTop: 4, fontWeight: '600' },
+  actionButton: { alignItems: 'center', gap: 1 },
+  actionText: { color: '#fff', fontSize: 11, marginTop: 2, fontWeight: '600' },
   heartAnimation: {
     position: 'absolute',
     alignSelf: 'center',

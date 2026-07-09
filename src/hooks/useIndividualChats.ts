@@ -6,7 +6,7 @@ import { api, ApiError } from '../lib/api';
 import { useAuth } from './useAuth';
 import { useCurrentProfileId } from './useCurrentProfileId';
 import { useFriendshipsRealtime } from './useFriendshipsRealtime';
-import { subscribeToMessageRows } from '../lib/chatRealtime';
+import { subscribeChatListMessageEvents } from '../lib/chatListRealtimeBridge';
 
 export type IndividualChat = {
   id: string;
@@ -119,7 +119,7 @@ export const useIndividualChats = (searchQuery: string = '') => {
   useEffect(() => {
     if (!user?.id) return;
 
-    return subscribeToMessageRows((row, event) => {
+    return subscribeChatListMessageEvents(({ row, event }) => {
       // Skip group messages — handled by useGroupList.
       if (row.group_id) return;
 
