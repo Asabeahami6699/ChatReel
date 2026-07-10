@@ -10,7 +10,6 @@ import {
   stashReelUploadDraft,
 } from './reelUploadMediaStore';
 import { saveReelComposeDraft } from './reelComposeDraftStore';
-import { saveReelComposeDraft } from './reelComposeDraftStore';
 
 /** Default display length for photo reels with music (seconds). */
 const IMAGE_REEL_CLIP_SEC = 15;
