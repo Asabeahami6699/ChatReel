@@ -17,6 +17,7 @@ export const realtimeTopics = {
   reels: createRealtimeTopic('reels'),
   reelLikes: createRealtimeTopic('reelLikes'),
   reelComments: createRealtimeTopic('reelComments'),
+  reelGifts: createRealtimeTopic('reelGifts'),
   calls: createRealtimeTopic('calls'),
   callParticipants: createRealtimeTopic('callParticipants'),
   moments: createRealtimeTopic('moments'),
@@ -216,6 +217,12 @@ function startAuxChannels(authUserId: string, profileId: string | null) {
     authUserId,
     { event: '*', schema: 'public', table: 'reel_comments' },
     () => realtimeTopics.reelComments.notify()
+  );
+  startAuxChannel(
+    'reel-gifts',
+    authUserId,
+    { event: 'INSERT', schema: 'public', table: 'reel_gifts' },
+    () => realtimeTopics.reelGifts.notify()
   );
 
   startAuxChannel('calls', authUserId, { event: '*', schema: 'public', table: 'calls' }, (payload) => {

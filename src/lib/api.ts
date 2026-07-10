@@ -63,6 +63,8 @@ export type ReelDTO = {
   view_count: number;
   like_count: number;
   comment_count: number;
+  gift_count?: number;
+  gift_coin_total?: number;
   created_at: string;
   author: ReelAuthorDTO | null;
   liked_by_me: boolean;
@@ -73,6 +75,57 @@ export type ReelDTO = {
   original_audio_volume?: number | null;
   sound_volume?: number | null;
   scheduled_publish_at?: string | null;
+};
+
+export type GiftCatalogDTO = {
+  id: string;
+  slug: string;
+  name: string;
+  emoji: string;
+  coin_price: number;
+  sort_order: number;
+};
+
+export type WalletBalanceDTO = {
+  balance_coins: number;
+  lifetime_earned_coins: number;
+  lifetime_spent_coins: number;
+  welcome_claimed: boolean;
+};
+
+export type WalletLedgerEntryDTO = {
+  id: string;
+  profile_id: string;
+  delta_coins: number;
+  balance_after: number;
+  entry_type: string;
+  reference_id: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
+export type CoinPackageDTO = {
+  id: string;
+  slug: string;
+  label: string;
+  coins: number;
+  amount_minor: number;
+  currency: string;
+  country_code: string;
+  sort_order: number;
+};
+
+export type ReelGiftDTO = {
+  id: string;
+  reel_id: string;
+  sender_profile_id: string;
+  recipient_profile_id: string;
+  gift_id: string;
+  coin_amount: number;
+  creator_coins: number;
+  platform_fee_coins: number;
+  created_at: string;
+  gift?: GiftCatalogDTO;
 };
 
 export type ReelCommentDTO = {
@@ -90,11 +143,12 @@ export type ReelCommentDTO = {
 
 export type ReelInboxItemDTO = {
   id: string;
-  type: 'like' | 'comment';
+  type: 'like' | 'comment' | 'gift';
   created_at: string;
   actor: ReelAuthorDTO | null;
   reel: Pick<ReelDTO, 'id' | 'thumbnail_url' | 'caption' | 'video_url'> | null;
   comment?: { id: string; content: string };
+  gift?: { emoji: string; name: string; coin_amount: number };
 };
 
 export type MomentAudienceMode = 'friends' | 'only' | 'except';
@@ -852,5 +906,62 @@ export const api = {
         method: 'DELETE',
         body: { token },
       }),
+  },
+
+  gifts: {
+    catalog: () => apiRequest<{ gifts: GiftCatalogDTO[] }>('/api/gifts/catalog'),
+    send: (data: { reel_id: string; gift_id: string; idempotency_key: string }) =>
+      apiRequest<{
+        gift: ReelGiftDTO;
+        catalog: GiftCatalogDTO | null;
+        sender_balance_coins: number;
+        duplicate: boolean;
+      }>('/api/gifts/send', { method: 'POST', body: data }),
+    forReel: (reelId: string, limit = 20) =>
+      apiRequest<{ gifts: ReelGiftDTO[] }>(`/api/gifts/reel/${reelId}?limit=${limit}`),
+  },
+
+  wallet: {
+    balance: () => apiRequest<WalletBalanceDTO>('/api/wallet/balance'),
+    ledger: (params?: { cursor?: string; limit?: number }) => {
+      const search = new URLSearchParams();
+      if (params?.cursor) search.set('cursor', params.cursor);
+      if (params?.limit) search.set('limit', String(params.limit));
+      const qs = search.toString();
+      return apiRequest<{ entries: WalletLedgerEntryDTO[]; next_cursor: string | null }>(
+        `/api/wallet/ledger${qs ? `?${qs}` : ''}`
+      );
+    },
+    claimWelcome: () =>
+      apiRequest<{ already_claimed: boolean; balance_coins: number; bonus_coins?: number }>(
+        '/api/wallet/welcome',
+        { method: 'POST', body: {} }
+      ),
+    packages: () =>
+      apiRequest<{
+        packages: CoinPackageDTO[];
+        resolved_country: string;
+        currency: string;
+        payment_provider: 'paystack' | 'stripe';
+        fallback_used: boolean;
+        paystack_public_key: string | null;
+      }>('/api/wallet/packages'),
+    purchaseInitialize: (package_id: string) =>
+      apiRequest<{
+        authorization_url: string;
+        reference: string;
+        access_code: string;
+        payment_provider: 'paystack' | 'stripe';
+      }>(
+        '/api/wallet/purchase/initialize',
+        { method: 'POST', body: { package_id } }
+      ),
+    purchaseVerify: (reference: string) =>
+      apiRequest<{
+        completed: boolean;
+        already_completed: boolean;
+        balance_coins: number;
+        coins_credited: number;
+      }>('/api/wallet/purchase/verify', { method: 'POST', body: { reference } }),
   },
 };

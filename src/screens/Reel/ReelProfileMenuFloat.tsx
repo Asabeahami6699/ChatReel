@@ -14,6 +14,7 @@ import DateTimePicker, { type DateTimePickerEvent } from '@react-native-communit
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { deleteReelComposeDraft, listReelComposeDrafts, type SavedReelComposeDraft } from '../../lib/reelComposeDraftStore';
 import { ReelSettingsSheet } from './ReelSettingsSheet';
+import { ReelWalletSheet } from './ReelWalletSheet';
 import { useReelPlaybackGate } from '../../hooks/useReelPlaybackGate';
 import { REEL_ACCENT } from './reelTheme';
 
@@ -28,9 +29,10 @@ export function ReelProfileMenuFloat({ onNewReel, onOpenDraft, topOffset }: Prop
   const insets = useSafeAreaInsets();
   const [open, setOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [walletOpen, setWalletOpen] = useState(false);
   const [drafts, setDrafts] = useState<SavedReelComposeDraft[]>([]);
 
-  useReelPlaybackGate('profile-menu', open || settingsOpen);
+  useReelPlaybackGate('profile-menu', open || settingsOpen || walletOpen);
 
   const openMenu = async () => {
     const list = await listReelComposeDrafts();
@@ -114,6 +116,17 @@ export function ReelProfileMenuFloat({ onNewReel, onOpenDraft, topOffset }: Prop
               style={styles.row}
               onPress={() => {
                 setOpen(false);
+                setWalletOpen(true);
+              }}
+            >
+              <Ionicons name="wallet-outline" size={22} color="#fff" />
+              <Text style={styles.rowText}>Creator wallet</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.row}
+              onPress={() => {
+                setOpen(false);
                 setSettingsOpen(true);
               }}
             >
@@ -125,6 +138,7 @@ export function ReelProfileMenuFloat({ onNewReel, onOpenDraft, topOffset }: Prop
       </Modal>
 
       <ReelSettingsSheet visible={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <ReelWalletSheet visible={walletOpen} onClose={() => setWalletOpen(false)} />
     </>
   );
 }

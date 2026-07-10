@@ -39,6 +39,19 @@ function timeAgo(iso: string): string {
   return `${days}d ago`;
 }
 
+function activityLine(item: ReelInboxItemDTO): string {
+  switch (item.type) {
+    case 'like':
+      return ' liked your reel';
+    case 'comment':
+      return ' commented on your reel';
+    case 'gift':
+      return ' sent a gift on your reel';
+    default:
+      return ' interacted with your reel';
+  }
+}
+
 export default function ReelInboxScreen() {
   const insets = useSafeAreaInsets();
   const bottomPad = reelTabBarOffset(insets.bottom);
@@ -75,6 +88,9 @@ export default function ReelInboxScreen() {
   useRealtimeTopic('reelComments', () => {
     if (isFocused) void load(true);
   });
+  useRealtimeTopic('reelGifts', () => {
+    if (isFocused) void load(true);
+  });
 
   const openItem = (item: ReelInboxItemDTO) => {
     if (item.reel?.id) {
@@ -101,11 +117,16 @@ export default function ReelInboxScreen() {
       <View style={styles.rowBody}>
         <Text style={styles.rowText}>
           <Text style={styles.rowBold}>@{actorName(item)}</Text>
-          {item.type === 'like' ? ' liked your reel' : ' commented on your reel'}
+          {activityLine(item)}
         </Text>
         {item.type === 'comment' && item.comment?.content ? (
           <Text style={styles.commentPreview} numberOfLines={2}>
             "{item.comment.content}"
+          </Text>
+        ) : null}
+        {item.type === 'gift' && item.gift ? (
+          <Text style={styles.giftPreview} numberOfLines={1}>
+            {item.gift.emoji} {item.gift.name} · {item.gift.coin_amount} coins
           </Text>
         ) : null}
         <Text style={styles.time}>{timeAgo(item.created_at)}</Text>
@@ -115,9 +136,13 @@ export default function ReelInboxScreen() {
       ) : (
         <View style={[styles.thumb, styles.thumbPlaceholder]}>
           <Ionicons
-            name={item.type === 'like' ? 'heart' : 'chatbubble'}
+            name={
+              item.type === 'like' ? 'heart' : item.type === 'gift' ? 'gift' : 'chatbubble'
+            }
             size={18}
-            color={item.type === 'like' ? REEL_ACCENT : '#93c5fd'}
+            color={
+              item.type === 'like' ? REEL_ACCENT : item.type === 'gift' ? '#fff' : '#93c5fd'
+            }
           />
         </View>
       )}
@@ -129,7 +154,7 @@ export default function ReelInboxScreen() {
       <StatusBar barStyle="light-content" />
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
         <Text style={styles.title}>Reel activity</Text>
-        <Text style={styles.subtitle}>Likes and comments on your reels</Text>
+        <Text style={styles.subtitle}>Likes, comments, and gifts on your reels</Text>
       </View>
 
       {loading && items.length === 0 ? (
@@ -149,7 +174,9 @@ export default function ReelInboxScreen() {
             <View style={styles.center}>
               <Ionicons name="notifications-outline" size={48} color="#444" />
               <Text style={styles.emptyText}>No reel activity yet</Text>
-              <Text style={styles.emptyHint}>When someone likes or comments, it shows up here</Text>
+              <Text style={styles.emptyHint}>
+                When someone likes, comments, or sends a gift, it shows up here
+              </Text>
             </View>
           }
         />
@@ -184,6 +211,7 @@ const styles = StyleSheet.create({
   rowText: { color: '#ddd', fontSize: 14, lineHeight: 20 },
   rowBold: { color: '#fff', fontWeight: '700' },
   commentPreview: { color: '#aaa', fontSize: 13, marginTop: 4, fontStyle: 'italic' },
+  giftPreview: { color: '#ddd', fontSize: 13, marginTop: 4, fontWeight: '600' },
   time: { color: '#666', fontSize: 12, marginTop: 4 },
   thumb: { width: 44, height: 56, borderRadius: 6, backgroundColor: '#222' },
   thumbPlaceholder: { alignItems: 'center', justifyContent: 'center' },

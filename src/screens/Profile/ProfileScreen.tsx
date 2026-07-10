@@ -24,6 +24,14 @@ import { useAuth } from '../../hooks/useAuth';
 import { useRealtimeTopic } from '../../hooks/useRealtimeTopic';
 import { Ionicons } from '@expo/vector-icons';
 import { USE_NATIVE_DRIVER } from '../../lib/animation';
+import { FormSelectField } from '../../components/FormSelectField';
+import {
+  COUNTRY_OPTIONS,
+  LANGUAGE_OPTIONS,
+  normalizeCountryValue,
+  normalizeLanguageValue,
+  optionsWithCurrentValue,
+} from '../../lib/profileLocaleOptions';
 
 // === Schema ===
 const profileSchema = z.object({
@@ -138,6 +146,8 @@ const ProfileScreen = ({ navigation }: { navigation: any }) => {
   const [userId, setUserId] = useState<string | null>(null);
   const [currentAppStatus, setCurrentAppStatus] = useState<'Online' | 'Offline'>('Offline');
   const [avatarUrl, setAvatarUrl] = useState<string>('');
+  const [countryOptions, setCountryOptions] = useState(COUNTRY_OPTIONS);
+  const [languageOptions, setLanguageOptions] = useState(LANGUAGE_OPTIONS);
 
   const {
     control,
@@ -167,16 +177,20 @@ const ProfileScreen = ({ navigation }: { navigation: any }) => {
       const { profile: data } = await api.profiles.me();
 
       const profile = data || {};
+      const country = normalizeCountryValue(profile.country);
+      const language = normalizeLanguageValue(profile.language);
       const formData = {
         display_name: profile.display_name || '',
         email: profile.email || user.email || '',
         avatar_url: profile.avatar_url || '',
         bio: profile.bio || '',
-        country: profile.country || '',
+        country,
         region: profile.region || '',
-        language: profile.language || '',
+        language,
       };
 
+      setCountryOptions(optionsWithCurrentValue(COUNTRY_OPTIONS, country));
+      setLanguageOptions(optionsWithCurrentValue(LANGUAGE_OPTIONS, language));
       reset(formData);
       setAvatarUrl(formData.avatar_url);
       setCurrentAppStatus(profile.status === 'Online' ? 'Online' : 'Offline');
@@ -294,9 +308,23 @@ const ProfileScreen = ({ navigation }: { navigation: any }) => {
           <FormField label="Display Name" control={control} name="display_name" error={errors.display_name} placeholder="John Doe" />
           <FormField label="Email" control={control} name="email" error={errors.email} placeholder="john@example.com" keyboardType="email-address" />
           <FormField label="Bio" control={control} name="bio" error={errors.bio} placeholder="Tell us about yourself..." multiline />
-          <FormField label="Country" control={control} name="country" error={errors.country} placeholder="USA" />
+          <FormSelectField
+            label="Country"
+            control={control}
+            name="country"
+            options={countryOptions}
+            placeholder="Select country"
+            error={errors.country}
+          />
           <FormField label="Region" control={control} name="region" error={errors.region} placeholder="California" />
-          <FormField label="Language" control={control} name="language" error={errors.language} placeholder="en" />
+          <FormSelectField
+            label="Language"
+            control={control}
+            name="language"
+            options={languageOptions}
+            placeholder="Select language"
+            error={errors.language}
+          />
 
           {/* === Status === */}
           <View style={styles.field}>

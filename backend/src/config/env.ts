@@ -38,6 +38,11 @@ export const env = {
     rejectThreshold: Number(process.env.REEL_MODERATION_REJECT_THRESHOLD ?? 0.55),
     flagThreshold: Number(process.env.REEL_MODERATION_FLAG_THRESHOLD ?? 0.35),
   },
+  paystack: {
+    secretKey: process.env.PAYSTACK_SECRET_KEY ?? '',
+    publicKey: process.env.PAYSTACK_PUBLIC_KEY ?? '',
+    callbackUrl: process.env.PAYSTACK_CALLBACK_URL ?? '',
+  },
 };
 
 export function isReelModerationEnabled(): boolean {
@@ -49,6 +54,10 @@ export function isReelModerationEnabled(): boolean {
 
 export function isLiveKitConfigured(): boolean {
   return Boolean(env.liveKit.apiKey && env.liveKit.apiSecret && env.liveKit.url);
+}
+
+export function isPaystackConfigured(): boolean {
+  return Boolean(env.paystack.secretKey);
 }
 
 const DEFAULT_CORS_ORIGINS = [

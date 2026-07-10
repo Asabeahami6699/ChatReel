@@ -238,7 +238,7 @@ router.get(
 );
 
 /* -------------------------------------------------------------------------- */
-/*  GET /inbox — likes & comments on the viewer's reels                       */
+/*  GET /inbox — likes, comments & gifts on the viewer's reels                  */
 /* -------------------------------------------------------------------------- */
 router.get(
   '/inbox',
@@ -261,7 +261,7 @@ router.get(
 
     const perType = Math.min(limit, 30);
 
-    const [likesRes, commentsRes] = await Promise.all([
+    const [likesRes, commentsRes, giftsRes] = await Promise.all([
       supabaseAdmin
         .from('reel_likes')
         .select(
@@ -284,6 +284,18 @@ router.get(
         .neq('user_id', profileId)
         .order('created_at', { ascending: false })
         .limit(perType),
+      supabaseAdmin
+        .from('reel_gifts')
+        .select(
+          `id, created_at, reel_id, coin_amount,
+           actor:profiles!reel_gifts_sender_profile_id_fkey(id, display_name, email, avatar_url),
+           reel:reels!inner(id, thumbnail_url, caption, video_url, author_id),
+           gift:gift_catalog(id, slug, name, emoji, coin_price)`
+        )
+        .eq('recipient_profile_id', profileId)
+        .neq('sender_profile_id', profileId)
+        .order('created_at', { ascending: false })
+        .limit(perType),
     ]);
 
     if (likesRes.error) return res.status(500).json({ error: likesRes.error.message });
@@ -291,11 +303,12 @@ router.get(
 
     type InboxRow = {
       id: string;
-      type: 'like' | 'comment';
+      type: 'like' | 'comment' | 'gift';
       created_at: string;
       actor: Record<string, unknown> | null;
       reel: Record<string, unknown> | null;
       comment?: { id: string; content: string };
+      gift?: { emoji: string; name: string; coin_amount: number };
     };
 
     const items: InboxRow[] = [];
@@ -319,6 +332,28 @@ router.get(
         reel: row.reel as unknown as Record<string, unknown> | null,
         comment: { id: row.id as string, content: row.content as string },
       });
+    }
+
+    if (!giftsRes.error) {
+      for (const row of giftsRes.data ?? []) {
+        const giftRaw = row.gift as
+          | { emoji?: string; name?: string; coin_price?: number }
+          | Array<{ emoji?: string; name?: string; coin_price?: number }>
+          | null;
+        const gift = Array.isArray(giftRaw) ? giftRaw[0] : giftRaw;
+        items.push({
+          id: `gift-${row.id}`,
+          type: 'gift',
+          created_at: row.created_at as string,
+          actor: row.actor as unknown as Record<string, unknown> | null,
+          reel: row.reel as unknown as Record<string, unknown> | null,
+          gift: {
+            emoji: gift?.emoji ?? '🎁',
+            name: gift?.name ?? 'Gift',
+            coin_amount: (row.coin_amount as number) ?? gift?.coin_price ?? 0,
+          },
+        });
+      }
     }
 
     items.sort(

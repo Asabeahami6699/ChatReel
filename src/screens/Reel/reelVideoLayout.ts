@@ -33,6 +33,7 @@ export const REEL_CONTENT_SHIFT_DOWN = 10;
 /** Gap between caption/engagement row and the progress bar. */
 export const REEL_META_GAP = 6;
 
+
 /** Bottom inset so captions and the action rail sit just above the progress scrubber. */
 export const REEL_BOTTOM_INSET = REEL_PROGRESS_ZONE + REEL_META_GAP;
 

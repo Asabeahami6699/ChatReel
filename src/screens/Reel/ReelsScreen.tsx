@@ -54,6 +54,10 @@ import { REEL_ACCENT, REEL_END_SCREEN_MS, reelBottomLayout } from './reelTheme';
 import { VolumeControl } from './VolumeControl';
 import { ReelFeedRow } from './ReelFeedRow';
 import { ReelFeedOverlays } from './ReelFeedOverlays';
+import { ReelGiftSheet } from './ReelGiftSheet';
+import { ReelBuyCoinsSheet } from './ReelBuyCoinsSheet';
+import { ReelGiftBurst, type GiftBurstPayload } from './ReelGiftBurst';
+import { useWallet } from '../../hooks/useWallet';
 import { useReelProfileStore } from '../../stores/reelProfileStore';
 
 const WINDOW_HEIGHT = SCREEN_HEIGHT;
@@ -160,9 +164,14 @@ export default function ReelsScreen() {
   const [openComments, setOpenComments] = useState<ReelDTO | null>(null);
   const [openShare, setOpenShare] = useState<ReelDTO | null>(null);
   const [openProfile, setOpenProfile] = useState<ReelDTO | null>(null);
+  const [giftReel, setGiftReel] = useState<ReelDTO | null>(null);
+  const [giftBurst, setGiftBurst] = useState<GiftBurstPayload | null>(null);
+  const [buyCoinsOpen, setBuyCoinsOpen] = useState(false);
+
+  const { wallet, setBalanceCoins } = useWallet(isFocused);
 
   const gateActive = useReelPlaybackGateActive();
-  const sheetOpen = Boolean(openComments || openShare || openProfile);
+  const sheetOpen = Boolean(openComments || openShare || openProfile || giftReel || buyCoinsOpen);
   const mediaShouldPlay = isPlaying && isFocused && !sheetOpen && !gateActive;
   const mediaShouldPlayRef = useRef(mediaShouldPlay);
   mediaShouldPlayRef.current = mediaShouldPlay;
@@ -485,6 +494,21 @@ export default function ReelsScreen() {
     [openSheet]
   );
   const onOpenShare = useCallback((reel: ReelDTO) => openSheet(setOpenShare, reel), [openSheet]);
+  const onOpenGift = useCallback((reel: ReelDTO) => {
+    void pausePlayers();
+    setGiftReel(reel);
+  }, [pausePlayers]);
+  const handleGiftSent = useCallback(
+    (payload: { gift: { emoji: string; name: string }; balanceCoins: number }) => {
+      setBalanceCoins(payload.balanceCoins);
+      setGiftBurst({
+        emoji: payload.gift.emoji,
+        name: payload.gift.name,
+        key: `${Date.now()}`,
+      });
+    },
+    [setBalanceCoins]
+  );
   const onOpenProfile = useCallback(
     (reel: ReelDTO) => openSheet(setOpenProfile, reel),
     [openSheet]
@@ -815,6 +839,7 @@ export default function ReelsScreen() {
         isReady={readyReelIds.has(item.id)}
         isFollowing={followedAuthorIds.has(item.author_id)}
         metaBottom={metaBottom}
+        myProfileId={myProfileId}
         videoUri={resolveUri(item)}
         onVideoPress={handleVideoPress}
         onDelete={handleDelete}
@@ -822,6 +847,7 @@ export default function ReelsScreen() {
         onQuickFollow={quickFollow}
         onOpenComments={onOpenComments}
         onOpenShare={onOpenShare}
+        onOpenGift={onOpenGift}
         onOpenProfile={onOpenProfile}
         onNavigateSound={onNavigateSound}
         onUseReelAudio={onUseReelAudio}
@@ -844,6 +870,7 @@ export default function ReelsScreen() {
       readyReelIds,
       followedAuthorIds,
       metaBottom,
+      myProfileId,
       resolveUri,
       handleVideoPress,
       handleDelete,
@@ -851,6 +878,7 @@ export default function ReelsScreen() {
       quickFollow,
       onOpenComments,
       onOpenShare,
+      onOpenGift,
       onOpenProfile,
       onNavigateSound,
       onUseReelAudio,
@@ -1052,7 +1080,35 @@ export default function ReelsScreen() {
           progressPanHandlers={progressPan.panHandlers}
         />
       )}
+      <View
+        style={[
+          StyleSheet.absoluteFill,
+          { height: reelHeight },
+          usePhoneFrame && { width: reelWidth, alignSelf: 'center' },
+        ]}
+        pointerEvents="none"
+      >
+        <ReelGiftBurst burst={giftBurst} onDone={() => setGiftBurst(null)} />
       </View>
+      </View>
+
+      <ReelGiftSheet
+        visible={Boolean(giftReel)}
+        reel={giftReel}
+        balanceCoins={wallet.balance_coins}
+        onClose={() => setGiftReel(null)}
+        onSent={handleGiftSent}
+        onBuyCoins={() => {
+          setGiftReel(null);
+          setBuyCoinsOpen(true);
+        }}
+      />
+
+      <ReelBuyCoinsSheet
+        visible={buyCoinsOpen}
+        onClose={() => setBuyCoinsOpen(false)}
+        onPurchased={(balanceCoins) => setBalanceCoins(balanceCoins)}
+      />
 
       {Platform.OS === 'web' && isFocused && (
         <View

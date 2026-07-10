@@ -17,6 +17,9 @@ import notificationsRoutes from './routes/notifications.routes';
 import reelsRoutes from './routes/reels.routes';
 import callsRoutes from './routes/calls.routes';
 import momentsRoutes from './routes/moments.routes';
+import giftsRoutes from './routes/gifts.routes';
+import walletRoutes from './routes/wallet.routes';
+import paystackWebhookRoutes from './routes/paystack.webhook.routes';
 import chatSettingsRoutes from './routes/chat-settings.routes';
 import linkPreviewRoutes from './routes/linkpreview.routes';
 
@@ -31,6 +34,7 @@ export function createApp() {
       crossOriginResourcePolicy: { policy: 'cross-origin' },
     })
   );
+  app.use('/api/wallet', paystackWebhookRoutes);
   app.use(express.json({ limit: '25mb' }));
   app.use(morgan(env.nodeEnv === 'development' ? 'dev' : 'tiny'));
 
@@ -51,6 +55,8 @@ export function createApp() {
   app.use('/api/reels', reelsRoutes);
   app.use('/api/calls', callsRoutes);
   app.use('/api/moments', momentsRoutes);
+  app.use('/api/gifts', giftsRoutes);
+  app.use('/api/wallet', walletRoutes);
   app.use('/api/chat-settings', chatSettingsRoutes);
   app.use('/api/link-preview', linkPreviewRoutes);
 

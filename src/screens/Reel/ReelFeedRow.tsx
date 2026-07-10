@@ -42,6 +42,7 @@ export type ReelFeedRowProps = {
   isReady: boolean;
   isFollowing: boolean;
   metaBottom: number;
+  myProfileId: string | null;
   videoUri: string;
   onVideoPress: (reel: ReelDTO) => void;
   onDelete: (reel: ReelDTO) => void;
@@ -49,6 +50,7 @@ export type ReelFeedRowProps = {
   onQuickFollow: (reel: ReelDTO) => void;
   onOpenComments: (reel: ReelDTO) => void;
   onOpenShare: (reel: ReelDTO) => void;
+  onOpenGift: (reel: ReelDTO) => void;
   onOpenProfile: (reel: ReelDTO) => void;
   onNavigateSound: (soundId: string) => void;
   onUseReelAudio: (reel: ReelDTO) => void;
@@ -73,6 +75,7 @@ function ReelFeedRowComponent({
   isReady,
   isFollowing,
   metaBottom,
+  myProfileId,
   videoUri,
   onVideoPress,
   onDelete,
@@ -80,6 +83,7 @@ function ReelFeedRowComponent({
   onQuickFollow,
   onOpenComments,
   onOpenShare,
+  onOpenGift,
   onOpenProfile,
   onNavigateSound,
   onUseReelAudio,
@@ -214,7 +218,7 @@ function ReelFeedRowComponent({
         </View>
         <TouchableOpacity style={styles.actionButton} onPress={() => onToggleLike(item)}>
           <ActionIcon
-            name={isLiked ? 'heart' : 'heart-outline'}
+            name="heart"
             size={36}
             color={isLiked ? REEL_ACCENT : '#fff'}
           />
@@ -223,17 +227,23 @@ function ReelFeedRowComponent({
           </Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.actionButton} onPress={() => onOpenComments(item)}>
-          <ActionIcon name="chatbubble-ellipses-outline" size={34} />
+          <ActionIcon name="chatbubble-ellipses" size={34} />
           <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>
             {formatReelCount(item.comment_count)}
           </Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.actionButton} onPress={() => onOpenShare(item)}>
-          <ActionIcon name="paper-plane-outline" size={32} />
+          <ActionIcon name="paper-plane" size={32} />
           <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>Share</Text>
         </TouchableOpacity>
+        {myProfileId && item.author_id !== myProfileId ? (
+          <TouchableOpacity style={styles.actionButton} onPress={() => onOpenGift(item)}>
+            <ActionIcon name="gift" size={30} color="#fff" />
+            <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>Gift</Text>
+          </TouchableOpacity>
+        ) : null}
         <TouchableOpacity style={styles.actionButton}>
-          <ActionIcon name="eye-outline" size={30} />
+          <ActionIcon name="eye" size={30} />
           <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>
             {formatReelCount(item.view_count)}
           </Text>
@@ -255,6 +265,7 @@ function propsAreEqual(prev: ReelFeedRowProps, next: ReelFeedRowProps): boolean 
     prev.desktopActionOffset !== next.desktopActionOffset ||
     prev.usePhoneFrame !== next.usePhoneFrame ||
     prev.metaBottom !== next.metaBottom ||
+    prev.myProfileId !== next.myProfileId ||
     prev.videoUri !== next.videoUri
   ) {
     return false;
@@ -318,9 +329,12 @@ const styles = StyleSheet.create({
     elevation: 16,
     alignItems: 'center',
     gap: 10,
+    paddingVertical: 14,
+    paddingHorizontal: 10,
+    minWidth: REEL_ACTION_RAIL_WIDTH,
   },
   actionButtonsDesktop: { right: REEL_ACTION_RAIL_RIGHT },
-  actionButton: { alignItems: 'center', gap: 1, minWidth: 52 },
+  actionButton: { alignItems: 'center', gap: 1, minWidth: 48 },
   actionText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   actionTextDesktop: { fontSize: 10 },
   profileActionWrap: { alignItems: 'center', marginBottom: 2 },
