@@ -26,7 +26,7 @@ import { api, ApiError, type ReelDTO } from '../../lib/api';
 import { useReelsFeed } from '../../hooks/useReelsFeed';
 import { useReelUploadQueue } from '../../hooks/useReelUploadQueue';
 import { useCurrentProfileId } from '../../hooks/useCurrentProfileId';
-import { retryReelUploadTask } from '../../lib/reelUploadQueue';
+import { retryReelUploadTask, MAX_UPLOAD_RETRIES } from '../../lib/reelUploadQueue';
 import {
   registerBeforeChatNavigate,
   unregisterBeforeChatNavigate,
@@ -148,6 +148,10 @@ export default function ReelsScreen() {
 
   const [currentIndex, setCurrentIndex] = useState(0);
   const currentIndexRef = useRef(0);
+  const scrollAnchorIndexRef = useRef(0);
+  const isSnappingRef = useRef(false);
+  const reelHeightRef = useRef(reelHeight);
+  reelHeightRef.current = reelHeight;
   const [isMuted, setIsMuted] = useState(false);
   const [volume, setVolume] = useState(1);
   const [isPlaying, setIsPlaying] = useState(true);
@@ -312,16 +316,34 @@ export default function ReelsScreen() {
       if (status.didJustFinish) {
         const key = activePlayerKey(reelId);
         void (key ? videos.current[key] : null)?.pauseAsync();
+
+        // Group reels: jump to the next reel posted to the same group.
+        const list = reelsRef.current;
+        const idx = list.findIndex((r) => r.id === reelId);
+        const finished = idx >= 0 ? list[idx] : null;
+        if (finished?.visibility === 'group' && finished.group_id) {
+          const nextGroupIdx = list.findIndex(
+            (r, i) =>
+              i > idx && r.visibility === 'group' && r.group_id === finished.group_id
+          );
+          if (nextGroupIdx >= 0 && mediaShouldPlayRef.current) {
+            setEndScreenReelId(null);
+            setProgress(0);
+            flatListRef.current?.scrollToIndex({ index: nextGroupIdx, animated: true });
+            return;
+          }
+        }
+
         setEndScreenReelId(reelId);
         if (endScreenTimerRef.current) clearTimeout(endScreenTimerRef.current);
         endScreenTimerRef.current = setTimeout(() => {
           setEndScreenReelId((cur) => (cur === reelId ? null : cur));
           setBadgePlayCycle((c) => c + 1);
-          const key = activePlayerKey(reelId);
+          const replayKey = activePlayerKey(reelId);
           // Respect the current play/pause state: if the user paused, don't
           // automatically resume just because the reel ended.
           if (mediaShouldPlayRef.current) {
-            void (key ? videos.current[key] : null)?.replayAsync();
+            void (replayKey ? videos.current[replayKey] : null)?.replayAsync();
           }
         }, REEL_END_SCREEN_MS);
         return;
@@ -732,6 +754,54 @@ export default function ReelsScreen() {
     [reelHeight]
   );
 
+  /** No matter how fast the fling, only allow landing on the adjacent reel. */
+  const snapToAdjacentReel = useCallback(
+    (offsetY: number) => {
+      const h = reelHeightRef.current;
+      if (h <= 0) return;
+      const reelsLen = reelsRef.current.length;
+      if (reelsLen <= 0) return;
+
+      const rawIndex = Math.round(offsetY / h);
+      const anchor = scrollAnchorIndexRef.current;
+      const clamped = Math.max(anchor - 1, Math.min(anchor + 1, rawIndex));
+      const target = Math.max(0, Math.min(reelsLen - 1, clamped));
+      const targetOffset = target * h;
+
+      if (Math.abs(offsetY - targetOffset) > 2 || target !== rawIndex) {
+        isSnappingRef.current = true;
+        flatListRef.current?.scrollToOffset({ offset: targetOffset, animated: true });
+        requestAnimationFrame(() => {
+          isSnappingRef.current = false;
+        });
+      }
+    },
+    []
+  );
+
+  const onScrollBeginDrag = useCallback(() => {
+    scrollAnchorIndexRef.current = currentIndexRef.current;
+  }, []);
+
+  const onScrollEndDrag = useCallback(
+    (e: { nativeEvent: { contentOffset: { y: number }; velocity?: { y: number } } }) => {
+      // If there's little/no momentum left, snap immediately.
+      const vy = Math.abs(e.nativeEvent.velocity?.y ?? 0);
+      if (vy < 0.05) {
+        snapToAdjacentReel(e.nativeEvent.contentOffset.y);
+      }
+    },
+    [snapToAdjacentReel]
+  );
+
+  const onMomentumScrollEnd = useCallback(
+    (e: { nativeEvent: { contentOffset: { y: number } } }) => {
+      if (isSnappingRef.current) return;
+      snapToAdjacentReel(e.nativeEvent.contentOffset.y);
+    },
+    [snapToAdjacentReel]
+  );
+
   const seekToProgress = useCallback((ratio: number) => {
     const player = getActivePlayer(activeReelIdRef.current);
     if (!player) return;
@@ -918,7 +988,15 @@ export default function ReelsScreen() {
     <View style={[styles.container, usePhoneFrame && styles.containerPhoneFrame]}>
       <StatusBar barStyle="light-content" backgroundColor="#000" translucent />
 
-      <View style={[styles.feedColumn, { width: reelWidth }]}>
+      <View
+        style={[
+          styles.feedColumn,
+          usePhoneFrame && styles.feedColumnPhone,
+          {
+            width: usePhoneFrame ? reelWidth + desktopActionOffset : reelWidth,
+          },
+        ]}
+      >
 
       <View
         style={[
@@ -1003,6 +1081,10 @@ export default function ReelsScreen() {
         bounces
         alwaysBounceVertical
         overScrollMode="always"
+        onScrollBeginDrag={onScrollBeginDrag}
+        onScrollEndDrag={onScrollEndDrag}
+        onMomentumScrollEnd={onMomentumScrollEnd}
+        scrollEventThrottle={16}
         removeClippedSubviews={Platform.OS === 'android' ? false : undefined}
         windowSize={7}
         maxToRenderPerBatch={3}
@@ -1084,7 +1166,7 @@ export default function ReelsScreen() {
         style={[
           StyleSheet.absoluteFill,
           { height: reelHeight },
-          usePhoneFrame && { width: reelWidth, alignSelf: 'center' },
+          usePhoneFrame && { width: reelWidth, alignSelf: 'flex-start' },
         ]}
         pointerEvents="none"
       >
@@ -1293,12 +1375,34 @@ export default function ReelsScreen() {
                       <TouchableOpacity
                         style={styles.uploadRetryBtn}
                         onPress={() => {
-                          const ok = retryReelUploadTask(task.id);
-                          if (!ok) Alert.alert('Uploads', 'Unable to retry this upload.');
+                          void (async () => {
+                            const result = await retryReelUploadTask(task.id);
+                            if (!result.ok) {
+                              Alert.alert('Uploads', result.reason);
+                              return;
+                            }
+                            if (result.action === 'moved_to_draft') {
+                              Alert.alert(
+                                'Saved as draft',
+                                `Upload failed ${MAX_UPLOAD_RETRIES} times. "${result.label}" was moved to drafts — open it from Reel options to try again.`
+                              );
+                              return;
+                            }
+                            if (result.retriesLeft === 0) {
+                              Alert.alert(
+                                'Last retry',
+                                'If this fails again, the upload will be moved to drafts.'
+                              );
+                            }
+                          })();
                         }}
                       >
                         <Ionicons name="refresh" size={14} color="#fff" />
-                        <Text style={styles.uploadRetryText}>Retry</Text>
+                        <Text style={styles.uploadRetryText}>
+                          {(task.retryCount ?? 0) >= MAX_UPLOAD_RETRIES
+                            ? 'Save draft'
+                            : `Retry${task.retryCount ? ` (${task.retryCount}/${MAX_UPLOAD_RETRIES})` : ''}`}
+                        </Text>
                       </TouchableOpacity>
                     ) : task.status === 'done' ? (
                       <Text style={styles.uploadItemDone}>Done</Text>

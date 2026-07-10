@@ -52,7 +52,7 @@ export function ReelFeedOverlays({
         styles.layer,
         { height: reelHeight },
         !usePhoneFrame && { transform: [{ translateY: REEL_CONTENT_SHIFT_DOWN }] },
-        usePhoneFrame && { width: reelWidth, alignSelf: 'center' },
+        usePhoneFrame && { width: reelWidth, alignSelf: 'flex-start' },
       ]}
       pointerEvents="box-none"
     >

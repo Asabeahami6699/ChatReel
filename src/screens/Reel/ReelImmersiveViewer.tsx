@@ -62,7 +62,7 @@ export function ReelImmersiveViewer({
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
-  const { frameWidth: reelWidth, frameHeight: reelHeight, usePhoneFrame } = useMemo(
+  const { frameWidth: reelWidth, frameHeight: reelHeight, usePhoneFrame, desktopActionOffset } = useMemo(
     () => getReelFrameDimensions(windowWidth, windowHeight),
     [windowWidth, windowHeight]
   );
@@ -91,6 +91,12 @@ export function ReelImmersiveViewer({
   const { progressBottom, metaBottom } = reelBottomLayout(insets.bottom);
 
   const flatListRef = useRef<FlatList<ReelDTO>>(null);
+  const scrollAnchorIndexRef = useRef(0);
+  const isSnappingRef = useRef(false);
+  const currentIndexRef = useRef(initialIndex);
+  const reelHeightRef = useRef(reelHeight);
+  reelHeightRef.current = reelHeight;
+  currentIndexRef.current = currentIndex;
   const videos = useRef<Record<string, ReelPlayerHandle | null>>({});
   const activeReelIdRef = useRef<string | null>(null);
   const activeMediaIndexRef = useRef<Record<string, number>>({});
@@ -292,14 +298,32 @@ export function ReelImmersiveViewer({
     if (status.didJustFinish) {
       const key = activePlayerKey(reelId);
       void (key ? videos.current[key] : null)?.pauseAsync();
+
+      const list = reelsRef.current;
+      const idx = list.findIndex((r) => r.id === reelId);
+      const finished = idx >= 0 ? list[idx] : null;
+      if (finished?.visibility === 'group' && finished.group_id) {
+        const nextGroupIdx = list.findIndex(
+          (r, i) =>
+            i > idx && r.visibility === 'group' && r.group_id === finished.group_id
+        );
+        if (nextGroupIdx >= 0) {
+          setEndScreenReelId(null);
+          setProgress(0);
+          setIsPlaying(true);
+          flatListRef.current?.scrollToIndex({ index: nextGroupIdx, animated: true });
+          return;
+        }
+      }
+
       setEndScreenReelId(reelId);
       if (endScreenTimerRef.current) clearTimeout(endScreenTimerRef.current);
       endScreenTimerRef.current = setTimeout(() => {
         setEndScreenReelId((cur) => (cur === reelId ? null : cur));
         setBadgePlayCycle((c) => c + 1);
-        const key = activePlayerKey(reelId);
+        const replayKey = activePlayerKey(reelId);
         setIsPlaying(true);
-        void (key ? videos.current[key] : null)?.replayAsync();
+        void (replayKey ? videos.current[replayKey] : null)?.replayAsync();
       }, REEL_END_SCREEN_MS);
       return;
     }
@@ -367,31 +391,75 @@ export function ReelImmersiveViewer({
   const onViewableItemsChanged = useRef(
     ({ viewableItems }: { viewableItems: { index: number | null; item: ReelDTO }[] }) => {
       if (viewableItems.length === 0) return;
-      const v = viewableItems[0];
-      if (v.index == null || !v.item?.id) return;
+      const candidates = viewableItems
+        .filter((v) => v.index != null && v.item?.id)
+        .map((v) => ({ index: v.index as number, item: v.item }));
+      if (candidates.length === 0) return;
+
+      const prevIndex = currentIndexRef.current;
+      const desiredIndex = candidates.reduce((best, c) => {
+        return Math.abs(c.index - prevIndex) > Math.abs(best.index - prevIndex) ? c : best;
+      }, candidates[0]).index;
+      const rawDelta = desiredIndex - prevIndex;
+      const delta = Math.abs(rawDelta) <= 1 ? rawDelta : Math.sign(rawDelta);
+      const nextIndex = Math.max(0, Math.min(reelsRef.current.length - 1, prevIndex + delta));
+      const reel = reelsRef.current[nextIndex] ?? candidates.find((c) => c.index === nextIndex)?.item;
+      if (!reel?.id) return;
+
       const prevId = activeReelIdRef.current;
-      activeReelIdRef.current = v.item.id;
-      setCurrentIndex(v.index);
+      activeReelIdRef.current = reel.id;
+      setCurrentIndex(nextIndex);
       setProgress(0);
       setEndScreenReelId(null);
       if (endScreenTimerRef.current) clearTimeout(endScreenTimerRef.current);
-      if (prevId !== v.item.id) setBadgePlayCycle((c) => c + 1);
+      if (prevId !== reel.id) setBadgePlayCycle((c) => c + 1);
       const shouldAutoplay = canAutoplayRef.current;
       if (shouldAutoplay) {
         setIsPlaying(true);
       }
-      void playActiveReelRef.current(v.item.id, shouldAutoplay);
-      if (!viewedReelIds.current.has(v.item.id)) {
-        viewedReelIds.current.add(v.item.id);
-        markReelWatched(v.item.id);
-        api.reels.view(v.item.id).catch(() => undefined);
+      void playActiveReelRef.current(reel.id, shouldAutoplay);
+      if (!viewedReelIds.current.has(reel.id)) {
+        viewedReelIds.current.add(reel.id);
+        markReelWatched(reel.id);
+        api.reels.view(reel.id).catch(() => undefined);
         setReels((prev) =>
-          prev.map((r) => (r.id === v.item.id ? { ...r, view_count: r.view_count + 1 } : r))
+          prev.map((r) => (r.id === reel.id ? { ...r, view_count: r.view_count + 1 } : r))
         );
       }
-      prefetchAround(reelsRef.current, v.index);
+      prefetchAround(reelsRef.current, nextIndex);
     }
   ).current;
+
+  const snapToAdjacentReel = useCallback((offsetY: number) => {
+    const h = reelHeightRef.current;
+    if (h <= 0) return;
+    const reelsLen = reelsRef.current.length;
+    if (reelsLen <= 0) return;
+    const rawIndex = Math.round(offsetY / h);
+    const anchor = scrollAnchorIndexRef.current;
+    const clamped = Math.max(anchor - 1, Math.min(anchor + 1, rawIndex));
+    const target = Math.max(0, Math.min(reelsLen - 1, clamped));
+    const targetOffset = target * h;
+    if (Math.abs(offsetY - targetOffset) > 2 || target !== rawIndex) {
+      isSnappingRef.current = true;
+      flatListRef.current?.scrollToOffset({ offset: targetOffset, animated: true });
+      requestAnimationFrame(() => {
+        isSnappingRef.current = false;
+      });
+    }
+  }, []);
+
+  const onScrollBeginDrag = useCallback(() => {
+    scrollAnchorIndexRef.current = currentIndexRef.current;
+  }, []);
+
+  const onMomentumScrollEnd = useCallback(
+    (e: { nativeEvent: { contentOffset: { y: number } } }) => {
+      if (isSnappingRef.current) return;
+      snapToAdjacentReel(e.nativeEvent.contentOffset.y);
+    },
+    [snapToAdjacentReel]
+  );
 
   const onUseReelAudio = useCallback(
     (reel: ReelDTO) => {
@@ -411,8 +479,12 @@ export function ReelImmersiveViewer({
       const isLiked = item.liked_by_me;
 
       return (
-        <View style={{ width: reelWidth, height: reelHeight }}>
-          <TouchableOpacity activeOpacity={1} onPress={() => handleVideoPress(item)} style={styles.videoTouch}>
+        <View style={{ width: reelWidth + (usePhoneFrame ? desktopActionOffset : 0), height: reelHeight }}>
+          <TouchableOpacity
+            activeOpacity={1}
+            onPress={() => handleVideoPress(item)}
+            style={[styles.videoTouch, usePhoneFrame && { width: reelWidth }]}
+          >
             <ReelFeedMedia
               reel={item}
               reelIndex={index}
@@ -467,7 +539,7 @@ export function ReelImmersiveViewer({
           )}
 
           <View style={styles.bottomMeta} pointerEvents="box-none">
-            <View style={[styles.captionContainer, { marginBottom: metaBottom, paddingRight: REEL_ACTION_RAIL_WIDTH + 8 }]}>
+            <View style={[styles.captionContainer, { marginBottom: metaBottom, paddingRight: usePhoneFrame ? 8 : REEL_ACTION_RAIL_WIDTH + 8 }]}>
               <View style={styles.userInfo}>
                 {disableProfileNavigation ? (
                   <Text style={styles.username}>@{authorLabel(item)}</Text>
@@ -494,7 +566,13 @@ export function ReelImmersiveViewer({
             </View>
           </View>
 
-          <View style={[styles.actionButtons, { bottom: metaBottom }]}>
+          <View
+            style={[
+              styles.actionButtons,
+              { bottom: metaBottom },
+              usePhoneFrame && styles.actionButtonsDesktop,
+            ]}
+          >
             <TouchableOpacity style={styles.actionButton} onPress={() => toggleLike(item)}>
               <Ionicons name={isLiked ? 'heart' : 'heart-outline'} size={36} color={isLiked ? REEL_ACCENT : '#fff'} />
               <Text style={styles.actionText}>{formatCount(item.like_count)}</Text>
@@ -532,6 +610,8 @@ export function ReelImmersiveViewer({
       readyReelIds,
       reelHeight,
       reelWidth,
+      usePhoneFrame,
+      desktopActionOffset,
       registerVideoRef,
       resolveUri,
       toggleLike,
@@ -547,7 +627,13 @@ export function ReelImmersiveViewer({
 
   return (
     <View style={[styles.container, usePhoneFrame && styles.containerPhoneFrame]}>
-      <View style={[styles.feedColumn, usePhoneFrame && styles.feedColumnPhone, { width: reelWidth }]}>
+      <View
+        style={[
+          styles.feedColumn,
+          usePhoneFrame && styles.feedColumnPhone,
+          { width: usePhoneFrame ? reelWidth + desktopActionOffset : reelWidth },
+        ]}
+      >
       <StatusBar barStyle="light-content" />
       <FlatList
         ref={flatListRef}
@@ -557,11 +643,17 @@ export function ReelImmersiveViewer({
         pagingEnabled
         showsVerticalScrollIndicator={false}
         snapToInterval={reelHeight}
+        snapToAlignment="start"
+        disableIntervalMomentum
         decelerationRate="fast"
+        bounces={false}
         initialScrollIndex={initialIndex > 0 ? initialIndex : undefined}
         getItemLayout={(_, index) => ({ length: reelHeight, offset: reelHeight * index, index })}
         onViewableItemsChanged={onViewableItemsChanged}
-        viewabilityConfig={{ itemVisiblePercentThreshold: 51 }}
+        viewabilityConfig={{ itemVisiblePercentThreshold: 51, minimumViewTime: 80 }}
+        onScrollBeginDrag={onScrollBeginDrag}
+        onMomentumScrollEnd={onMomentumScrollEnd}
+        scrollEventThrottle={16}
         onScrollToIndexFailed={(info) => {
           flatListRef.current?.scrollToOffset({ offset: info.averageItemLength * info.index, animated: false });
         }}
@@ -687,6 +779,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
     zIndex: 10,
+  },
+  actionButtonsDesktop: {
+    right: 0,
+    paddingRight: 4,
   },
   actionButton: { alignItems: 'center', gap: 1 },
   actionText: { color: '#fff', fontSize: 11, marginTop: 2, fontWeight: '600' },

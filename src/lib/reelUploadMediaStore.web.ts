@@ -78,6 +78,15 @@ function idbDeletePrefix(prefix: string): Promise<void> {
 }
 
 async function uriToBlob(uri: string): Promise<Blob> {
+  if (isPersistedReelUri(uri)) {
+    const parts = uri.replace(REEL_PERSIST_URI_PREFIX, '').split('/');
+    const taskId = parts[0];
+    const indexPart = parts[1];
+    const index = indexPart === 'thumb' ? 'thumb' : Number(indexPart);
+    const blob = await resolveReelUploadBlob(taskId, index as number | 'thumb');
+    if (!blob) throw new Error('Saved upload data was cleared — cannot resume');
+    return blob;
+  }
   const res = await fetch(uri);
   if (!res.ok) throw new Error('Could not read media file');
   return res.blob();

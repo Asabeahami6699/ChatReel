@@ -333,7 +333,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     minWidth: REEL_ACTION_RAIL_WIDTH,
   },
-  actionButtonsDesktop: { right: REEL_ACTION_RAIL_RIGHT },
+  /** Sit in the gutter to the right of the phone-frame video (Shorts-style). */
+  actionButtonsDesktop: {
+    right: 0,
+    paddingRight: 4,
+  },
   actionButton: { alignItems: 'center', gap: 1, minWidth: 48 },
   actionText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   actionTextDesktop: { fontSize: 10 },

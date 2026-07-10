@@ -3,7 +3,11 @@ import { Animated, Platform, StyleSheet, View } from 'react-native';
 import { Portal, Snackbar, Text } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { subscribeReelUploadQueue, type ReelUploadTask } from '../lib/reelUploadQueue';
+import {
+  subscribeReelUploadQueue,
+  subscribeFailedUploadMovedToDraft,
+  type ReelUploadTask,
+} from '../lib/reelUploadQueue';
 
 function aggregateProgress(tasks: ReelUploadTask[]): number {
   const active = tasks.filter(
@@ -72,6 +76,16 @@ export function ReelUploadToast() {
         }
       }
       setTasks(next);
+    });
+  }, []);
+
+  useEffect(() => {
+    return subscribeFailedUploadMovedToDraft(({ label }) => {
+      setSnackbar({
+        visible: true,
+        message: `Upload failed too many times — saved as draft: ${label}`,
+        isError: true,
+      });
     });
   }, []);
 

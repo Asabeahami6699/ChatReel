@@ -1,4 +1,4 @@
-import { Dimensions } from 'react-native';
+import { Dimensions, Platform } from 'react-native';
 import type { ReelDTO } from '../../lib/api';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -6,17 +6,18 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 /** Max width of the reel column on wide web layouts (TikTok / Shorts style). */
 export const REEL_PHONE_MAX_WIDTH = 430;
 
-export function getReelFrameDimensions(windowWidth: number, windowHeight: number) {
-  return {
-    frameWidth: windowWidth,
-    frameHeight: windowHeight,
-    usePhoneFrame: false,
-    desktopActionOffset: 0,
-  };
-}
-
 /** Space to keep captions from sitting under the right engagement column. */
 export const REEL_ACTION_RAIL_WIDTH = 56;
+
+export function getReelFrameDimensions(windowWidth: number, windowHeight: number) {
+  const usePhoneFrame =
+    Platform.OS === 'web' && windowWidth > REEL_PHONE_MAX_WIDTH + 64;
+  const frameWidth = usePhoneFrame ? REEL_PHONE_MAX_WIDTH : windowWidth;
+  const frameHeight = windowHeight;
+  /** On desktop, action buttons sit outside the video to the right (YouTube Shorts style). */
+  const desktopActionOffset = usePhoneFrame ? REEL_ACTION_RAIL_WIDTH + 12 : 0;
+  return { frameWidth, frameHeight, usePhoneFrame, desktopActionOffset };
+}
 
 /** Distance from the right screen edge to the engagement column (smaller = closer to edge). */
 export const REEL_ACTION_RAIL_RIGHT = -2;

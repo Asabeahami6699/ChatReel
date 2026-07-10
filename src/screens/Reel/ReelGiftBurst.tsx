@@ -12,32 +12,52 @@ type Props = {
   onDone: () => void;
 };
 
+/** Total on-screen time for the gift popup (~5s blink, then fade out). */
+const HOLD_MS = 4500;
+const FADE_IN_MS = 120;
+const FADE_OUT_MS = 280;
+const BLINK_MS = 450;
+
 export function ReelGiftBurst({ burst, onDone }: Props) {
-  const scale = useRef(new Animated.Value(0.3)).current;
+  const scale = useRef(new Animated.Value(0.35)).current;
   const opacity = useRef(new Animated.Value(0)).current;
-  const translateY = useRef(new Animated.Value(40)).current;
+  const blink = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     if (!burst) return;
-    scale.setValue(0.3);
+    scale.setValue(0.35);
     opacity.setValue(0);
-    translateY.setValue(40);
+    blink.setValue(1);
 
-    Animated.sequence([
-      Animated.parallel([
-        Animated.spring(scale, { toValue: 1, friction: 5, useNativeDriver: true }),
-        Animated.timing(opacity, { toValue: 1, duration: 180, useNativeDriver: true }),
-        Animated.timing(translateY, { toValue: 0, duration: 280, useNativeDriver: true }),
-      ]),
-      Animated.delay(900),
-      Animated.parallel([
-        Animated.timing(opacity, { toValue: 0, duration: 350, useNativeDriver: true }),
-        Animated.timing(translateY, { toValue: -30, duration: 350, useNativeDriver: true }),
-      ]),
-    ]).start(({ finished }) => {
-      if (finished) onDone();
+    const blinkLoop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(blink, { toValue: 0.35, duration: BLINK_MS, useNativeDriver: true }),
+        Animated.timing(blink, { toValue: 1, duration: BLINK_MS, useNativeDriver: true }),
+      ])
+    );
+
+    Animated.parallel([
+      Animated.spring(scale, { toValue: 1, friction: 6, tension: 140, useNativeDriver: true }),
+      Animated.timing(opacity, { toValue: 1, duration: FADE_IN_MS, useNativeDriver: true }),
+    ]).start(() => {
+      blinkLoop.start();
     });
-  }, [burst, onDone, opacity, scale, translateY]);
+
+    const doneTimer = setTimeout(() => {
+      blinkLoop.stop();
+      Animated.parallel([
+        Animated.timing(opacity, { toValue: 0, duration: FADE_OUT_MS, useNativeDriver: true }),
+        Animated.timing(scale, { toValue: 1.15, duration: FADE_OUT_MS, useNativeDriver: true }),
+      ]).start(({ finished }) => {
+        if (finished) onDone();
+      });
+    }, HOLD_MS);
+
+    return () => {
+      clearTimeout(doneTimer);
+      blinkLoop.stop();
+    };
+  }, [burst, onDone, opacity, scale, blink]);
 
   if (!burst) return null;
 
@@ -47,8 +67,8 @@ export function ReelGiftBurst({ burst, onDone }: Props) {
         style={[
           styles.card,
           {
-            opacity,
-            transform: [{ scale }, { translateY }],
+            opacity: Animated.multiply(opacity, blink),
+            transform: [{ scale }],
           },
         ]}
       >

@@ -90,6 +90,34 @@ function ReelFeedMediaComponent({
     onMediaIndexChangeRef.current?.(reelIdRef.current, next);
   };
 
+  const advanceToMediaIndex = (next: number) => {
+    if (next < 0 || next >= mediaItems.length) return;
+    setActiveIndex(next);
+    listRef.current?.scrollToIndex({ index: next, animated: true });
+  };
+
+  /** Multi-item album: when a clip ends, go to the next slide instead of looping. */
+  const handleSlidePlaybackStatus = (
+    key: string,
+    status: ReelPlaybackStatus,
+    active: boolean
+  ) => {
+    const isActiveKey =
+      key === slideKey(mediaIndexRef.current) ||
+      (mediaItems.length === 1 && key === reel.id);
+    if (!isActiveKey) return;
+
+    if (status.didJustFinish && isCurrentReel && active && mediaItems.length > 1) {
+      const next = mediaIndexRef.current + 1;
+      if (next < mediaItems.length) {
+        advanceToMediaIndex(next);
+        return;
+      }
+    }
+
+    onPlaybackStatus(reel.id, status, isCurrentReel && active);
+  };
+
   const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const next = Math.round(e.nativeEvent.contentOffset.x / frameWidth);
     if (Number.isFinite(next)) setActiveIndex(next);
@@ -161,11 +189,7 @@ function ReelFeedMediaComponent({
             onReady={(key) => {
               if (key === slideKey(mediaIndex) || mediaItems.length === 1) onReady(reel.id);
             }}
-            onPlaybackStatus={(key, status, active) => {
-              if (key === slideKey(mediaIndex) || (mediaItems.length === 1 && key === reel.id)) {
-                onPlaybackStatus(reel.id, status, isCurrentReel && active);
-              }
-            }}
+            onPlaybackStatus={handleSlidePlaybackStatus}
             onRef={(key, ref) => onRef(key, ref)}
           />
         )}

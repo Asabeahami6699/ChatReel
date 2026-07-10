@@ -9,6 +9,8 @@ import {
   hasReelUploadMedia,
   stashReelUploadDraft,
 } from './reelUploadMediaStore';
+import { saveReelComposeDraft } from './reelComposeDraftStore';
+import { saveReelComposeDraft } from './reelComposeDraftStore';
 
 /** Default display length for photo reels with music (seconds). */
 const IMAGE_REEL_CLIP_SEC = 15;
@@ -71,15 +73,27 @@ export type ReelUploadTask = {
   error?: string;
   reelId?: string;
   resumable?: boolean;
+  /** How many times the user has manually retried this upload. */
+  retryCount?: number;
 };
 
+/** After this many manual retries, failed uploads are moved to drafts. */
+export const MAX_UPLOAD_RETRIES = 3;
+
+export type RetryUploadResult =
+  | { ok: true; action: 'retried'; retriesLeft: number }
+  | { ok: true; action: 'moved_to_draft'; label: string }
+  | { ok: false; reason: string };
+
 type Listener = (tasks: ReelUploadTask[]) => void;
+type DraftMoveListener = (info: { label: string }) => void;
 
 const tasks = new Map<string, ReelUploadTask>();
 const taskDrafts = new Map<string, ReelUploadDraft>();
 const checkpoints = new Map<string, ReelUploadCheckpoint>();
 const queue: Array<{ id: string; draft: ReelUploadDraft }> = [];
 const listeners = new Set<Listener>();
+const draftMoveListeners = new Set<DraftMoveListener>();
 
 function soundPublishFields(draft: ReelUploadDraft) {
   if (!draft.sound_id) return {};
@@ -210,13 +224,22 @@ function pumpWorkers() {
     if (!item) break;
     activeUploads += 1;
     void processOne(item)
-      .catch((error) => {
+      .catch(async (error) => {
         const message = error instanceof Error ? error.message : 'Upload failed';
+        const existing = tasks.get(item.id);
+        const retries = existing?.retryCount ?? 0;
         updateTask(item.id, {
           status: 'error',
           stage: 'Failed',
           error: message,
         });
+        if (retries >= MAX_UPLOAD_RETRIES) {
+          try {
+            await moveFailedUploadToDraft(item.id);
+          } catch {
+            /* keep failed upload in queue if draft save fails */
+          }
+        }
       })
       .finally(() => {
         activeUploads -= 1;
@@ -552,29 +575,79 @@ export async function enqueueReelUpload(draft: ReelUploadDraft): Promise<ReelUpl
   return task;
 }
 
-export function retryReelUploadTask(taskId: string): boolean {
+async function removeUploadTask(taskId: string, clearMedia: boolean): Promise<void> {
+  tasks.delete(taskId);
+  taskDrafts.delete(taskId);
+  checkpoints.delete(taskId);
+  for (let i = queue.length - 1; i >= 0; i -= 1) {
+    if (queue[i].id === taskId) queue.splice(i, 1);
+  }
+  if (clearMedia) {
+    await clearReelUploadMedia(taskId);
+  }
+  await persistQueueNow();
+  emit();
+}
+
+/** Save a failed upload as a compose draft and remove it from the upload queue. */
+export async function moveFailedUploadToDraft(taskId: string): Promise<RetryUploadResult> {
   const task = tasks.get(taskId);
   const draft = taskDrafts.get(taskId);
-  if (!task || !draft) return false;
-  if (task.status !== 'error') return false;
+  if (!task || !draft) {
+    return { ok: false, reason: 'Upload not found' };
+  }
 
+  const label =
+    draft.caption?.trim()?.slice(0, 40) ||
+    `Failed upload · ${new Date().toLocaleString()}`;
+  const saved = await saveReelComposeDraft(draft, label);
+
+  // Keep persisted media keyed by the old task id — draft URIs still point there.
+  await removeUploadTask(taskId, false);
+  draftMoveListeners.forEach((listener) => listener({ label: saved.label }));
+
+  return { ok: true, action: 'moved_to_draft', label: saved.label };
+}
+
+export async function retryReelUploadTask(taskId: string): Promise<RetryUploadResult> {
+  const task = tasks.get(taskId);
+  const draft = taskDrafts.get(taskId);
+  if (!task || !draft) return { ok: false, reason: 'Upload not found' };
+  if (task.status !== 'error') return { ok: false, reason: 'Upload is not failed' };
+
+  const retries = task.retryCount ?? 0;
+  if (retries >= MAX_UPLOAD_RETRIES) {
+    return moveFailedUploadToDraft(taskId);
+  }
+
+  const nextRetries = retries + 1;
   const checkpoint = checkpoints.get(taskId);
   updateTask(taskId, {
     status: 'queued',
     stage: checkpoint?.videoPublicUrl ? 'Resuming upload...' : 'Queued for retry',
     progress: checkpoint?.videoPublicUrl ? 75 : checkpoint?.reelId ? 92 : 0,
     error: undefined,
+    retryCount: nextRetries,
   });
   queue.push({ id: taskId, draft });
   emit();
   pumpWorkers();
-  return true;
+  return {
+    ok: true,
+    action: 'retried',
+    retriesLeft: Math.max(0, MAX_UPLOAD_RETRIES - nextRetries),
+  };
 }
 
 export function subscribeReelUploadQueue(listener: Listener): () => void {
   listeners.add(listener);
   listener(Array.from(tasks.values()).sort((a, b) => b.createdAt - a.createdAt));
   return () => listeners.delete(listener);
+}
+
+export function subscribeFailedUploadMovedToDraft(listener: DraftMoveListener): () => void {
+  draftMoveListeners.add(listener);
+  return () => draftMoveListeners.delete(listener);
 }
 
 export function getReelUploadQueueSnapshot(): ReelUploadTask[] {

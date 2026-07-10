@@ -41,7 +41,23 @@ async function copyToPersist(
   await ensureDir(taskDir(taskId));
   const dest = mediaPath(taskId, index, inferExt(uri, fileName, mime));
   if (uri === dest) return dest;
-  await FileSystem.copyAsync({ from: uri, to: dest });
+
+  let from = uri;
+  if (isPersistedReelUri(uri)) {
+    const parts = uri.replace(REEL_PERSIST_URI_PREFIX, '').split('/');
+    const srcTaskId = parts[0];
+    const indexPart = parts[1];
+    const srcIndex = indexPart === 'thumb' ? 'thumb' : Number(indexPart);
+    const resolved = await resolveReelUploadUri(
+      srcTaskId,
+      srcIndex as number | 'thumb',
+      inferExt(uri, fileName, mime)
+    );
+    if (!resolved) throw new Error('Saved upload data was cleared — cannot resume');
+    from = resolved;
+  }
+
+  await FileSystem.copyAsync({ from, to: dest });
   return dest;
 }
 
