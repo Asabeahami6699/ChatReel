@@ -860,8 +860,11 @@ export default function ReelsScreen() {
   const progressPan = useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponder: () => true,
+        // Don't claim the touch on start — that blocks vertical reel swipes that
+        // begin near the progress bar. Only scrub on a clear horizontal drag.
+        onStartShouldSetPanResponder: () => false,
+        onMoveShouldSetPanResponder: (_, gesture) =>
+          Math.abs(gesture.dx) > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.2,
         onPanResponderGrant: (_, gesture) => {
           isScrubbingRef.current = true;
           setIsScrubbing(true);
@@ -1151,13 +1154,19 @@ export default function ReelsScreen() {
         viewabilityConfig={viewabilityConfig}
         getItemLayout={getItemLayout}
         pagingEnabled
-        snapToInterval={reelHeight}
-        snapToAlignment="start"
+        // snapToInterval + pagingEnabled fights on Android; keep interval snap for web only.
+        {...(Platform.OS === 'web'
+          ? {
+              snapToInterval: reelHeight,
+              snapToAlignment: 'start' as const,
+            }
+          : {})}
         disableIntervalMomentum
         decelerationRate="fast"
         bounces={Platform.OS !== 'web'}
         alwaysBounceVertical={Platform.OS !== 'web'}
         overScrollMode="never"
+        nestedScrollEnabled
         onScrollBeginDrag={onScrollBeginDrag}
         onScrollEndDrag={onScrollEndDrag}
         onMomentumScrollEnd={onMomentumScrollEnd}

@@ -165,6 +165,8 @@ function ReelFeedMediaComponent({
         bounces={false}
         decelerationRate="fast"
         scrollEnabled={isCurrentReel}
+        nestedScrollEnabled
+        directionalLockEnabled
         scrollEventThrottle={16}
         onScroll={onScroll}
         onMomentumScrollEnd={onMomentumEnd}
