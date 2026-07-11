@@ -2,10 +2,11 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   Animated,
-  FlatList,
+  FlatList as RNFlatList,
   Image,
   Modal,
   PanResponder,
+  Platform,
   StatusBar,
   StyleSheet,
   Text,
@@ -13,6 +14,7 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
+import { FlatList as GHFlatList } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -28,10 +30,15 @@ import { markReelWatched } from './reelVideoCache';
 import { REEL_ACTION_RAIL_RIGHT, REEL_ACTION_RAIL_WIDTH, REEL_BOTTOM_INSET, REEL_PHONE_MAX_WIDTH, REEL_PROGRESS_BAR_HEIGHT, getReelFrameDimensions } from './reelVideoLayout';
 import { ExpandableCaption } from './ExpandableCaption';
 import { ReelSoundStrip } from './ReelSoundStrip';
+import { ReelVideoTapLayer } from './ReelVideoTapLayer';
 import { ReelBrandBadge } from './ReelBrandBadge';
 import { ReelEndScreen } from './ReelEndScreen';
 import { REEL_ACCENT, REEL_END_SCREEN_MS, reelBottomLayout } from './reelTheme';
 import { registerReelFeedPauseHandler, useReelPlaybackGateActive } from '../../lib/reelPlaybackBridge';
+
+const FlatList = (
+  Platform.OS === 'web' ? RNFlatList : GHFlatList
+) as typeof RNFlatList;
 
 type Props = {
   reels: ReelDTO[];
@@ -90,7 +97,7 @@ export function ReelImmersiveViewer({
 
   const { progressBottom, metaBottom } = reelBottomLayout(insets.bottom);
 
-  const flatListRef = useRef<FlatList<ReelDTO>>(null);
+  const flatListRef = useRef<RNFlatList<ReelDTO>>(null);
   const feedClipRef = useRef<View>(null);
   const wheelLockRef = useRef(false);
   const scrollAnchorIndexRef = useRef(0);
@@ -239,8 +246,9 @@ export function ReelImmersiveViewer({
   const progressPan = useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponder: () => true,
+        onStartShouldSetPanResponder: () => false,
+        onMoveShouldSetPanResponder: (_, gesture) =>
+          Math.abs(gesture.dx) > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.2,
         onPanResponderGrant: (_, gesture) => {
           isScrubbingRef.current = true;
           void getActivePlayer(activeReelIdRef.current)?.pauseAsync();
@@ -512,11 +520,7 @@ export function ReelImmersiveViewer({
 
       return (
         <View style={{ width: reelWidth + (usePhoneFrame ? desktopActionOffset : 0), height: reelHeight }}>
-          <TouchableOpacity
-            activeOpacity={1}
-            onPress={() => handleVideoPress(item)}
-            style={[styles.videoTouch, usePhoneFrame && { width: reelWidth }]}
-          >
+          <View style={[styles.videoTouch, usePhoneFrame && { width: reelWidth }]}>
             <ReelFeedMedia
               reel={item}
               reelIndex={index}
@@ -556,7 +560,8 @@ export function ReelImmersiveViewer({
             {isCurrent && endScreenReelId === item.id && (
               <ReelEndScreen ownerName={authorLabel(item)} />
             )}
-          </TouchableOpacity>
+            <ReelVideoTapLayer onPress={() => handleVideoPress(item)} />
+          </View>
 
           <TouchableOpacity
             style={[
@@ -682,17 +687,23 @@ export function ReelImmersiveViewer({
       <View ref={feedClipRef} style={{ height: reelHeight, width: '100%', overflow: 'hidden' }}>
       <FlatList
         ref={flatListRef}
+        key={`immersive-feed-${reelHeight}`}
         data={reels}
         style={{ height: reelHeight, overflow: 'hidden' }}
         keyExtractor={(r) => r.id}
         renderItem={renderReel}
         showsVerticalScrollIndicator={false}
         pagingEnabled
-        snapToInterval={reelHeight}
-        snapToAlignment="start"
+        {...(Platform.OS === 'web'
+          ? {
+              snapToInterval: reelHeight,
+              snapToAlignment: 'start' as const,
+            }
+          : {})}
         disableIntervalMomentum
         decelerationRate="fast"
         bounces={false}
+        nestedScrollEnabled
         initialScrollIndex={initialIndex > 0 ? initialIndex : undefined}
         getItemLayout={(_, index) => ({ length: reelHeight, offset: reelHeight * index, index })}
         onViewableItemsChanged={onViewableItemsChanged}
@@ -700,6 +711,7 @@ export function ReelImmersiveViewer({
         onScrollBeginDrag={onScrollBeginDrag}
         onMomentumScrollEnd={onMomentumScrollEnd}
         scrollEventThrottle={16}
+        removeClippedSubviews={Platform.OS === 'android' ? false : undefined}
         onScrollToIndexFailed={(info) => {
           flatListRef.current?.scrollToOffset({ offset: info.averageItemLength * info.index, animated: false });
         }}
@@ -767,7 +779,13 @@ const styles = StyleSheet.create({
     flex: undefined,
     borderRadius: 16,
   },
-  videoTouch: { flex: 1 },
+  videoTouch: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+  },
   closeBtn: {
     position: 'absolute',
     left: 12,

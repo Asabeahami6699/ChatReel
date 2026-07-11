@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useImperativeHandle, forwardRef } from 'react';
-import { type StyleProp, type ViewStyle } from 'react-native';
+import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useVideoPlayer, VideoView, type VideoPlayer } from 'expo-video';
 
 export type ReelPlaybackStatus = {
@@ -168,13 +168,20 @@ export const ReelPlayer = forwardRef<ReelPlayerHandle, Props>(function ReelPlaye
   }, [player]);
 
   return (
-    <VideoView
-      player={player}
-      style={style}
-      contentFit={contentFit}
-      nativeControls={nativeControls}
-    />
+    <View pointerEvents="none" style={style ? [styles.fill, style] : styles.fill}>
+      <VideoView
+        player={player}
+        style={StyleSheet.absoluteFill}
+        contentFit={contentFit}
+        nativeControls={nativeControls}
+        pointerEvents={nativeControls ? 'auto' : 'none'}
+      />
+    </View>
   );
+});
+
+const styles = StyleSheet.create({
+  fill: { flex: 1 },
 });
 
 export type { VideoPlayer as ReelVideoPlayer };

@@ -15,6 +15,7 @@ import {
   reelRowDataEqual,
 } from './reelFeedRowUtils';
 import { ReelEndScreen } from './ReelEndScreen';
+import { ReelVideoTapLayer } from './ReelVideoTapLayer';
 
 function ActionIcon({
   name,
@@ -125,11 +126,7 @@ function ReelFeedRowComponent({
           !usePhoneFrame && { transform: [{ translateY: REEL_CONTENT_SHIFT_DOWN }] },
         ]}
       >
-      <TouchableOpacity
-        activeOpacity={1}
-        onPress={() => onVideoPress(item)}
-        onLongPress={() => onDelete(item)}
-        delayLongPress={700}
+      <View
         style={[
           styles.videoTouchLayer,
           usePhoneFrame && [styles.videoTouchLayerDesktop, { width: reelWidth }],
@@ -160,7 +157,13 @@ function ReelFeedRowComponent({
             <ReelEndScreen ownerName={author} />
           </View>
         ) : null}
-      </TouchableOpacity>
+        {/* Sibling overlay — never wrap VideoView or FlatList will lose vertical pans */}
+        <ReelVideoTapLayer
+          onPress={() => onVideoPress(item)}
+          onLongPress={() => onDelete(item)}
+          delayLongPress={700}
+        />
+      </View>
 
       <View
         style={[

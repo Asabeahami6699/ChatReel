@@ -3,7 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
-  FlatList,
+  FlatList as RNFlatList,
   Modal,
   PanResponder,
   Platform,
@@ -16,9 +16,15 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
+import { FlatList as GHFlatList } from 'react-native-gesture-handler';
 import { ProgressBar } from 'react-native-paper';
 import { ReelPlayer, type ReelPlaybackStatus, type ReelPlayerHandle } from '../../components/ReelPlayer';
 import { Ionicons } from '@expo/vector-icons';
+
+/** RNGH FlatList on device so tap gestures and vertical paging share one system. */
+const FlatList = (
+  Platform.OS === 'web' ? RNFlatList : GHFlatList
+) as typeof RNFlatList;
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused, useFocusEffect, useNavigation } from '@react-navigation/native';
 import { USE_NATIVE_DRIVER } from '../../lib/animation';
@@ -105,11 +111,15 @@ export default function ReelsScreen() {
   const { feedMode, setFeedMode } = useReelFeedMode();
   const [viewportHeight, setViewportHeight] = useState(0);
   const bottomNavOffset = reelTabBarOffset(insets.bottom, usePhoneFrame);
+  // Tab navigator already lays out above the reel tab bar. After onLayout, do not
+  // subtract the bar again — that shrinks page height vs the list viewport.
   const reelHeight = Math.max(
     320,
     usePhoneFrame
       ? Math.max(0, (viewportHeight || windowHeight) - REEL_DESKTOP_VERTICAL_INSET * 2)
-      : (viewportHeight || windowHeight) - bottomNavOffset
+      : viewportHeight > 0
+        ? viewportHeight
+        : windowHeight - bottomNavOffset
   );
 
   const feedSource = feedMode === 'forYou' ? 'feed' : 'following';
@@ -132,7 +142,7 @@ export default function ReelsScreen() {
   const myProfileId = useCurrentProfileId();
   const [showUploadPanel, setShowUploadPanel] = useState(false);
 
-  const flatListRef = useRef<FlatList<ReelDTO>>(null);
+  const flatListRef = useRef<RNFlatList<ReelDTO>>(null);
   const feedClipRef = useRef<View>(null);
   const wheelLockRef = useRef(false);
   const videos = useRef<Record<string, ReelPlayerHandle | null>>({});
@@ -860,8 +870,11 @@ export default function ReelsScreen() {
   const progressPan = useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponder: () => true,
+        // Don't claim the touch on start — that blocks vertical reel swipes that
+        // begin near the progress bar. Only scrub on a clear horizontal drag.
+        onStartShouldSetPanResponder: () => false,
+        onMoveShouldSetPanResponder: (_, gesture) =>
+          Math.abs(gesture.dx) > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.2,
         onPanResponderGrant: (_, gesture) => {
           isScrubbingRef.current = true;
           setIsScrubbing(true);
@@ -1140,6 +1153,7 @@ export default function ReelsScreen() {
       <View ref={feedClipRef} style={{ height: reelHeight, width: '100%', overflow: 'hidden' }}>
       <FlatList
         ref={flatListRef}
+        key={`reels-feed-${reelHeight}`}
         data={reels}
         style={{ height: reelHeight, overflow: 'hidden' }}
         contentContainerStyle={reels.length === 0 ? undefined : { flexGrow: 0 }}
@@ -1151,13 +1165,19 @@ export default function ReelsScreen() {
         viewabilityConfig={viewabilityConfig}
         getItemLayout={getItemLayout}
         pagingEnabled
-        snapToInterval={reelHeight}
-        snapToAlignment="start"
+        // snapToInterval + pagingEnabled fights on Android; keep interval snap for web only.
+        {...(Platform.OS === 'web'
+          ? {
+              snapToInterval: reelHeight,
+              snapToAlignment: 'start' as const,
+            }
+          : {})}
         disableIntervalMomentum
         decelerationRate="fast"
         bounces={Platform.OS !== 'web'}
         alwaysBounceVertical={Platform.OS !== 'web'}
         overScrollMode="never"
+        nestedScrollEnabled
         onScrollBeginDrag={onScrollBeginDrag}
         onScrollEndDrag={onScrollEndDrag}
         onMomentumScrollEnd={onMomentumScrollEnd}
@@ -1171,7 +1191,7 @@ export default function ReelsScreen() {
         }}
         onEndReachedThreshold={0.5}
         refreshControl={
-          Platform.OS === 'web' ? undefined : (
+          Platform.OS === 'web' || currentIndex > 0 ? undefined : (
           <RefreshControl
             refreshing={refreshing}
             onRefresh={() => void handlePullRefresh()}

@@ -1,16 +1,22 @@
 import React, { memo, useEffect, useRef, useState } from 'react';
 import {
-  FlatList,
+  FlatList as RNFlatList,
   NativeScrollEvent,
   NativeSyntheticEvent,
+  Platform,
   StyleSheet,
   View,
 } from 'react-native';
+import { FlatList as GHFlatList } from 'react-native-gesture-handler';
 import type { ReelDTO } from '../../lib/api';
 import { getReelMediaItems } from '../../lib/reelPlayback';
 import type { ReelPlaybackStatus, ReelPlayerHandle } from '../../components/ReelPlayer';
 import { ReelMediaSlide } from './ReelMediaSlide';
 import { useReelSoundPlayback, reelVideoVoiceVolume } from '../../hooks/useReelSoundPlayback';
+
+const FlatList = (
+  Platform.OS === 'web' ? RNFlatList : GHFlatList
+) as typeof RNFlatList;
 
 type Props = {
   reel: ReelDTO;
@@ -63,7 +69,7 @@ function ReelFeedMediaComponent({
   });
 
   const mediaIndexRef = useRef(0);
-  const listRef = useRef<FlatList>(null);
+  const listRef = useRef<RNFlatList>(null);
   const onMediaIndexChangeRef = useRef(onMediaIndexChange);
   const reelIdRef = useRef(reel.id);
   onMediaIndexChangeRef.current = onMediaIndexChange;
@@ -165,9 +171,17 @@ function ReelFeedMediaComponent({
         bounces={false}
         decelerationRate="fast"
         scrollEnabled={isCurrentReel}
+        nestedScrollEnabled
+        directionalLockEnabled
         scrollEventThrottle={16}
         onScroll={onScroll}
         onMomentumScrollEnd={onMomentumEnd}
+        {...(Platform.OS !== 'web'
+          ? ({
+              activeOffsetX: [-18, 18],
+              failOffsetY: [-12, 12],
+            } as object)
+          : {})}
         getItemLayout={(_, index) => ({
           length: frameWidth,
           offset: frameWidth * index,
