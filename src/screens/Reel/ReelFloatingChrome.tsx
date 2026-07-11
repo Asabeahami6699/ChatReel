@@ -205,7 +205,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: '22%',
     bottom: '28%',
-    left: '18%',
+    left: '26%',
     right: '22%',
   },
   bottomMeta: {

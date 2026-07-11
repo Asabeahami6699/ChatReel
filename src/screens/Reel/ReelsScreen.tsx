@@ -73,8 +73,19 @@ const navArrowStyles = StyleSheet.create({
     right: 20,
     top: '50%' as unknown as number,
     marginTop: -52,
-    zIndex: 25,
+    zIndex: 40,
+    elevation: 40,
     gap: 8,
+    alignItems: 'center',
+  },
+  containerPhone: {
+    position: 'absolute',
+    left: 10,
+    top: '50%' as unknown as number,
+    marginTop: -56,
+    zIndex: 40,
+    elevation: 40,
+    gap: 10,
     alignItems: 'center',
   },
   btn: {
@@ -87,8 +98,18 @@ const navArrowStyles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
   },
+  btnPhone: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.35)',
+  },
   btnDisabled: {
-    opacity: 0.4,
+    opacity: 0.35,
   },
 });
 
@@ -1360,31 +1381,48 @@ export default function ReelsScreen() {
         onPurchased={(balanceCoins) => setBalanceCoins(balanceCoins)}
       />
 
-      {usePhoneFrame && reels.length > 0 && (
-        <View style={navArrowStyles.container}>
+      {reels.length > 0 && (
+        <View
+          style={usePhoneFrame ? navArrowStyles.container : navArrowStyles.containerPhone}
+          pointerEvents="box-none"
+        >
           <TouchableOpacity
-            style={[navArrowStyles.btn, currentIndex === 0 && navArrowStyles.btnDisabled]}
+            style={[
+              usePhoneFrame ? navArrowStyles.btn : navArrowStyles.btnPhone,
+              currentIndex === 0 && navArrowStyles.btnDisabled,
+            ]}
             onPress={() => {
-              if (currentIndex > 0) {
-                goToReelIndex(currentIndex - 1, true);
-              }
+              if (currentIndex > 0) goToReelIndex(currentIndex - 1, true);
             }}
             disabled={currentIndex === 0}
             activeOpacity={0.7}
+            hitSlop={8}
+            accessibilityLabel="Previous reel"
           >
-            <Ionicons name="chevron-up" size={28} color={currentIndex === 0 ? 'rgba(255,255,255,0.2)' : '#fff'} />
+            <Ionicons
+              name="chevron-up"
+              size={usePhoneFrame ? 28 : 26}
+              color={currentIndex === 0 ? 'rgba(255,255,255,0.25)' : '#fff'}
+            />
           </TouchableOpacity>
           <TouchableOpacity
-            style={[navArrowStyles.btn, currentIndex >= reels.length - 1 && navArrowStyles.btnDisabled]}
+            style={[
+              usePhoneFrame ? navArrowStyles.btn : navArrowStyles.btnPhone,
+              currentIndex >= reels.length - 1 && navArrowStyles.btnDisabled,
+            ]}
             onPress={() => {
-              if (currentIndex < reels.length - 1) {
-                goToReelIndex(currentIndex + 1, true);
-              }
+              if (currentIndex < reels.length - 1) goToReelIndex(currentIndex + 1, true);
             }}
             disabled={currentIndex >= reels.length - 1}
             activeOpacity={0.7}
+            hitSlop={8}
+            accessibilityLabel="Next reel"
           >
-            <Ionicons name="chevron-down" size={28} color={currentIndex >= reels.length - 1 ? 'rgba(255,255,255,0.2)' : '#fff'} />
+            <Ionicons
+              name="chevron-down"
+              size={usePhoneFrame ? 28 : 26}
+              color={currentIndex >= reels.length - 1 ? 'rgba(255,255,255,0.25)' : '#fff'}
+            />
           </TouchableOpacity>
         </View>
       )}
