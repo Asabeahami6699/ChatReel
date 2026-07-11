@@ -15,7 +15,6 @@ import {
   reelRowDataEqual,
 } from './reelFeedRowUtils';
 import { ReelEndScreen } from './ReelEndScreen';
-import { ReelVideoTapLayer } from './ReelVideoTapLayer';
 
 function ActionIcon({
   name,
@@ -126,7 +125,8 @@ function ReelFeedRowComponent({
           !usePhoneFrame && { transform: [{ translateY: REEL_CONTENT_SHIFT_DOWN }] },
         ]}
       >
-      <ReelVideoTapLayer
+      <TouchableOpacity
+        activeOpacity={1}
         onPress={() => onVideoPress(item)}
         onLongPress={() => onDelete(item)}
         delayLongPress={700}
@@ -160,7 +160,7 @@ function ReelFeedRowComponent({
             <ReelEndScreen ownerName={author} />
           </View>
         ) : null}
-      </ReelVideoTapLayer>
+      </TouchableOpacity>
 
       <View
         style={[

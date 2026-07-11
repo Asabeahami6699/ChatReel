@@ -173,8 +173,6 @@ export const ReelPlayer = forwardRef<ReelPlayerHandle, Props>(function ReelPlaye
       style={style}
       contentFit={contentFit}
       nativeControls={nativeControls}
-      // Let parent FlatList / tap layer receive vertical swipes on device.
-      pointerEvents={nativeControls ? 'auto' : 'none'}
     />
   );
 });

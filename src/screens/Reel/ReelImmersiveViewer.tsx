@@ -6,7 +6,6 @@ import {
   Image,
   Modal,
   PanResponder,
-  Platform,
   StatusBar,
   StyleSheet,
   Text,
@@ -29,7 +28,6 @@ import { markReelWatched } from './reelVideoCache';
 import { REEL_ACTION_RAIL_RIGHT, REEL_ACTION_RAIL_WIDTH, REEL_BOTTOM_INSET, REEL_PHONE_MAX_WIDTH, REEL_PROGRESS_BAR_HEIGHT, getReelFrameDimensions } from './reelVideoLayout';
 import { ExpandableCaption } from './ExpandableCaption';
 import { ReelSoundStrip } from './ReelSoundStrip';
-import { ReelVideoTapLayer } from './ReelVideoTapLayer';
 import { ReelBrandBadge } from './ReelBrandBadge';
 import { ReelEndScreen } from './ReelEndScreen';
 import { REEL_ACCENT, REEL_END_SCREEN_MS, reelBottomLayout } from './reelTheme';
@@ -241,9 +239,8 @@ export function ReelImmersiveViewer({
   const progressPan = useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => false,
-        onMoveShouldSetPanResponder: (_, gesture) =>
-          Math.abs(gesture.dx) > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.2,
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: () => true,
         onPanResponderGrant: (_, gesture) => {
           isScrubbingRef.current = true;
           void getActivePlayer(activeReelIdRef.current)?.pauseAsync();
@@ -515,7 +512,8 @@ export function ReelImmersiveViewer({
 
       return (
         <View style={{ width: reelWidth + (usePhoneFrame ? desktopActionOffset : 0), height: reelHeight }}>
-          <ReelVideoTapLayer
+          <TouchableOpacity
+            activeOpacity={1}
             onPress={() => handleVideoPress(item)}
             style={[styles.videoTouch, usePhoneFrame && { width: reelWidth }]}
           >
@@ -558,7 +556,7 @@ export function ReelImmersiveViewer({
             {isCurrent && endScreenReelId === item.id && (
               <ReelEndScreen ownerName={authorLabel(item)} />
             )}
-          </ReelVideoTapLayer>
+          </TouchableOpacity>
 
           <TouchableOpacity
             style={[
@@ -690,16 +688,11 @@ export function ReelImmersiveViewer({
         renderItem={renderReel}
         showsVerticalScrollIndicator={false}
         pagingEnabled
-        {...(Platform.OS === 'web'
-          ? {
-              snapToInterval: reelHeight,
-              snapToAlignment: 'start' as const,
-            }
-          : {})}
+        snapToInterval={reelHeight}
+        snapToAlignment="start"
         disableIntervalMomentum
         decelerationRate="fast"
         bounces={false}
-        nestedScrollEnabled
         initialScrollIndex={initialIndex > 0 ? initialIndex : undefined}
         getItemLayout={(_, index) => ({ length: reelHeight, offset: reelHeight * index, index })}
         onViewableItemsChanged={onViewableItemsChanged}
