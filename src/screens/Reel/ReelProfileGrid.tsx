@@ -2,6 +2,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Image,
   Platform,
   Pressable,
   RefreshControl,
@@ -13,7 +14,9 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { api, ApiError, type ReelDTO } from '../../lib/api';
 import { showErrorAlert } from '../../lib/confirmAction';
+import { confirmToast } from '../../lib/confirmToast';
 import { notifyRealtimeTopic } from '../../lib/realtimeHub';
+import type { SavedReelComposeDraft } from '../../lib/reelComposeDraftStore';
 import { REEL_ACCENT } from './reelTheme';
 import { ReelDeleteConfirmFloat } from './ReelDeleteConfirmFloat';
 import { ReelGridThumb } from './ReelGridThumb';
@@ -22,13 +25,20 @@ const GRID_COLS = 3;
 const GRID_GAP = 4;
 const GRID_PAD = 6;
 
+type GridItem =
+  | { kind: 'draft'; draft: SavedReelComposeDraft }
+  | { kind: 'reel'; reel: ReelDTO; reelIndex: number };
+
 type Props = {
   posts: ReelDTO[];
+  drafts?: SavedReelComposeDraft[];
   canDelete: boolean;
   contentWidth: number;
   bottomPad: number;
   generatedThumbs: Record<string, string>;
   onOpen: (index: number) => void;
+  onOpenDraft?: (draft: SavedReelComposeDraft) => void;
+  onDeleteDraft?: (draft: SavedReelComposeDraft) => void;
   onDeleted: (reelId: string, index: number) => void;
   onDeletedMany: (reelIds: string[]) => void;
   refreshing?: boolean;
@@ -125,13 +135,70 @@ function GridTile({
   );
 }
 
+function DraftTile({
+  draft,
+  width,
+  height,
+  onPress,
+  onDelete,
+}: {
+  draft: SavedReelComposeDraft;
+  width: number;
+  height: number;
+  onPress: () => void;
+  onDelete?: () => void;
+}) {
+  const thumb =
+    draft.draft.thumbUri ||
+    draft.draft.items?.[0]?.thumbUri ||
+    draft.draft.video?.uri ||
+    null;
+
+  return (
+    <Pressable style={[styles.tileOuter, { width, height }]} onPress={onPress}>
+      <View style={[styles.tile, styles.draftTile]}>
+        {thumb ? (
+          <Image source={{ uri: thumb }} style={styles.image} resizeMode="cover" />
+        ) : (
+          <View style={styles.draftFallback}>
+            <Ionicons name="document-text-outline" size={28} color={REEL_ACCENT} />
+          </View>
+        )}
+        <View style={styles.draftBadge}>
+          <Text style={styles.draftBadgeText}>Draft</Text>
+        </View>
+        <View style={styles.gridOverlay}>
+          <Text style={styles.draftLabel} numberOfLines={1}>
+            {draft.label}
+          </Text>
+        </View>
+        {onDelete ? (
+          <TouchableOpacity
+            style={styles.draftDelete}
+            onPress={(e) => {
+              e.stopPropagation?.();
+              onDelete();
+            }}
+            hitSlop={8}
+          >
+            <Ionicons name="trash-outline" size={14} color="#fff" />
+          </TouchableOpacity>
+        ) : null}
+      </View>
+    </Pressable>
+  );
+}
+
 export function ReelProfileGrid({
   posts,
+  drafts = [],
   canDelete,
   contentWidth,
   bottomPad,
   generatedThumbs,
   onOpen,
+  onOpenDraft,
+  onDeleteDraft,
   onDeleted,
   onDeletedMany,
   refreshing = false,
@@ -146,6 +213,18 @@ export function ReelProfileGrid({
     const tw = Math.floor((contentWidth - GRID_PAD * 2 - GRID_GAP * (GRID_COLS - 1)) / GRID_COLS);
     return { tileWidth: tw, tileHeight: Math.round(tw * 1.15) };
   }, [contentWidth]);
+
+  const gridData = useMemo<GridItem[]>(() => {
+    const draftItems: GridItem[] = canDelete
+      ? drafts.map((draft) => ({ kind: 'draft', draft }))
+      : [];
+    const reelItems: GridItem[] = posts.map((reel, reelIndex) => ({
+      kind: 'reel',
+      reel,
+      reelIndex,
+    }));
+    return [...draftItems, ...reelItems];
+  }, [canDelete, drafts, posts]);
 
   const exitSelection = useCallback(() => {
     setSelectionMode(false);
@@ -286,9 +365,11 @@ export function ReelProfileGrid({
       )}
 
       <FlatList
-        data={posts}
+        data={gridData}
         key={`profile-grid-${contentWidth}`}
-        keyExtractor={(r) => r.id}
+        keyExtractor={(item) =>
+          item.kind === 'draft' ? `draft:${item.draft.id}` : `reel:${item.reel.id}`
+        }
         numColumns={GRID_COLS}
         contentContainerStyle={{ paddingBottom: bottomPad + (selectionMode ? 56 : 16) }}
         columnWrapperStyle={styles.gridRow}
@@ -298,20 +379,42 @@ export function ReelProfileGrid({
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />
           ) : undefined
         }
-        renderItem={({ item, index }) => (
-          <GridTile
-            reel={item}
-            index={index}
-            width={tileWidth}
-            height={tileHeight}
-            thumbUri={generatedThumbs[item.id]}
-            canDelete={canDelete}
-            selectionMode={selectionMode}
-            selected={selectedIds.has(item.id)}
-            onPress={() => handleTilePress(item, index)}
-            onLongPress={() => handleTileLongPress(item)}
-          />
-        )}
+        renderItem={({ item }) =>
+          item.kind === 'draft' ? (
+            <DraftTile
+              draft={item.draft}
+              width={tileWidth}
+              height={tileHeight}
+              onPress={() => onOpenDraft?.(item.draft)}
+              onDelete={
+                onDeleteDraft
+                  ? () => {
+                      void (async () => {
+                        const ok = await confirmToast({
+                          message: `Delete draft “${item.draft.label}”?`,
+                          confirmLabel: 'Delete',
+                        });
+                        if (ok) onDeleteDraft(item.draft);
+                      })();
+                    }
+                  : undefined
+              }
+            />
+          ) : (
+            <GridTile
+              reel={item.reel}
+              index={item.reelIndex}
+              width={tileWidth}
+              height={tileHeight}
+              thumbUri={generatedThumbs[item.reel.id]}
+              canDelete={canDelete}
+              selectionMode={selectionMode}
+              selected={selectedIds.has(item.reel.id)}
+              onPress={() => handleTilePress(item.reel, item.reelIndex)}
+              onLongPress={() => handleTileLongPress(item.reel)}
+            />
+          )
+        }
         ListEmptyComponent={
           <View style={styles.empty}>
             <Ionicons name="film-outline" size={36} color="#666" />
@@ -427,6 +530,35 @@ const styles = StyleSheet.create({
   selectionDeleteText: { color: '#fff', fontWeight: '700', fontSize: 14 },
   empty: { paddingVertical: 48, alignItems: 'center' },
   emptyText: { color: '#888', marginTop: 10 },
+  draftTile: { borderWidth: 1, borderColor: '#3a2a10' },
+  draftFallback: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1a1510',
+  },
+  draftBadge: {
+    position: 'absolute',
+    top: 6,
+    left: 6,
+    backgroundColor: REEL_ACCENT,
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  draftBadgeText: { color: '#000', fontSize: 9, fontWeight: '800' },
+  draftLabel: { color: '#fff', fontSize: 10, fontWeight: '700', flex: 1 },
+  draftDelete: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: 'rgba(0,0,0,0.65)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   hint: {
     textAlign: 'center',
     color: '#555',

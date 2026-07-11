@@ -29,6 +29,13 @@ export async function sendPushToUser(userId: string, payload: PushPayload): Prom
     title: payload.title,
     body: payload.body,
     data: payload.data ?? {},
+    channelId:
+      payload.data?.type === 'reel_gift' ||
+      payload.data?.type === 'reel_like' ||
+      payload.data?.type === 'reel_comment'
+        ? 'reel_inbox'
+        : 'default',
+    priority: 'high' as const,
   }));
 
   try {

@@ -8,6 +8,7 @@ export type ReelsTabParamList = {
 export type ReelsStackParamList = {
   ReelTabs: undefined;
   ReelCreatorProfile: { profileId: string; displayName?: string };
+  ReelCreatorWallet: undefined;
   ReelDetail: { reelId: string; contextReels?: import('../lib/api').ReelDTO[]; initialIndex?: number };
   ReelSound: { soundId?: string; fromReelId?: string };
 };

@@ -29,12 +29,18 @@ export function usePushNotifications(userId: string | undefined) {
     if (!userId) return;
 
     let active = true;
+    let responseSub: { remove: () => void } | null = null;
 
     (async () => {
       if (Platform.OS === 'android') {
         await Notifications.setNotificationChannelAsync('default', {
           name: 'default',
           importance: Notifications.AndroidImportance.MAX,
+        });
+        await Notifications.setNotificationChannelAsync('reel_inbox', {
+          name: 'Reel activity',
+          importance: Notifications.AndroidImportance.HIGH,
+          sound: 'default',
         });
       }
 
@@ -60,8 +66,26 @@ export function usePushNotifications(userId: string | undefined) {
       console.warn('[push] registration failed:', err);
     });
 
+    responseSub = Notifications.addNotificationResponseReceivedListener((response) => {
+      const data = response.notification.request.content.data as {
+        type?: string;
+        reel_id?: string;
+        screen?: string;
+      };
+      if (!data?.type) return;
+      // Soft-refresh inbox badge when user opens an inbox-related push.
+      if (
+        data.type === 'reel_gift' ||
+        data.type === 'reel_like' ||
+        data.type === 'reel_comment'
+      ) {
+        void import('../lib/reelInboxPrefetch').then((m) => m.refreshReelInbox());
+      }
+    });
+
     return () => {
       active = false;
+      responseSub?.remove();
       const token = registeredToken.current;
       if (token) {
         api.notifications.unregisterToken(token).catch(() => undefined);

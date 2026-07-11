@@ -88,6 +88,7 @@ export type GiftCatalogDTO = {
 
 export type WalletBalanceDTO = {
   balance_coins: number;
+  cashable_coins: number;
   lifetime_earned_coins: number;
   lifetime_spent_coins: number;
   welcome_claimed: boolean;
@@ -113,6 +114,70 @@ export type CoinPackageDTO = {
   currency: string;
   country_code: string;
   sort_order: number;
+};
+
+export type PayoutBankDTO = {
+  name: string;
+  code: string;
+  type?: string;
+  currency?: string;
+  country?: string;
+};
+
+export type PayoutRecipientDTO = {
+  id: string;
+  country_code: string;
+  currency: string;
+  recipient_type: string;
+  account_name: string;
+  account_number_masked: string;
+  bank_code: string;
+  bank_name: string | null;
+  created_at: string;
+};
+
+export type PayoutEligibilityDTO = {
+  country_code: string;
+  currency: string;
+  cashable_coins: number;
+  balance_coins: number;
+  min_amount_minor: number;
+  min_coins: number;
+  coin_to_fiat_minor: number;
+  fee_flat_minor: number;
+  fee_bps: number;
+  can_cash_out: boolean;
+  open_payout: {
+    id: string;
+    status: string;
+    amount_coins: number;
+    created_at: string;
+  } | null;
+  max_quote: {
+    amount_coins: number;
+    amount_minor: number;
+    fee_minor: number;
+    net_amount_minor: number;
+    currency: string;
+    min_amount_minor: number;
+    min_coins: number;
+    meets_threshold: boolean;
+  };
+  paystack_ready: boolean;
+};
+
+export type PayoutRequestDTO = {
+  id: string;
+  amount_coins: number;
+  amount_minor: number;
+  fee_minor: number;
+  net_amount_minor: number;
+  currency: string;
+  country_code: string;
+  status: string;
+  failure_reason: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 export type ReelGiftDTO = {
@@ -963,5 +1028,41 @@ export const api = {
         balance_coins: number;
         coins_credited: number;
       }>('/api/wallet/purchase/verify', { method: 'POST', body: { reference } }),
+    payoutEligibility: () =>
+      apiRequest<PayoutEligibilityDTO>('/api/wallet/payout/eligibility'),
+    payoutBanks: () =>
+      apiRequest<{
+        country_code: string;
+        currency: string;
+        recipient_type: string;
+        banks: PayoutBankDTO[];
+      }>('/api/wallet/payout/banks'),
+    payoutRecipients: () =>
+      apiRequest<{ recipients: PayoutRecipientDTO[] }>('/api/wallet/payout/recipients'),
+    createPayoutRecipient: (data: {
+      account_number: string;
+      bank_code: string;
+      bank_name?: string;
+      account_name?: string;
+    }) =>
+      apiRequest<{ recipient: PayoutRecipientDTO }>('/api/wallet/payout/recipients', {
+        method: 'POST',
+        body: data,
+      }),
+    requestPayout: (data: {
+      recipient_id: string;
+      amount_coins: number;
+      idempotency_key: string;
+    }) =>
+      apiRequest<{
+        duplicate: boolean;
+        payout: PayoutRequestDTO;
+        balance_coins: number;
+        cashable_coins: number;
+      }>('/api/wallet/payout/request', { method: 'POST', body: data }),
+    payoutHistory: (limit = 20) =>
+      apiRequest<{ payouts: PayoutRequestDTO[] }>(
+        `/api/wallet/payout/history?limit=${limit}`
+      ),
   },
 };

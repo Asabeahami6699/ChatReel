@@ -3,7 +3,6 @@ import { Animated, Platform, StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { ReelDTO } from '../../lib/api';
 import { ReelBrandBadge } from './ReelBrandBadge';
-import { ReelEndScreen } from './ReelEndScreen';
 import { REEL_ACCENT } from './reelTheme';
 import { REEL_CONTENT_SHIFT_DOWN, REEL_PROGRESS_BAR_HEIGHT } from './reelVideoLayout';
 import { reelAuthorLabel } from './reelFeedRowUtils';
@@ -18,7 +17,6 @@ type Props = {
   progressBottom: number;
   isScrubbing: boolean;
   playbackIcon: 'play' | 'pause' | null;
-  endScreenReelId: string | null;
   badgePlayCycle: number;
   heartScale: Animated.Value;
   heartOpacity: Animated.Value;
@@ -36,7 +34,6 @@ export function ReelFeedOverlays({
   progressBottom,
   isScrubbing,
   playbackIcon,
-  endScreenReelId,
   badgePlayCycle,
   heartScale,
   heartOpacity,
@@ -74,8 +71,6 @@ export function ReelFeedOverlays({
         playCycle={badgePlayCycle}
         compact={!usePhoneFrame}
       />
-
-      {endScreenReelId === reel.id && <ReelEndScreen ownerName={ownerName} />}
 
       {playbackIcon && (
         <View style={styles.playbackIconOverlay} pointerEvents="none">

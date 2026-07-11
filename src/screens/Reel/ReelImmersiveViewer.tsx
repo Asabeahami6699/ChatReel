@@ -6,7 +6,6 @@ import {
   Image,
   Modal,
   PanResponder,
-  Platform,
   StatusBar,
   StyleSheet,
   Text,
@@ -92,6 +91,8 @@ export function ReelImmersiveViewer({
   const { progressBottom, metaBottom } = reelBottomLayout(insets.bottom);
 
   const flatListRef = useRef<FlatList<ReelDTO>>(null);
+  const feedClipRef = useRef<View>(null);
+  const wheelLockRef = useRef(false);
   const scrollAnchorIndexRef = useRef(0);
   const isSnappingRef = useRef(false);
   const currentIndexRef = useRef(initialIndex);
@@ -462,6 +463,36 @@ export function ReelImmersiveViewer({
     [snapToAdjacentReel]
   );
 
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const node = feedClipRef.current as unknown as HTMLElement | null;
+    if (!node) return;
+
+    const onWheel = (e: WheelEvent) => {
+      if (Math.abs(e.deltaY) < 10) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (wheelLockRef.current || isSnappingRef.current) return;
+      const h = reelHeightRef.current;
+      if (h <= 0) return;
+      const dir = e.deltaY > 0 ? 1 : -1;
+      const from = currentIndexRef.current;
+      const target = Math.max(0, Math.min(reelsRef.current.length - 1, from + dir));
+      if (target === from) return;
+      scrollAnchorIndexRef.current = from;
+      wheelLockRef.current = true;
+      isSnappingRef.current = true;
+      flatListRef.current?.scrollToOffset({ offset: target * h, animated: true });
+      window.setTimeout(() => {
+        isSnappingRef.current = false;
+        wheelLockRef.current = false;
+      }, 420);
+    };
+
+    node.addEventListener('wheel', onWheel, { passive: false });
+    return () => node.removeEventListener('wheel', onWheel);
+  }, [reelHeight, reels.length]);
+
   const onUseReelAudio = useCallback(
     (reel: ReelDTO) => {
       if (reel.sound?.id) {
@@ -648,6 +679,7 @@ export function ReelImmersiveViewer({
         ]}
       >
       <StatusBar barStyle="light-content" />
+      <View ref={feedClipRef} style={{ height: reelHeight, width: '100%', overflow: 'hidden' }}>
       <FlatList
         ref={flatListRef}
         data={reels}
@@ -668,32 +700,11 @@ export function ReelImmersiveViewer({
         onScrollBeginDrag={onScrollBeginDrag}
         onMomentumScrollEnd={onMomentumScrollEnd}
         scrollEventThrottle={16}
-        {...(Platform.OS === 'web'
-          ? {
-              onWheel: (e: { nativeEvent: { deltaY: number }; preventDefault?: () => void }) => {
-                const dy = e.nativeEvent.deltaY;
-                if (Math.abs(dy) < 8) return;
-                e.preventDefault?.();
-                if (isSnappingRef.current) return;
-                const h = reelHeightRef.current;
-                if (h <= 0) return;
-                const dir = dy > 0 ? 1 : -1;
-                const from = currentIndexRef.current;
-                const target = Math.max(0, Math.min(reelsRef.current.length - 1, from + dir));
-                if (target === from) return;
-                scrollAnchorIndexRef.current = from;
-                isSnappingRef.current = true;
-                flatListRef.current?.scrollToOffset({ offset: target * h, animated: true });
-                requestAnimationFrame(() => {
-                  isSnappingRef.current = false;
-                });
-              },
-            }
-          : {})}
         onScrollToIndexFailed={(info) => {
           flatListRef.current?.scrollToOffset({ offset: info.averageItemLength * info.index, animated: false });
         }}
       />
+      </View>
 
       <TouchableOpacity style={[styles.closeBtn, { top: insets.top + 8 }]} onPress={onClose}>
         <Ionicons name="chevron-back" size={26} color="#fff" />
@@ -823,7 +834,8 @@ const styles = StyleSheet.create({
     right: REEL_ACTION_RAIL_RIGHT,
     alignItems: 'center',
     gap: 10,
-    zIndex: 10,
+    zIndex: 16,
+    elevation: 16,
   },
   actionButtonsDesktop: {
     right: 0,

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useCurrentProfileId } from '../../hooks/useCurrentProfileId';
 import {
   ActivityIndicator,
@@ -23,6 +23,10 @@ import { useReelGridDeleteHandlers } from './useReelGridDelete';
 import { useReelProfilePosts } from './useReelProfilePosts';
 import { openPostReelCompose } from '../../lib/reelPlaybackBridge';
 import type { SavedReelComposeDraft } from '../../lib/reelComposeDraftStore';
+import {
+  deleteReelComposeDraft,
+  listReelComposeDrafts,
+} from '../../lib/reelComposeDraftStore';
 import { ReelProfileMenuFloat } from './ReelProfileMenuFloat';
 import { useReelPlaybackGate } from '../../hooks/useReelPlaybackGate';
 
@@ -52,6 +56,7 @@ export default function ReelProfileSheet({ reel, onClose, onFollowStateChange }:
   useReelPlaybackGate('profile-sheet-immersive', immersiveIndex != null);
   const [followerCount, setFollowerCount] = useState(0);
   const [followersLoading, setFollowersLoading] = useState(true);
+  const [drafts, setDrafts] = useState<SavedReelComposeDraft[]>([]);
 
   const profileId = author?.id;
   const {
@@ -66,6 +71,18 @@ export default function ReelProfileSheet({ reel, onClose, onFollowStateChange }:
   } = useReelProfilePosts(profileId, 24);
   const loading = postsLoading && posts.length === 0;
   const { removeOne, removeMany } = useReelGridDeleteHandlers(profileId ?? '', setImmersiveIndex);
+
+  const loadDrafts = useCallback(async () => {
+    if (!canDeleteReels) {
+      setDrafts([]);
+      return;
+    }
+    setDrafts(await listReelComposeDrafts());
+  }, [canDeleteReels]);
+
+  useEffect(() => {
+    void loadDrafts();
+  }, [loadDrafts, posts.length]);
 
   const username =
     author?.display_name?.trim() || author?.email?.split('@')[0] || 'unknown';
@@ -230,15 +247,28 @@ export default function ReelProfileSheet({ reel, onClose, onFollowStateChange }:
         ) : (
           <ReelProfileGrid
             posts={posts}
+            drafts={drafts}
             canDelete={canDeleteReels}
             contentWidth={contentWidth}
             bottomPad={bottomPad}
             generatedThumbs={thumbs}
             onOpen={setImmersiveIndex}
+            onOpenDraft={(draft: SavedReelComposeDraft) => {
+              onClose();
+              openPostReelCompose(draft);
+              navigation.navigate('PostReel');
+            }}
+            onDeleteDraft={async (draft) => {
+              await deleteReelComposeDraft(draft.id);
+              setDrafts((prev) => prev.filter((d) => d.id !== draft.id));
+            }}
             onDeleted={removeOne}
             onDeletedMany={removeMany}
             refreshing={refreshing}
-            onRefresh={refresh}
+            onRefresh={async () => {
+              await refresh();
+              await loadDrafts();
+            }}
           />
         )}
 
@@ -248,11 +278,6 @@ export default function ReelProfileSheet({ reel, onClose, onFollowStateChange }:
             onNewReel={() => {
               onClose();
               openPostReelCompose();
-              navigation.navigate('PostReel');
-            }}
-            onOpenDraft={(draft: SavedReelComposeDraft) => {
-              onClose();
-              openPostReelCompose(draft);
               navigation.navigate('PostReel');
             }}
           />

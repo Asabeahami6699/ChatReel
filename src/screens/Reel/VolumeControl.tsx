@@ -125,8 +125,8 @@ const styles = StyleSheet.create({
     position: 'relative',
     right: 0,
     top: 0,
-    zIndex: 1,
-    elevation: 1,
+    zIndex: 2,
+    elevation: 2,
   },
   btn: {
     backgroundColor: 'rgba(0,0,0,0.45)',

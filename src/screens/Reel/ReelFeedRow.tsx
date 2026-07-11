@@ -14,6 +14,7 @@ import {
   reelAvatarUrl,
   reelRowDataEqual,
 } from './reelFeedRowUtils';
+import { ReelEndScreen } from './ReelEndScreen';
 
 function ActionIcon({
   name,
@@ -24,18 +25,14 @@ function ActionIcon({
   size?: number;
   color?: string;
 }) {
-  const box = Math.max(44, size + 14);
   return (
-    <View
-      style={[
-        styles.actionIcon3d,
-        {
-          width: box,
-          height: box,
-          borderRadius: box / 2,
-        },
-      ]}
-    >
+    <View style={[styles.actionIcon3d, { width: size + 6, height: size + 6 }]}>
+      <Ionicons
+        name={name}
+        size={size}
+        color="rgba(0,0,0,0.55)"
+        style={styles.actionIconDepth}
+      />
       <Ionicons name={name} size={size} color={color} style={styles.actionIconGlyph} />
     </View>
   );
@@ -72,6 +69,7 @@ export type ReelFeedRowProps = {
   onPlaybackStatus: (reelId: string, status: ReelPlaybackStatus, isCurrent: boolean) => void;
   onRef: (reelId: string, ref: ReelPlayerHandle | null) => void;
   onMediaIndexChange: (reelId: string, mediaIndex: number) => void;
+  showEndScreen?: boolean;
 };
 
 function ReelFeedRowComponent({
@@ -105,6 +103,7 @@ function ReelFeedRowComponent({
   onPlaybackStatus,
   onRef,
   onMediaIndexChange,
+  showEndScreen = false,
 }: ReelFeedRowProps) {
   const isCurrent = index === currentIndex;
   const isLiked = item.liked_by_me;
@@ -153,6 +152,14 @@ function ReelFeedRowComponent({
           onRef={onRef}
           onMediaIndexChange={onMediaIndexChange}
         />
+        {showEndScreen && isCurrent ? (
+          <View
+            style={[styles.endScreenHost, usePhoneFrame && { width: reelWidth }]}
+            pointerEvents="none"
+          >
+            <ReelEndScreen ownerName={author} />
+          </View>
+        ) : null}
       </TouchableOpacity>
 
       <View
@@ -292,6 +299,7 @@ function propsAreEqual(prev: ReelFeedRowProps, next: ReelFeedRowProps): boolean 
     if (prev.currentIndex !== next.currentIndex) return false;
     if (prev.isFocused !== next.isFocused) return false;
     if (prev.mediaShouldPlay !== next.mediaShouldPlay) return false;
+  if (prev.showEndScreen !== next.showEndScreen) return false;
   }
 
   return true;
@@ -304,6 +312,10 @@ const styles = StyleSheet.create({
   reelContainerDesktop: { borderRadius: 16, overflow: 'hidden' },
   reelContent: { ...StyleSheet.absoluteFillObject },
   videoTouchLayer: { ...StyleSheet.absoluteFillObject, zIndex: 1 },
+  endScreenHost: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 2,
+  },
   videoTouchLayerDesktop: {
     position: 'absolute' as const,
     top: 0,
@@ -356,19 +368,14 @@ const styles = StyleSheet.create({
   actionIcon3d: {
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(12,12,14,0.55)',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.28)',
-    borderTopColor: 'rgba(255,255,255,0.45)',
-    borderBottomColor: 'rgba(0,0,0,0.35)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.45,
-    shadowRadius: 6,
-    elevation: 8,
+  },
+  actionIconDepth: {
+    position: 'absolute',
+    top: 2,
+    left: 1,
   },
   actionIconGlyph: {
-    textShadowColor: 'rgba(0,0,0,0.65)',
+    textShadowColor: 'rgba(0,0,0,0.75)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 3,
   },
@@ -376,7 +383,7 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 12,
     fontWeight: '700',
-    textShadowColor: 'rgba(0,0,0,0.75)',
+    textShadowColor: 'rgba(0,0,0,0.85)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 3,
   },

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Image,
   Modal,
   ScrollView,
   StyleSheet,
@@ -68,6 +69,16 @@ type Props = {
   onReplaceMedia: () => void;
   openSoundOnMount?: boolean;
   onSoundPickerOpened?: () => void;
+  /** When posting an album, show all clips and let the user pick which video to trim/filter. */
+  albumItems?: Array<{
+    id: string;
+    mediaType: 'image' | 'video';
+    uri: string;
+    thumbUri?: string | null;
+  }>;
+  onSelectAlbumVideo?: (id: string) => void;
+  onRemoveAlbumItem?: (id: string) => void;
+  onAddAlbumMedia?: () => void;
 };
 
 function VolumeSlider({
@@ -132,6 +143,10 @@ export function PostReelVideoComposer({
   onReplaceMedia,
   openSoundOnMount = false,
   onSoundPickerOpened,
+  albumItems,
+  onSelectAlbumVideo,
+  onRemoveAlbumItem,
+  onAddAlbumMedia,
 }: Props) {
   const insets = useSafeAreaInsets();
   const [dock, setDock] = useState<DockTab>('edit');
@@ -305,7 +320,9 @@ export function PostReelVideoComposer({
             onPress={onPost}
             disabled={isQueuing}
           >
-            <Text style={styles.postPillText}>{isQueuing ? 'Posting…' : 'Post'}</Text>
+            <Text style={styles.postPillText}>
+              {isQueuing ? 'Posting…' : albumItems && albumItems.length > 1 ? 'Post album' : 'Post'}
+            </Text>
             <Ionicons name="arrow-forward" size={16} color="#fff" />
           </TouchableOpacity>
         </View>
@@ -317,6 +334,56 @@ export function PostReelVideoComposer({
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
+        {albumItems && albumItems.length > 1 ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.albumStrip}
+            keyboardShouldPersistTaps="handled"
+          >
+            {albumItems.map((item) => {
+              const active = item.id === video.id;
+              const previewUri =
+                item.mediaType === 'video' ? item.thumbUri || item.uri : item.uri;
+              return (
+                <View key={item.id} style={styles.albumTileWrap}>
+                  <TouchableOpacity
+                    style={[styles.albumTile, active && styles.albumTileActive]}
+                    onPress={() => {
+                      if (item.mediaType === 'video') onSelectAlbumVideo?.(item.id);
+                    }}
+                    activeOpacity={0.85}
+                  >
+                    <Image source={{ uri: previewUri }} style={styles.albumThumb} />
+                    <View style={styles.albumBadge}>
+                      <Ionicons
+                        name={item.mediaType === 'image' ? 'image' : 'videocam'}
+                        size={11}
+                        color="#fff"
+                      />
+                    </View>
+                    {active ? <Text style={styles.albumEditing}>Editing</Text> : null}
+                  </TouchableOpacity>
+                  {onRemoveAlbumItem ? (
+                    <TouchableOpacity
+                      style={styles.albumRemove}
+                      onPress={() => onRemoveAlbumItem(item.id)}
+                      hitSlop={8}
+                    >
+                      <Ionicons name="close" size={12} color="#fff" />
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+              );
+            })}
+            {onAddAlbumMedia ? (
+              <TouchableOpacity style={styles.albumAdd} onPress={onAddAlbumMedia}>
+                <Ionicons name="add" size={22} color="#888" />
+              </TouchableOpacity>
+            ) : null}
+          </ScrollView>
+        ) : null}
+
         <ReelVideoEditor
           video={video}
           onChange={onVideoChange}
@@ -607,6 +674,77 @@ const styles = StyleSheet.create({
   postPillText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   editorScroll: { flex: 1 },
   editorScrollContent: { paddingBottom: 8 },
+  albumStrip: {
+    paddingHorizontal: 12,
+    paddingBottom: 10,
+    gap: 10,
+    alignItems: 'center',
+  },
+  albumTileWrap: {
+    position: 'relative',
+  },
+  albumTile: {
+    width: 64,
+    height: 84,
+    borderRadius: 10,
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: 'transparent',
+    backgroundColor: '#1a1a1a',
+  },
+  albumTileActive: {
+    borderColor: REEL_ACCENT,
+  },
+  albumThumb: {
+    width: '100%',
+    height: '100%',
+  },
+  albumBadge: {
+    position: 'absolute',
+    left: 4,
+    bottom: 4,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderRadius: 8,
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+  },
+  albumEditing: {
+    position: 'absolute',
+    top: 4,
+    left: 4,
+    right: 4,
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: '800',
+    textAlign: 'center',
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderRadius: 6,
+    overflow: 'hidden',
+    paddingVertical: 2,
+  },
+  albumRemove: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#333',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#111',
+  },
+  albumAdd: {
+    width: 64,
+    height: 84,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#333',
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   soundNameRow: {
     flexDirection: 'row',
     alignItems: 'center',

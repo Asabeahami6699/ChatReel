@@ -3,6 +3,7 @@ import { api, type WalletBalanceDTO } from '../lib/api';
 
 const defaultBalance: WalletBalanceDTO = {
   balance_coins: 0,
+  cashable_coins: 0,
   lifetime_earned_coins: 0,
   lifetime_spent_coins: 0,
   welcome_claimed: false,
@@ -60,8 +61,12 @@ export function useWallet(enabled = true) {
     })();
   }, [enabled, ensureWelcomeCoins, refresh]);
 
-  const setBalanceCoins = useCallback((balance_coins: number) => {
-    setWallet((prev) => ({ ...prev, balance_coins }));
+  const setBalanceCoins = useCallback((balance_coins: number, cashable_coins?: number) => {
+    setWallet((prev) => ({
+      ...prev,
+      balance_coins,
+      ...(cashable_coins !== undefined ? { cashable_coins } : {}),
+    }));
   }, []);
 
   return {

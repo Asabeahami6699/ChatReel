@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { scheduleCallsPrefetch } from '../lib/callsPrefetch';
 import { scheduleGiftCatalogPrefetch } from '../lib/giftCatalogPrefetch';
+import { scheduleReelInboxPrefetch } from '../lib/reelInboxPrefetch';
 import { scheduleExplorePrefetch } from '../lib/momentsFeedPrefetch';
 import { scheduleReelsFeedPrefetch } from '../lib/reelsFeedPrefetch';
 
@@ -16,8 +17,9 @@ export function AppPrefetchRegistrar() {
     scheduleExplorePrefetch(APP_PREFETCH_DELAY_MS);
     scheduleCallsPrefetch(APP_PREFETCH_DELAY_MS + 150);
     scheduleReelsFeedPrefetch(APP_PREFETCH_DELAY_MS + 300);
-    // Gifts after feed warm — never blocks reel page setup.
+    // Gifts + inbox after feed warm — never blocks reel page setup.
     scheduleGiftCatalogPrefetch(APP_PREFETCH_DELAY_MS + 800);
+    scheduleReelInboxPrefetch(APP_PREFETCH_DELAY_MS + 1000);
   }, [user]);
 
   return null;

@@ -24,6 +24,7 @@ import { useIsFocused, useFocusEffect, useNavigation } from '@react-navigation/n
 import { USE_NATIVE_DRIVER } from '../../lib/animation';
 import { api, ApiError, type ReelDTO } from '../../lib/api';
 import { scheduleGiftCatalogPrefetch } from '../../lib/giftCatalogPrefetch';
+import { scheduleReelInboxPrefetch } from '../../lib/reelInboxPrefetch';
 import { useReelsFeed } from '../../hooks/useReelsFeed';
 import { useReelUploadQueue } from '../../hooks/useReelUploadQueue';
 import { useCurrentProfileId } from '../../hooks/useCurrentProfileId';
@@ -132,6 +133,8 @@ export default function ReelsScreen() {
   const [showUploadPanel, setShowUploadPanel] = useState(false);
 
   const flatListRef = useRef<FlatList<ReelDTO>>(null);
+  const feedClipRef = useRef<View>(null);
+  const wheelLockRef = useRef(false);
   const videos = useRef<Record<string, ReelPlayerHandle | null>>({});
   const activeReelIdRef = useRef<string | null>(null);
 
@@ -644,10 +647,11 @@ export default function ReelsScreen() {
     void refreshFollowedAuthors();
   }, [refreshFollowedAuthors]);
 
-  // Prefetch gift catalog while watching reels — never blocks first paint.
+  // Prefetch gift catalog + inbox while watching reels — never blocks first paint.
   useEffect(() => {
     if (!isFocused) return;
     void scheduleGiftCatalogPrefetch(0);
+    void scheduleReelInboxPrefetch(0);
   }, [isFocused]);
 
   useEffect(() => {
@@ -813,6 +817,37 @@ export default function ReelsScreen() {
     [snapToAdjacentReel]
   );
 
+  // Web: non-passive wheel listener (React's onWheel is passive → preventDefault warns / fails).
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const node = feedClipRef.current as unknown as HTMLElement | null;
+    if (!node) return;
+
+    const onWheel = (e: WheelEvent) => {
+      if (Math.abs(e.deltaY) < 10) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (wheelLockRef.current || isSnappingRef.current) return;
+      const h = reelHeightRef.current;
+      if (h <= 0) return;
+      const dir = e.deltaY > 0 ? 1 : -1;
+      const from = currentIndexRef.current;
+      const target = Math.max(0, Math.min(reelsRef.current.length - 1, from + dir));
+      if (target === from) return;
+      scrollAnchorIndexRef.current = from;
+      wheelLockRef.current = true;
+      isSnappingRef.current = true;
+      flatListRef.current?.scrollToOffset({ offset: target * h, animated: true });
+      window.setTimeout(() => {
+        isSnappingRef.current = false;
+        wheelLockRef.current = false;
+      }, 420);
+    };
+
+    node.addEventListener('wheel', onWheel, { passive: false });
+    return () => node.removeEventListener('wheel', onWheel);
+  }, [reelHeight, reels.length]);
+
   const seekToProgress = useCallback((ratio: number) => {
     const player = getActivePlayer(activeReelIdRef.current);
     if (!player) return;
@@ -936,6 +971,7 @@ export default function ReelsScreen() {
         onPlaybackStatus={handlePlaybackStatus}
         onRef={registerVideoRef}
         onMediaIndexChange={handleMediaIndexChange}
+        showEndScreen={endScreenReelId === item.id}
       />
     ),
     [
@@ -967,6 +1003,7 @@ export default function ReelsScreen() {
       handlePlaybackStatus,
       registerVideoRef,
       handleMediaIndexChange,
+      endScreenReelId,
     ]
   );
 
@@ -1035,7 +1072,7 @@ export default function ReelsScreen() {
             <Ionicons name="arrow-back" size={22} color="#fff" />
           </TouchableOpacity>
 
-          {!usePhoneFrame && (
+          <View style={styles.feedPillsCenter} pointerEvents="box-none">
             <View style={styles.feedPills}>
               <TouchableOpacity
                 style={feedMode === 'forYou' ? styles.feedPillActive : styles.feedPill}
@@ -1054,7 +1091,7 @@ export default function ReelsScreen() {
                 </Text>
               </TouchableOpacity>
             </View>
-          )}
+          </View>
 
           {Platform.OS === 'web' ? (
             <VolumeControl
@@ -1100,7 +1137,7 @@ export default function ReelsScreen() {
         </TouchableOpacity>
       )}
 
-      <View style={{ height: reelHeight, width: '100%', overflow: 'hidden' }}>
+      <View ref={feedClipRef} style={{ height: reelHeight, width: '100%', overflow: 'hidden' }}>
       <FlatList
         ref={flatListRef}
         data={reels}
@@ -1125,29 +1162,6 @@ export default function ReelsScreen() {
         onScrollEndDrag={onScrollEndDrag}
         onMomentumScrollEnd={onMomentumScrollEnd}
         scrollEventThrottle={16}
-        // Desktop mouse wheel: advance exactly one reel (RN Web paging alone is flaky).
-        {...(Platform.OS === 'web'
-          ? {
-              onWheel: (e: { nativeEvent: { deltaY: number }; preventDefault?: () => void }) => {
-                const dy = e.nativeEvent.deltaY;
-                if (Math.abs(dy) < 8) return;
-                e.preventDefault?.();
-                if (isSnappingRef.current) return;
-                const h = reelHeightRef.current;
-                if (h <= 0) return;
-                const dir = dy > 0 ? 1 : -1;
-                const from = currentIndexRef.current;
-                const target = Math.max(0, Math.min(reelsRef.current.length - 1, from + dir));
-                if (target === from) return;
-                scrollAnchorIndexRef.current = from;
-                isSnappingRef.current = true;
-                flatListRef.current?.scrollToOffset({ offset: target * h, animated: true });
-                requestAnimationFrame(() => {
-                  isSnappingRef.current = false;
-                });
-              },
-            }
-          : {})}
         removeClippedSubviews={Platform.OS === 'android' ? false : undefined}
         windowSize={7}
         maxToRenderPerBatch={3}
@@ -1157,6 +1171,7 @@ export default function ReelsScreen() {
         }}
         onEndReachedThreshold={0.5}
         refreshControl={
+          Platform.OS === 'web' ? undefined : (
           <RefreshControl
             refreshing={refreshing}
             onRefresh={() => void handlePullRefresh()}
@@ -1166,6 +1181,7 @@ export default function ReelsScreen() {
             title={Platform.OS === 'ios' ? 'Pull to refresh' : undefined}
             titleColor="rgba(255,255,255,0.7)"
           />
+          )
         }
         ListEmptyComponent={
           <View style={[styles.emptyContainer, { height: reelHeight, width: reelWidth }]}>
@@ -1219,7 +1235,6 @@ export default function ReelsScreen() {
           progressBottom={progressBottom}
           isScrubbing={isScrubbing}
           playbackIcon={playbackIcon}
-          endScreenReelId={endScreenReelId}
           badgePlayCycle={badgePlayCycle}
           heartScale={heartScale}
           heartOpacity={heartOpacity}
@@ -1420,7 +1435,7 @@ export default function ReelsScreen() {
                             if (result.action === 'moved_to_draft') {
                               Alert.alert(
                                 'Saved as draft',
-                                `Upload failed ${MAX_UPLOAD_RETRIES} times. "${result.label}" was moved to drafts — open it from Reel options to try again.`
+                                `Upload failed ${MAX_UPLOAD_RETRIES} times. "${result.label}" was moved to drafts — open it from your profile grid to try again.`
                               );
                               return;
                             }
@@ -1501,6 +1516,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    minHeight: 40,
+    position: 'relative',
   },
   topIconBtn: {
     width: 40,
@@ -1511,6 +1528,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.1)',
     alignItems: 'center',
     justifyContent: 'center',
+    zIndex: 2,
   },
   topIconBtnSpacer: {
     width: 40,
@@ -1529,6 +1547,16 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
   refreshBannerText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  feedPillsCenter: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1,
+  },
   feedPills: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1539,17 +1567,23 @@ const styles = StyleSheet.create({
     borderBottomColor: '#fff',
     paddingBottom: 4,
   },
+  feedPill: { paddingBottom: 4 },
   feedPillActiveText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '800',
     letterSpacing: 0.3,
+    textShadowColor: 'rgba(0,0,0,0.85)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4,
   },
-  feedPill: { paddingBottom: 4 },
   feedPillText: {
-    color: 'rgba(255,255,255,0.55)',
+    color: 'rgba(255,255,255,0.72)',
     fontSize: 16,
     fontWeight: '600',
+    textShadowColor: 'rgba(0,0,0,0.75)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
   },
   uploadStatusChip: {
     position: 'absolute',

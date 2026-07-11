@@ -20,7 +20,13 @@ router.post(
     }
     const event = JSON.parse(rawBody.toString('utf8')) as {
       event: string;
-      data?: { reference?: string; status?: string };
+      data?: {
+        reference?: string;
+        status?: string;
+        transfer_code?: string;
+        amount?: number;
+        currency?: string;
+      };
     };
     await handlePaystackWebhookEvent(event);
     return res.sendStatus(200);

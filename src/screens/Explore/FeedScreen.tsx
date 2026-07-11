@@ -30,6 +30,13 @@ import { useCurrentProfileId } from '../../hooks/useCurrentProfileId';
 import { MomentComposer, type MomentDraft, type MomentDraftItem } from './MomentComposer';
 import { MomentViewer } from './MomentViewer';
 import { getTextBackground } from '../../lib/momentTextBackgrounds';
+import { CircularProgressRing } from '../../components/CircularProgressRing';
+import {
+  dismissMomentUpload,
+  retryMomentUpload,
+  subscribeMomentUploadQueue,
+  type MomentUploadTask,
+} from '../../lib/momentUploadQueue';
 
 const C = {
   primary: '#007AFF',
@@ -153,7 +160,8 @@ export default function FeedScreen() {
   const insets = useSafeAreaInsets();
   const isScreenFocused = useIsFocused();
   const myProfileId = useCurrentProfileId();
-  const { authors, loading, refreshing, error, refresh, markSlideViewed } = useMomentsFeed();
+  const { authors, loading, refreshing, error, refresh, markSlideViewed, removeSlide } =
+    useMomentsFeed();
 
   const [myProfile, setMyProfile] = useState<{
     display_name: string | null;
@@ -164,6 +172,13 @@ export default function FeedScreen() {
   const [composerDraft, setComposerDraft] = useState<MomentDraft | null>(null);
   const [viewerIndex, setViewerIndex] = useState(-1);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const [uploadTasks, setUploadTasks] = useState<MomentUploadTask[]>([]);
+
+  useEffect(() => {
+    return subscribeMomentUploadQueue((tasks) => {
+      setUploadTasks(tasks.filter((t) => t.status !== 'done'));
+    });
+  }, []);
 
   const renderSlidePreview = (slide: MomentSlideDTO, style: object) => (
     <MomentSlidePreview slide={slide} style={style} />
@@ -441,6 +456,74 @@ export default function FeedScreen() {
     );
   };
 
+  const renderUploadBubble = (task: MomentUploadTask) => {
+    const failed = task.status === 'error';
+    const pct = failed ? 0 : Math.max(task.progress, task.status === 'queued' ? 4 : 0);
+
+    return (
+      <TouchableOpacity
+        key={task.id}
+        style={styles.bubbleWrap}
+        activeOpacity={0.85}
+        onPress={() => {
+          if (failed) {
+            retryMomentUpload(task.id);
+          }
+        }}
+        onLongPress={() => {
+          if (failed) dismissMomentUpload(task.id);
+        }}
+      >
+        <View style={[styles.bubbleRing, failed ? styles.uploadRingFail : styles.uploadRingActive]}>
+          <View style={styles.bubbleInner}>
+            {task.mediaType === 'text' ? (
+              <LinearGradient
+                colors={[...(getTextBackground(task.textBackground).colors)]}
+                style={styles.bubbleImage}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+              >
+                <Text style={styles.uploadTextPreview} numberOfLines={3}>
+                  {task.caption?.trim() || '…'}
+                </Text>
+              </LinearGradient>
+            ) : task.previewUri ? (
+              <Image source={{ uri: task.previewUri }} style={styles.bubbleImage} />
+            ) : (
+              <View style={[styles.bubbleImage, styles.uploadFallback]}>
+                <Ionicons
+                  name={task.mediaType === 'video' ? 'videocam' : 'image'}
+                  size={22}
+                  color="#fff"
+                />
+              </View>
+            )}
+            <View style={styles.uploadOverlay}>
+              {failed ? (
+                <View style={styles.retryBadge}>
+                  <Ionicons name="refresh" size={18} color="#fff" />
+                </View>
+              ) : (
+                <CircularProgressRing
+                  progress={pct}
+                  size={40}
+                  strokeWidth={3}
+                  color="#fff"
+                  trackColor="rgba(255,255,255,0.28)"
+                >
+                  <Text style={styles.uploadPct}>{Math.round(pct)}%</Text>
+                </CircularProgressRing>
+              )}
+            </View>
+          </View>
+        </View>
+        <Text style={[styles.bubbleLabel, failed && styles.uploadLabelFail]} numberOfLines={1}>
+          {failed ? 'Retry' : 'Uploading'}
+        </Text>
+      </TouchableOpacity>
+    );
+  };
+
   const renderListRow = (item: MomentAuthorFeedDTO) => {
     const preview = item.slides[item.slides.length - 1];
     if (!preview) return null;
@@ -498,12 +581,12 @@ export default function FeedScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={C.primary} />
         }
       >
-        {loading && authors.length === 0 ? (
+        {loading && authors.length === 0 && uploadTasks.length === 0 ? (
           <View style={styles.loadingBox}>
             <ActivityIndicator size="large" color={C.primary} />
             <Text style={styles.loadingText}>Loading moments…</Text>
           </View>
-        ) : error && authors.length === 0 ? (
+        ) : error && authors.length === 0 && uploadTasks.length === 0 ? (
           <View style={styles.loadingBox}>
             <Ionicons name="cloud-offline-outline" size={40} color={C.muted} />
             <Text style={styles.errorText}>{error}</Text>
@@ -523,9 +606,16 @@ export default function FeedScreen() {
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.stripScroll}
               >
-                {stripAuthors.map((a) => (
-                  <React.Fragment key={`strip-${a.author.id}`}>{renderBubble(a)}</React.Fragment>
+                {stripAuthors.map((a, index) => (
+                  <React.Fragment key={`strip-${a.author.id}`}>
+                    {renderBubble(a)}
+                    {index === 0 && a.author.id === myProfileId
+                      ? uploadTasks.map((task) => renderUploadBubble(task))
+                      : null}
+                  </React.Fragment>
                 ))}
+                {(!myProfileId || stripAuthors.length === 0) &&
+                  uploadTasks.map((task) => renderUploadBubble(task))}
               </ScrollView>
             </View>
 
@@ -671,6 +761,7 @@ export default function FeedScreen() {
         onClose={closeViewer}
         onAdvanceAuthor={viewerHasNextAuthor ? advanceViewerAuthor : undefined}
         onSlideViewed={handleSlideViewed}
+        onSlideDeleted={removeSlide}
       />
     </View>
   );
@@ -762,6 +853,36 @@ const styles = StyleSheet.create({
     maxWidth: BUBBLE_W + 4,
     textAlign: 'center',
   },
+  uploadRingActive: { backgroundColor: C.primary, padding: 3 },
+  uploadRingFail: { backgroundColor: '#ef4444', padding: 3 },
+  uploadFallback: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1c1c1e',
+  },
+  uploadOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  uploadPct: { color: '#fff', fontSize: 11, fontWeight: '800' },
+  retryBadge: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: 'rgba(239,68,68,0.92)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  uploadTextPreview: {
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: '700',
+    textAlign: 'center',
+    padding: 6,
+  },
+  uploadLabelFail: { color: '#ef4444' },
 
   youRow: {
     marginHorizontal: 14,

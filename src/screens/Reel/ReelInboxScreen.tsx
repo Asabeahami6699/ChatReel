@@ -14,7 +14,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { api, ApiError, type ReelInboxItemDTO } from '../../lib/api';
+import { ApiError, type ReelInboxItemDTO } from '../../lib/api';
+import {
+  getCachedReelInbox,
+  loadReelInbox,
+  markReelInboxRead,
+  setReelInboxCache,
+} from '../../lib/reelInboxPrefetch';
 import { useRealtimeTopic } from '../../hooks/useRealtimeTopic';
 import type { ReelsStackParamList } from '../../navigation/reelsNavigation';
 import { reelTabBarOffset } from './ReelsTabBar';
@@ -58,18 +64,20 @@ export default function ReelInboxScreen() {
   const isFocused = useIsFocused();
   const navigation = useNavigation<NativeStackNavigationProp<ReelsStackParamList>>();
 
-  const [items, setItems] = useState<ReelInboxItemDTO[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [items, setItems] = useState<ReelInboxItemDTO[]>(() => getCachedReelInbox() ?? []);
+  const [loading, setLoading] = useState(() => !getCachedReelInbox()?.length);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
-    else setLoading(true);
+    else if (!getCachedReelInbox()?.length) setLoading(true);
     try {
-      const { items: rows } = await api.reels.inbox();
+      const rows = await loadReelInbox({ force: isRefresh });
       setItems(rows);
+      setReelInboxCache(rows);
       setError(null);
+      await markReelInboxRead();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load activity');
     } finally {

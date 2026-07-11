@@ -34,6 +34,11 @@ export type MomentUploadTask = {
   createdAt: number;
   updatedAt: number;
   error?: string;
+  /** Local preview for the strip thumbnail. */
+  previewUri?: string | null;
+  mediaType: 'image' | 'video' | 'text';
+  textBackground?: string;
+  caption?: string;
 };
 
 type Listener = (tasks: MomentUploadTask[]) => void;
@@ -61,7 +66,43 @@ function setProgress(id: string, progress: number, stage?: string) {
   updateTask(id, { progress: clamped, ...(stage ? { stage } : {}) });
 }
 
-function createTask(): MomentUploadTask {
+function previewFieldsFromDraft(draft: MomentUploadDraft): Pick<
+  MomentUploadTask,
+  'previewUri' | 'mediaType' | 'textBackground' | 'caption'
+> {
+  const first = draft.items[0];
+  if (!first) {
+    return { previewUri: null, mediaType: 'image' };
+  }
+  if (first.mediaType === 'text') {
+    return {
+      previewUri: null,
+      mediaType: 'text',
+      textBackground: first.textBackground,
+      caption: first.caption,
+    };
+  }
+  if (first.mediaType === 'image') {
+    return { previewUri: first.uri ?? null, mediaType: 'image', caption: first.caption };
+  }
+  return { previewUri: null, mediaType: 'video', caption: first.caption };
+}
+
+async function hydrateVideoPreview(id: string, draft: MomentUploadDraft) {
+  const first = draft.items.find((i) => i.mediaType === 'video' && i.uri);
+  if (!first?.uri) return;
+  try {
+    const { uri } = await VideoThumbnails.getThumbnailAsync(first.uri, {
+      time: 200,
+      quality: 0.65,
+    });
+    updateTask(id, { previewUri: uri });
+  } catch {
+    /* keep fallback icon */
+  }
+}
+
+function createTask(draft: MomentUploadDraft): MomentUploadTask {
   const id = `moment-upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   return {
     id,
@@ -70,7 +111,14 @@ function createTask(): MomentUploadTask {
     progress: 0,
     createdAt: Date.now(),
     updatedAt: Date.now(),
+    ...previewFieldsFromDraft(draft),
   };
+}
+
+function removeTask(id: string) {
+  tasks.delete(id);
+  taskDrafts.delete(id);
+  emit();
 }
 
 async function processOne(item: { id: string; draft: MomentUploadDraft }) {
@@ -78,7 +126,7 @@ async function processOne(item: { id: string; draft: MomentUploadDraft }) {
   const mediaCount = draft.items.filter((i) => i.mediaType !== 'text').length;
   let uploaded = 0;
 
-  updateTask(id, { status: 'uploading', stage: 'Uploading…', progress: 2 });
+  updateTask(id, { status: 'uploading', stage: 'Uploading…', progress: 2, error: undefined });
 
   const mediaItems: Array<{
     media_url?: string;
@@ -127,6 +175,9 @@ async function processOne(item: { id: string; draft: MomentUploadDraft }) {
           time: 500,
           quality: 0.7,
         });
+        if (!tasks.get(id)?.previewUri) {
+          updateTask(id, { previewUri: thumbUri });
+        }
         thumbnailUrl = await uploadMomentThumbnail({ uri: thumbUri });
       } catch {
         thumbnailUrl = undefined;
@@ -164,6 +215,7 @@ async function processOne(item: { id: string; draft: MomentUploadDraft }) {
 
   notifyRealtimeTopic('moments');
   updateTask(id, { status: 'done', stage: 'Posted', progress: 100 });
+  setTimeout(() => removeTask(id), 1800);
 }
 
 async function runWorker() {
@@ -191,19 +243,55 @@ async function runWorker() {
 }
 
 export function enqueueMomentUpload(draft: MomentUploadDraft): MomentUploadTask {
-  const task = createTask();
+  const task = createTask(draft);
   tasks.set(task.id, task);
   taskDrafts.set(task.id, draft);
   queue.push({ id: task.id, draft });
   emit();
+  if (task.mediaType === 'video') {
+    void hydrateVideoPreview(task.id, draft);
+  }
   void runWorker();
   return task;
+}
+
+export function retryMomentUpload(taskId: string): boolean {
+  const task = tasks.get(taskId);
+  const draft = taskDrafts.get(taskId);
+  if (!task || !draft || task.status !== 'error') return false;
+  if (queue.some((q) => q.id === taskId)) return false;
+
+  updateTask(taskId, {
+    status: 'queued',
+    stage: 'Queued',
+    progress: 0,
+    error: undefined,
+  });
+  queue.push({ id: taskId, draft });
+  emit();
+  void runWorker();
+  return true;
+}
+
+export function dismissMomentUpload(taskId: string): void {
+  const task = tasks.get(taskId);
+  if (!task) return;
+  if (task.status === 'queued' || task.status === 'uploading' || task.status === 'publishing') {
+    return;
+  }
+  removeTask(taskId);
 }
 
 export function subscribeMomentUploadQueue(listener: Listener): () => void {
   listeners.add(listener);
   listener(Array.from(tasks.values()).sort((a, b) => b.createdAt - a.createdAt));
   return () => listeners.delete(listener);
+}
+
+export function getVisibleMomentUploads(): MomentUploadTask[] {
+  return Array.from(tasks.values())
+    .filter((t) => t.status !== 'done')
+    .sort((a, b) => b.createdAt - a.createdAt);
 }
 
 export function getActiveMomentUploads(): MomentUploadTask[] {

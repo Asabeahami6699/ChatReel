@@ -20,6 +20,10 @@ import { api, ApiError, type ReelDTO } from '../../lib/api';
 import { rootNavigationRef } from '../../navigation/rootNavigation';
 import { openPostReelCompose } from '../../lib/reelPlaybackBridge';
 import type { SavedReelComposeDraft } from '../../lib/reelComposeDraftStore';
+import {
+  deleteReelComposeDraft,
+  listReelComposeDrafts,
+} from '../../lib/reelComposeDraftStore';
 import { useReelPlaybackGate } from '../../hooks/useReelPlaybackGate';
 import type { ReelsStackParamList } from '../../navigation/reelsNavigation';
 import { REEL_ACCENT } from './reelTheme';
@@ -83,7 +87,21 @@ export default function ReelProfileView({ profileId, isSelf = false, showBack = 
   useReelPlaybackGate('profile-immersive', immersiveIndex != null);
   const [followerCount, setFollowerCount] = useState(0);
   const [followersLoading, setFollowersLoading] = useState(true);
+  const [drafts, setDrafts] = useState<SavedReelComposeDraft[]>([]);
   const { removeOne, removeMany } = useReelGridDeleteHandlers(profileId, setImmersiveIndex);
+
+  const loadDrafts = useCallback(async () => {
+    if (!isSelf) {
+      setDrafts([]);
+      return;
+    }
+    const list = await listReelComposeDrafts();
+    setDrafts(list);
+  }, [isSelf]);
+
+  useEffect(() => {
+    void loadDrafts();
+  }, [loadDrafts, posts.length]);
 
   const username =
     profile?.display_name?.trim() || profile?.email?.split('@')[0] || 'unknown';
@@ -268,7 +286,6 @@ export default function ReelProfileView({ profileId, isSelf = false, showBack = 
         <ReelProfileMenuFloat
           topOffset={insets.top + 8}
           onNewReel={() => openPostReel()}
-          onOpenDraft={(draft) => openPostReel(draft)}
         />
       ) : null}
 
@@ -281,15 +298,24 @@ export default function ReelProfileView({ profileId, isSelf = false, showBack = 
       ) : (
         <ReelProfileGrid
           posts={posts}
+          drafts={drafts}
           canDelete={isSelf}
           contentWidth={contentWidth}
           bottomPad={bottomPad}
           generatedThumbs={thumbs}
           onOpen={setImmersiveIndex}
+          onOpenDraft={(draft) => openPostReel(draft)}
+          onDeleteDraft={async (draft) => {
+            await deleteReelComposeDraft(draft.id);
+            setDrafts((prev) => prev.filter((d) => d.id !== draft.id));
+          }}
           onDeleted={removeOne}
           onDeletedMany={removeMany}
           refreshing={refreshing}
-          onRefresh={refresh}
+          onRefresh={async () => {
+            await refresh();
+            await loadDrafts();
+          }}
         />
       )}
 

@@ -13,6 +13,7 @@ export type GiftCatalogRow = {
 export type WalletAccountRow = {
   profile_id: string;
   balance_coins: number;
+  cashable_coins: number;
   lifetime_earned_coins: number;
   lifetime_spent_coins: number;
   welcome_claimed_at: string | null;
@@ -60,12 +61,34 @@ export async function ensureWalletAccount(profileId: string): Promise<WalletAcco
 
   const { data, error } = await supabaseAdmin
     .from('wallet_accounts')
-    .select('profile_id, balance_coins, lifetime_earned_coins, lifetime_spent_coins, welcome_claimed_at')
+    .select(
+      'profile_id, balance_coins, cashable_coins, lifetime_earned_coins, lifetime_spent_coins, welcome_claimed_at'
+    )
     .eq('profile_id', profileId)
     .maybeSingle();
-  if (error) throw new Error(error.message);
+
+  if (error) {
+    // Pre-migration 031: cashable_coins column may not exist yet.
+    const msg = error.message?.toLowerCase() ?? '';
+    if (error.code === '42703' || msg.includes('cashable_coins')) {
+      const legacy = await supabaseAdmin
+        .from('wallet_accounts')
+        .select(
+          'profile_id, balance_coins, lifetime_earned_coins, lifetime_spent_coins, welcome_claimed_at'
+        )
+        .eq('profile_id', profileId)
+        .maybeSingle();
+      if (legacy.error) throw new Error(legacy.error.message);
+      if (!legacy.data) throw new Error('Wallet account unavailable');
+      return { ...(legacy.data as Omit<WalletAccountRow, 'cashable_coins'>), cashable_coins: 0 };
+    }
+    throw new Error(error.message);
+  }
   if (!data) throw new Error('Wallet account unavailable');
-  return data as WalletAccountRow;
+  return {
+    ...(data as WalletAccountRow),
+    cashable_coins: Number((data as WalletAccountRow).cashable_coins ?? 0),
+  };
 }
 
 export async function getWalletBalance(profileId: string): Promise<WalletAccountRow> {

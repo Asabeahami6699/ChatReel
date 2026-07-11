@@ -106,7 +106,11 @@ router.post(
           void sendPushToUserSafe(recipientAuthId, {
             title: 'New gift on your reel',
             body: `Someone sent ${result.catalog.emoji} ${result.catalog.name}`,
-            data: { type: 'reel_gift', reel_id: body.reel_id },
+            data: {
+              type: 'reel_gift',
+              reel_id: body.reel_id,
+              screen: 'ReelInbox',
+            },
           });
         }
       }

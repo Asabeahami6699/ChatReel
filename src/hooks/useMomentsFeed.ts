@@ -124,5 +124,34 @@ export function useMomentsFeed() {
     );
   }, []);
 
-  return { authors, loading, refreshing, error, refresh, reload: load, markSlideViewed };
+  const removeSlide = useCallback((authorId: string, slideId: string) => {
+    setAuthors((prev) => {
+      const next = prev
+        .map((a) => {
+          if (a.author.id !== authorId) return a;
+          const slides = a.slides.filter((s) => s.id !== slideId);
+          if (slides.length === 0) return null;
+          return {
+            ...a,
+            slides,
+            has_unseen: slides.some((s) => !s.viewed_by_me),
+            latest_at: slides[slides.length - 1]?.created_at ?? a.latest_at,
+          };
+        })
+        .filter((a): a is MomentAuthorFeedDTO => a != null);
+      upsertMomentsFeedCache(next);
+      return next;
+    });
+  }, []);
+
+  return {
+    authors,
+    loading,
+    refreshing,
+    error,
+    refresh,
+    reload: load,
+    markSlideViewed,
+    removeSlide,
+  };
 }

@@ -16,6 +16,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api, type MomentAuthorFeedDTO } from '../../lib/api';
+import { notifyRealtimeTopic } from '../../lib/realtimeHub';
 import { getTextBackground } from '../../lib/momentTextBackgrounds';
 import { isHlsUrl, isImageReelUrl } from '../../lib/reelPlayback';
 import { ReelPlayer, type ReelPlayerHandle } from '../../components/ReelPlayer';
@@ -55,6 +56,7 @@ type Props = {
   /** Called when the last slide of the current author finishes (more authors may follow). */
   onAdvanceAuthor?: () => void;
   onSlideViewed: (authorId: string, slideId: string) => void;
+  onSlideDeleted?: (authorId: string, slideId: string) => void;
 };
 
 function authorName(author: MomentAuthorFeedDTO['author']): string {
@@ -97,6 +99,7 @@ export function MomentViewer({
   onClose,
   onAdvanceAuthor,
   onSlideViewed,
+  onSlideDeleted,
 }: Props) {
   const insets = useSafeAreaInsets();
   const footerPad = insets.bottom + 12;
@@ -116,8 +119,11 @@ export function MomentViewer({
   const [activityTab, setActivityTab] = useState<'comments' | 'views'>('comments');
   const [savingReel, setSavingReel] = useState(false);
   const [reelCaptionOpen, setReelCaptionOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const composerInputRef = useRef<TextInput>(null);
   const pausedForCaptionRef = useRef(false);
+  const pausedForDeleteRef = useRef(false);
 
   const videoRef = useRef<ReelPlayerHandle>(null);
   const imageStartRef = useRef(Date.now());
@@ -131,7 +137,13 @@ export function MomentViewer({
   const currentSlide = slides[slideIndex];
   const isOwner = author?.author.id === myProfileId;
   const frozen =
-    activityOpen || composerFocused || sendingComposer || reelCaptionOpen || composerOpen;
+    activityOpen ||
+    composerFocused ||
+    sendingComposer ||
+    reelCaptionOpen ||
+    composerOpen ||
+    deleting ||
+    deleteConfirmOpen;
   const isPaused = paused || holding || frozen;
   const videoShouldPlay = visible && !isPaused && Boolean(currentSlide);
   const soundClipSec =
@@ -186,6 +198,7 @@ export function MomentViewer({
       setComposerFocused(false);
       setComposerMode(null);
       setReelCaptionOpen(false);
+      setDeleteConfirmOpen(false);
       setComposerText('');
     }
   }, [visible]);
@@ -340,6 +353,50 @@ export function MomentViewer({
     setActivityOpen(false);
   };
 
+  const openDeleteConfirm = () => {
+    if (!currentSlide || !isOwner || deleting || deleteConfirmOpen) return;
+    pausedForDeleteRef.current = !paused;
+    setPaused(true);
+    void videoRef.current?.pauseAsync();
+    setDeleteConfirmOpen(true);
+  };
+
+  const closeDeleteConfirm = (resume = true) => {
+    setDeleteConfirmOpen(false);
+    if (resume && pausedForDeleteRef.current) {
+      setPaused(false);
+    }
+    pausedForDeleteRef.current = false;
+  };
+
+  const confirmDeleteMoment = async () => {
+    if (!currentSlide || !author || !isOwner || deleting) return;
+    setDeleting(true);
+    try {
+      await api.moments.delete(currentSlide.id);
+      notifyRealtimeTopic('moments');
+      const authorId = author.author.id;
+      const slideId = currentSlide.id;
+      const remaining = slides.length - 1;
+      setDeleteConfirmOpen(false);
+      pausedForDeleteRef.current = false;
+      onSlideDeleted?.(authorId, slideId);
+      if (remaining <= 0) {
+        onClose();
+      } else if (slideIndex >= remaining) {
+        setSlideIndex(remaining - 1);
+        setPaused(false);
+      } else {
+        setPaused(false);
+      }
+    } catch {
+      Alert.alert('Delete', 'Could not delete this moment.');
+      closeDeleteConfirm(true);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const saveAsReel = async (result: CaptionChoiceResult) => {
     closeReelCaptionModal();
     if (!currentSlide || savingReel || result.action === 'cancel') return;
@@ -420,7 +477,7 @@ export function MomentViewer({
                 <TouchableOpacity
                   style={styles.viewerIconBtn}
                   onPress={openReelCaptionModal}
-                  disabled={savingReel}
+                  disabled={savingReel || deleting}
                 >
                   <Ionicons
                     name={savingReel ? 'hourglass-outline' : 'film-outline'}
@@ -429,6 +486,17 @@ export function MomentViewer({
                   />
                 </TouchableOpacity>
               ) : null}
+              <TouchableOpacity
+                style={styles.viewerIconBtn}
+                onPress={openDeleteConfirm}
+                disabled={deleting || deleteConfirmOpen}
+              >
+                <Ionicons
+                  name={deleting ? 'hourglass-outline' : 'trash-outline'}
+                  size={22}
+                  color="#fff"
+                />
+              </TouchableOpacity>
               <TouchableOpacity style={styles.viewerIconBtn} onPress={openViewers}>
               <Ionicons name="eye-outline" size={22} color="#fff" />
               {(currentSlide.view_count ?? 0) > 0 && (
@@ -626,6 +694,46 @@ export function MomentViewer({
           initialTab={activityTab}
           onClose={closeActivity}
         />
+
+        {deleteConfirmOpen ? (
+          <View style={styles.deleteConfirmRoot} pointerEvents="box-none">
+            <Pressable
+              style={styles.deleteConfirmScrim}
+              onPress={() => {
+                if (!deleting) closeDeleteConfirm(true);
+              }}
+            />
+            <View style={[styles.deleteConfirmToast, { paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
+              <Text style={styles.deleteConfirmTitle}>Delete this moment?</Text>
+              <Text style={styles.deleteConfirmSub}>It will be removed for everyone.</Text>
+              <View style={styles.deleteConfirmActions}>
+                <TouchableOpacity
+                  style={styles.deleteCancelBtn}
+                  onPress={() => closeDeleteConfirm(true)}
+                  disabled={deleting}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.deleteCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.deleteConfirmBtn, deleting && { opacity: 0.7 }]}
+                  onPress={() => void confirmDeleteMoment()}
+                  disabled={deleting}
+                  activeOpacity={0.85}
+                >
+                  {deleting ? (
+                    <Text style={styles.deleteConfirmText}>Deleting…</Text>
+                  ) : (
+                    <>
+                      <Ionicons name="trash" size={15} color="#fff" />
+                      <Text style={styles.deleteConfirmText}>Delete</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        ) : null}
       </View>
     </Modal>
   );
@@ -785,4 +893,57 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.15)',
   },
   viewerReactBtn: { padding: 8 },
+  deleteConfirmRoot: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'flex-end',
+    zIndex: 40,
+  },
+  deleteConfirmScrim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  deleteConfirmToast: {
+    marginHorizontal: 16,
+    marginBottom: 8,
+    backgroundColor: '#1c1c1e',
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#333',
+  },
+  deleteConfirmTitle: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  deleteConfirmSub: {
+    color: '#aaa',
+    fontSize: 13,
+    marginTop: 4,
+    marginBottom: 14,
+  },
+  deleteConfirmActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+    marginBottom: 4,
+  },
+  deleteCancelBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#2c2c2e',
+  },
+  deleteCancelText: { color: '#ddd', fontWeight: '700', fontSize: 13 },
+  deleteConfirmBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#dc2626',
+  },
+  deleteConfirmText: { color: '#fff', fontWeight: '800', fontSize: 13 },
 });

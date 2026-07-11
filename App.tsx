@@ -16,7 +16,9 @@ import { AppPrefetchRegistrar } from './src/components/AppPrefetchRegistrar';
 import { ChatListRealtimeRegistrar } from './src/components/ChatListRealtimeRegistrar';
 import { AudioExtractToast } from './src/components/AudioExtractToast';
 import { MomentUploadToast } from './src/components/MomentUploadToast';
+import { ConfirmToastHost } from './src/components/ConfirmToastHost';
 import { PresenceSyncRegistrar } from './src/components/PresenceSyncRegistrar';
+import { ReelInboxRealtimeRegistrar } from './src/components/ReelInboxRealtimeRegistrar';
 import { useWebIconFonts } from './src/lib/loadWebIconFonts';
 
 import 'react-native-get-random-values';
@@ -40,11 +42,13 @@ export default function App() {
               <PresenceSyncRegistrar />
               <AppPrefetchRegistrar />
               <ChatListRealtimeRegistrar />
+              <ReelInboxRealtimeRegistrar />
               <ReelUploadQueueRegistrar />
               <RootNavigator />
               <ReelUploadToast />
               <AudioExtractToast />
               <MomentUploadToast />
+              <ConfirmToastHost />
             </RealtimeProvider>
             <StatusBar style="auto" />
           </AuthProvider>

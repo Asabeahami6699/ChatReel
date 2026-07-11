@@ -300,6 +300,9 @@ router.get(
 
     if (likesRes.error) return res.status(500).json({ error: likesRes.error.message });
     if (commentsRes.error) return res.status(500).json({ error: commentsRes.error.message });
+    if (giftsRes.error) {
+      console.error('[reels/inbox] gifts query failed:', giftsRes.error.message);
+    }
 
     type InboxRow = {
       id: string;
@@ -1106,7 +1109,7 @@ router.post(
         sendPushToUserSafe(authUserId, {
           title: 'New like',
           body: `${likerName} liked your reel`,
-          data: { type: 'reel_like', reel_id: reelId },
+          data: { type: 'reel_like', reel_id: reelId, screen: 'ReelInbox' },
         });
       }
     }
@@ -1326,7 +1329,7 @@ router.post(
         sendPushToUserSafe(authUserId, {
           title: 'New comment',
           body: `${name}: ${body.content.slice(0, 80)}`,
-          data: { type: 'reel_comment', reel_id: reelId, comment_id: comment.id },
+          data: { type: 'reel_comment', reel_id: reelId, comment_id: comment.id, screen: 'ReelInbox' },
         });
       }
     }

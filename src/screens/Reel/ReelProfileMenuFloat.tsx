@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import {
-  Alert,
   Modal,
   Platform,
   Pressable,
@@ -11,53 +10,27 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { deleteReelComposeDraft, listReelComposeDrafts, type SavedReelComposeDraft } from '../../lib/reelComposeDraftStore';
 import { ReelSettingsSheet } from './ReelSettingsSheet';
-import { ReelWalletSheet } from './ReelWalletSheet';
 import { useReelPlaybackGate } from '../../hooks/useReelPlaybackGate';
+import type { ReelsStackParamList } from '../../navigation/reelsNavigation';
 import { REEL_ACCENT } from './reelTheme';
 
 type Props = {
   onNewReel: () => void;
-  onOpenDraft?: (draft: SavedReelComposeDraft) => void;
   /** When set, pins the ⋮ button to the header (top-right). */
   topOffset?: number;
 };
 
-export function ReelProfileMenuFloat({ onNewReel, onOpenDraft, topOffset }: Props) {
+export function ReelProfileMenuFloat({ onNewReel, topOffset }: Props) {
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation<NativeStackNavigationProp<ReelsStackParamList>>();
   const [open, setOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [walletOpen, setWalletOpen] = useState(false);
-  const [drafts, setDrafts] = useState<SavedReelComposeDraft[]>([]);
 
-  useReelPlaybackGate('profile-menu', open || settingsOpen || walletOpen);
-
-  const openMenu = async () => {
-    const list = await listReelComposeDrafts();
-    setDrafts(list);
-    setOpen(true);
-  };
-
-  const handleDraft = (draft: SavedReelComposeDraft) => {
-    setOpen(false);
-    onOpenDraft?.(draft);
-  };
-
-  const handleDeleteDraft = (draft: SavedReelComposeDraft) => {
-    Alert.alert('Delete draft?', draft.label, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          await deleteReelComposeDraft(draft.id);
-          setDrafts((prev) => prev.filter((d) => d.id !== draft.id));
-        },
-      },
-    ]);
-  };
+  useReelPlaybackGate('profile-menu', open || settingsOpen);
 
   const fabTop = topOffset ?? insets.top + 8;
 
@@ -65,7 +38,7 @@ export function ReelProfileMenuFloat({ onNewReel, onOpenDraft, topOffset }: Prop
     <>
       <TouchableOpacity
         style={[styles.fab, { top: fabTop }]}
-        onPress={() => void openMenu()}
+        onPress={() => setOpen(true)}
         activeOpacity={0.88}
         hitSlop={10}
       >
@@ -88,35 +61,11 @@ export function ReelProfileMenuFloat({ onNewReel, onOpenDraft, topOffset }: Prop
               <Text style={styles.rowText}>Create new reel</Text>
             </TouchableOpacity>
 
-            {drafts.length > 0 ? (
-              <>
-                <Text style={styles.section}>Drafts</Text>
-                {drafts.map((d) => (
-                  <View key={d.id} style={styles.draftRow}>
-                    <TouchableOpacity style={styles.draftMain} onPress={() => handleDraft(d)}>
-                      <Ionicons name="document-text-outline" size={20} color={REEL_ACCENT} />
-                      <View style={styles.draftBody}>
-                        <Text style={styles.rowText} numberOfLines={1}>
-                          {d.label}
-                        </Text>
-                        <Text style={styles.draftSub}>
-                          {new Date(d.savedAt).toLocaleString()}
-                        </Text>
-                      </View>
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => handleDeleteDraft(d)} hitSlop={10}>
-                      <Ionicons name="trash-outline" size={18} color="#f87171" />
-                    </TouchableOpacity>
-                  </View>
-                ))}
-              </>
-            ) : null}
-
             <TouchableOpacity
               style={styles.row}
               onPress={() => {
                 setOpen(false);
-                setWalletOpen(true);
+                navigation.navigate('ReelCreatorWallet');
               }}
             >
               <Ionicons name="wallet-outline" size={22} color="#fff" />
@@ -138,7 +87,6 @@ export function ReelProfileMenuFloat({ onNewReel, onOpenDraft, topOffset }: Prop
       </Modal>
 
       <ReelSettingsSheet visible={settingsOpen} onClose={() => setSettingsOpen(false)} />
-      <ReelWalletSheet visible={walletOpen} onClose={() => setWalletOpen(false)} />
     </>
   );
 }
@@ -232,15 +180,6 @@ const styles = StyleSheet.create({
     borderColor: '#2a2a2a',
   },
   sheetTitle: { color: '#fff', fontSize: 17, fontWeight: '700', marginBottom: 12 },
-  section: {
-    color: '#888',
-    fontSize: 12,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginTop: 8,
-    marginBottom: 6,
-  },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -250,17 +189,6 @@ const styles = StyleSheet.create({
     borderTopColor: '#333',
   },
   rowText: { color: '#fff', fontSize: 15, fontWeight: '600', flex: 1 },
-  draftRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingVertical: 10,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#2a2a2a',
-  },
-  draftMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
-  draftBody: { flex: 1 },
-  draftSub: { color: '#666', fontSize: 11, marginTop: 2 },
 });
 
 const scheduleStyles = StyleSheet.create({

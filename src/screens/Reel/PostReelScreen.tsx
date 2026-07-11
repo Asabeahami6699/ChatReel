@@ -262,7 +262,9 @@ export default function PostReelScreen() {
     [items]
   );
 
-  const singleVideo = items.length === 1 && items[0].mediaType === 'video' ? items[0] : null;
+  const editingVideo =
+    items.find((i): i is Extract<MediaDraft, { mediaType: 'video' }> => i.mediaType === 'video') ??
+    null;
   const singleImage = items.length === 1 && items[0].mediaType === 'image' ? items[0] : null;
 
   const assetToDraft = useCallback(async (asset: ImagePicker.ImagePickerAsset): Promise<MediaDraft | null> => {
@@ -367,10 +369,16 @@ export default function PostReelScreen() {
     }
   }, [assetToDraft, maybePromptVideoAudio]);
 
-  const handleVideoChange = useCallback((patch: Partial<ReelVideoEditState>) => {
+  const handleVideoChange = useCallback((patch: Partial<ReelVideoEditState>, videoId?: string) => {
     setItems((prev) => {
-      if (prev.length !== 1 || prev[0].mediaType !== 'video') return prev;
-      return [{ ...prev[0], ...patch }];
+      const targetId =
+        videoId ??
+        prev.find((i) => i.mediaType === 'video')?.id ??
+        null;
+      if (!targetId) return prev;
+      return prev.map((item) =>
+        item.id === targetId && item.mediaType === 'video' ? { ...item, ...patch } : item
+      );
     });
   }, []);
 
@@ -518,11 +526,11 @@ export default function PostReelScreen() {
     );
   }
 
-  if (singleVideo) {
+  if (editingVideo) {
     return (
       <>
         <PostReelVideoComposer
-          video={singleVideo}
+          video={editingVideo}
           thumbUri={thumbUri}
           caption={caption}
           visibility={visibility}
@@ -538,7 +546,20 @@ export default function PostReelScreen() {
           isQueuing={isQueuing}
           openSoundOnMount={openSoundOnMount}
           onSoundPickerOpened={() => setOpenSoundOnMount(false)}
-          onVideoChange={handleVideoChange}
+          albumItems={items.length > 1 ? items : undefined}
+          onSelectAlbumVideo={(id) => {
+            setItems((prev) => {
+              const idx = prev.findIndex((i) => i.id === id && i.mediaType === 'video');
+              if (idx <= 0) return prev;
+              const next = [...prev];
+              const [picked] = next.splice(idx, 1);
+              next.unshift(picked);
+              return next;
+            });
+          }}
+          onRemoveAlbumItem={removeItem}
+          onAddAlbumMedia={() => void pickMedia()}
+          onVideoChange={(patch) => handleVideoChange(patch, editingVideo.id)}
           onThumbChange={setThumbUri}
           onCaptionChange={setCaption}
           onVisibilityChange={setVisibility}

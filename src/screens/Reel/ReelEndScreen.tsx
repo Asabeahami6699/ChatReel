@@ -153,7 +153,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#000',
     alignItems: 'center',
     justifyContent: 'center',
-    zIndex: 20,
+    // Sit behind captions / engagement rail (those use zIndex 15–16).
+    zIndex: 2,
+    elevation: 2,
   },
   card: {
     alignItems: 'center',

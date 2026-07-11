@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Platform, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
@@ -6,6 +6,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { ReelsTabParamList } from '../../navigation/reelsNavigation';
 import { rootNavigationRef } from '../../navigation/rootNavigation';
 import { openPostReelCompose } from '../../lib/reelPlaybackBridge';
+import {
+  getReelInboxUnreadCount,
+  scheduleReelInboxPrefetch,
+  subscribeReelInbox,
+} from '../../lib/reelInboxPrefetch';
 import { REEL_TAB_BAR_HEIGHT, REEL_PHONE_MAX_WIDTH } from './reelVideoLayout';
 import { REEL_ACCENT } from './reelTheme';
 
@@ -59,6 +64,12 @@ export default function ReelsTabBar({
   const insets = useSafeAreaInsets();
   const isDesktop = useIsDesktop();
   const sidebarW = collapsed ? DESKTOP_SIDEBAR_COLLAPSED : DESKTOP_SIDEBAR_EXPANDED;
+  const [inboxUnread, setInboxUnread] = useState(0);
+
+  useEffect(() => {
+    void scheduleReelInboxPrefetch(0).then(() => setInboxUnread(getReelInboxUnreadCount()));
+    return subscribeReelInbox(() => setInboxUnread(getReelInboxUnreadCount()));
+  }, []);
 
   const openUpload = () => {
     openPostReelCompose();
@@ -87,6 +98,7 @@ export default function ReelsTabBar({
     const route = state.routes[routeIndex];
     const meta = TAB_META[key];
     const isFocused = state.index === routeIndex;
+    const showInboxBadge = key === 'ReelInbox' && inboxUnread > 0 && !isFocused;
 
     return (
       <TouchableOpacity
@@ -104,11 +116,18 @@ export default function ReelsTabBar({
         }}
         activeOpacity={0.75}
       >
-        <Ionicons
-          name={isFocused ? meta.activeIcon : meta.icon}
-          size={isDesktop ? 22 : 24}
-          color={isFocused ? '#fff' : 'rgba(255,255,255,0.5)'}
-        />
+        <View style={mobileS.iconWrap}>
+          <Ionicons
+            name={isFocused ? meta.activeIcon : meta.icon}
+            size={isDesktop ? 22 : 24}
+            color={isFocused ? '#fff' : 'rgba(255,255,255,0.5)'}
+          />
+          {showInboxBadge ? (
+            <View style={mobileS.badge}>
+              <Text style={mobileS.badgeText}>{inboxUnread > 9 ? '9+' : String(inboxUnread)}</Text>
+            </View>
+          ) : null}
+        </View>
         {isDesktop && !collapsed && (
           <Text style={[dk.label, isFocused && dk.labelActive]}>{meta.label}</Text>
         )}
@@ -199,6 +218,33 @@ const mobileS = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 2,
+  },
+  iconWrap: {
+    position: 'relative',
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  badge: {
+    position: 'absolute',
+    top: -4,
+    right: -10,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    paddingHorizontal: 4,
+    backgroundColor: REEL_ACCENT,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#000',
+  },
+  badgeText: {
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: '800',
+    lineHeight: 11,
   },
   uploadItem: {
     alignItems: 'center',
@@ -294,13 +340,19 @@ const dk = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.1)',
   },
   feedLabel: {
-    color: 'rgba(255,255,255,0.5)',
+    color: 'rgba(255,255,255,0.65)',
     fontSize: 12,
     fontWeight: '600',
+    textShadowColor: 'rgba(0,0,0,0.75)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
   feedLabelActive: {
     color: '#fff',
     fontWeight: '700',
+    textShadowColor: 'rgba(0,0,0,0.85)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 3,
   },
   feedDivider: {
     width: 28,
