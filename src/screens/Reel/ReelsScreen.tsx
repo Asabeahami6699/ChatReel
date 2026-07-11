@@ -16,7 +16,7 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
-import PagerView from 'react-native-pager-view';
+import { PagerView } from './reelPagerView';
 import { ProgressBar } from 'react-native-paper';
 import { ReelPlayer, type ReelPlaybackStatus, type ReelPlayerHandle } from '../../components/ReelPlayer';
 import { Ionicons } from '@expo/vector-icons';
@@ -136,7 +136,10 @@ export default function ReelsScreen() {
   const [showUploadPanel, setShowUploadPanel] = useState(false);
 
   const flatListRef = useRef<FlatList<ReelDTO>>(null);
-  const pagerRef = useRef<PagerView>(null);
+  const pagerRef = useRef<{
+    setPage: (index: number) => void;
+    setPageWithoutAnimation: (index: number) => void;
+  } | null>(null);
   const feedClipRef = useRef<View>(null);
   const wheelLockRef = useRef(false);
   const videos = useRef<Record<string, ReelPlayerHandle | null>>({});

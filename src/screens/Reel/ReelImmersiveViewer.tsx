@@ -14,7 +14,7 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
-import PagerView from 'react-native-pager-view';
+import { PagerView } from './reelPagerView';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -94,7 +94,10 @@ export function ReelImmersiveViewer({
   const { progressBottom, metaBottom } = reelBottomLayout(insets.bottom);
 
   const flatListRef = useRef<FlatList<ReelDTO>>(null);
-  const pagerRef = useRef<PagerView>(null);
+  const pagerRef = useRef<{
+    setPage: (index: number) => void;
+    setPageWithoutAnimation: (index: number) => void;
+  } | null>(null);
   const feedClipRef = useRef<View>(null);
   const wheelLockRef = useRef(false);
   const scrollAnchorIndexRef = useRef(0);
