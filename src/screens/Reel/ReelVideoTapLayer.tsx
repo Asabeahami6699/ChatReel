@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useRef } from 'react';
 import {
   Platform,
   Pressable as RNPressable,
@@ -7,8 +7,6 @@ import {
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { runOnJS } from 'react-native-reanimated';
 
 type Props = {
   style?: StyleProp<ViewStyle>;
@@ -28,39 +26,74 @@ function WebTapLayer({ style, onPress, onLongPress, delayLongPress = 700 }: Prop
   );
 }
 
+/**
+ * Passive touch observers only — never become the JS responder and never
+ * register an RNGH gesture. Pressable / GestureDetector / TouchableOpacity
+ * all steal vertical pans from the parent pager on many Android devices.
+ */
 function NativeTapLayer({ style, onPress, onLongPress, delayLongPress = 700 }: Props) {
-  const gesture = useMemo(() => {
-    const tap = Gesture.Tap()
-      .maxDuration(250)
-      .maxDistance(14)
-      .onEnd((_e, success) => {
-        if (success) runOnJS(onPress)();
-      });
+  const startRef = useRef<{ x: number; y: number } | null>(null);
+  const movedRef = useRef(false);
+  const longTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longFiredRef = useRef(false);
 
-    if (!onLongPress) return tap;
-
-    const longPress = Gesture.LongPress()
-      .minDuration(delayLongPress)
-      .maxDistance(14)
-      .onStart(() => {
-        runOnJS(onLongPress)();
-      });
-
-    return Gesture.Exclusive(longPress, tap);
-  }, [onPress, onLongPress, delayLongPress]);
+  const clearLongTimer = () => {
+    if (longTimerRef.current) {
+      clearTimeout(longTimerRef.current);
+      longTimerRef.current = null;
+    }
+  };
 
   return (
-    <GestureDetector gesture={gesture}>
-      <View style={[styles.overlay, style]} collapsable={false} />
-    </GestureDetector>
+    <View
+      style={[styles.overlay, style]}
+      collapsable={false}
+      onStartShouldSetResponder={() => false}
+      onMoveShouldSetResponder={() => false}
+      onStartShouldSetResponderCapture={() => false}
+      onMoveShouldSetResponderCapture={() => false}
+      onTouchStart={(e) => {
+        const { pageX, pageY } = e.nativeEvent;
+        startRef.current = { x: pageX, y: pageY };
+        movedRef.current = false;
+        longFiredRef.current = false;
+        clearLongTimer();
+        if (onLongPress) {
+          longTimerRef.current = setTimeout(() => {
+            if (!movedRef.current) {
+              longFiredRef.current = true;
+              onLongPress();
+            }
+          }, delayLongPress);
+        }
+      }}
+      onTouchMove={(e) => {
+        const start = startRef.current;
+        if (!start || movedRef.current) return;
+        const dx = Math.abs(e.nativeEvent.pageX - start.x);
+        const dy = Math.abs(e.nativeEvent.pageY - start.y);
+        if (dx > 10 || dy > 10) {
+          movedRef.current = true;
+          clearLongTimer();
+        }
+      }}
+      onTouchEnd={() => {
+        clearLongTimer();
+        if (!movedRef.current && !longFiredRef.current && startRef.current) {
+          onPress();
+        }
+        startRef.current = null;
+      }}
+      onTouchCancel={() => {
+        clearLongTimer();
+        startRef.current = null;
+        movedRef.current = true;
+      }}
+    />
   );
 }
 
-/**
- * Sibling overlay ABOVE the video (never wrap VideoView).
- * Native uses RNGH Tap/LongPress so vertical pans fail the tap and reach FlatList.
- * Wrapping with TouchableOpacity (RN or GH) still fights paging on many devices.
- */
+/** Sibling overlay above video — must not wrap VideoView or claim scroll gestures. */
 export function ReelVideoTapLayer(props: Props) {
   if (Platform.OS === 'web') return <WebTapLayer {...props} />;
   return <NativeTapLayer {...props} />;

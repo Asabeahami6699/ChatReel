@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   Animated,
-  FlatList as RNFlatList,
+  FlatList,
   Image,
   Modal,
   PanResponder,
@@ -14,7 +14,7 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
-import { FlatList as GHFlatList } from 'react-native-gesture-handler';
+import PagerView from 'react-native-pager-view';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -35,10 +35,6 @@ import { ReelBrandBadge } from './ReelBrandBadge';
 import { ReelEndScreen } from './ReelEndScreen';
 import { REEL_ACCENT, REEL_END_SCREEN_MS, reelBottomLayout } from './reelTheme';
 import { registerReelFeedPauseHandler, useReelPlaybackGateActive } from '../../lib/reelPlaybackBridge';
-
-const FlatList = (
-  Platform.OS === 'web' ? RNFlatList : GHFlatList
-) as typeof RNFlatList;
 
 type Props = {
   reels: ReelDTO[];
@@ -97,7 +93,8 @@ export function ReelImmersiveViewer({
 
   const { progressBottom, metaBottom } = reelBottomLayout(insets.bottom);
 
-  const flatListRef = useRef<RNFlatList<ReelDTO>>(null);
+  const flatListRef = useRef<FlatList<ReelDTO>>(null);
+  const pagerRef = useRef<PagerView>(null);
   const feedClipRef = useRef<View>(null);
   const wheelLockRef = useRef(false);
   const scrollAnchorIndexRef = useRef(0);
@@ -412,7 +409,13 @@ export function ReelImmersiveViewer({
       }, candidates[0]).index;
       const rawDelta = desiredIndex - prevIndex;
       const delta = Math.abs(rawDelta) <= 1 ? rawDelta : Math.sign(rawDelta);
-      const nextIndex = Math.max(0, Math.min(reelsRef.current.length - 1, prevIndex + delta));
+      const nextIndex = Math.max(
+        0,
+        Math.min(
+          reelsRef.current.length - 1,
+          candidates.length === 1 ? desiredIndex : prevIndex + delta
+        )
+      );
       const reel = reelsRef.current[nextIndex] ?? candidates.find((c) => c.index === nextIndex)?.item;
       if (!reel?.id) return;
 
@@ -685,6 +688,7 @@ export function ReelImmersiveViewer({
       >
       <StatusBar barStyle="light-content" />
       <View ref={feedClipRef} style={{ height: reelHeight, width: '100%', overflow: 'hidden' }}>
+      {Platform.OS === 'web' ? (
       <FlatList
         ref={flatListRef}
         key={`immersive-feed-${reelHeight}`}
@@ -694,16 +698,11 @@ export function ReelImmersiveViewer({
         renderItem={renderReel}
         showsVerticalScrollIndicator={false}
         pagingEnabled
-        {...(Platform.OS === 'web'
-          ? {
-              snapToInterval: reelHeight,
-              snapToAlignment: 'start' as const,
-            }
-          : {})}
+        snapToInterval={reelHeight}
+        snapToAlignment="start"
         disableIntervalMomentum
         decelerationRate="fast"
         bounces={false}
-        nestedScrollEnabled
         initialScrollIndex={initialIndex > 0 ? initialIndex : undefined}
         getItemLayout={(_, index) => ({ length: reelHeight, offset: reelHeight * index, index })}
         onViewableItemsChanged={onViewableItemsChanged}
@@ -711,11 +710,32 @@ export function ReelImmersiveViewer({
         onScrollBeginDrag={onScrollBeginDrag}
         onMomentumScrollEnd={onMomentumScrollEnd}
         scrollEventThrottle={16}
-        removeClippedSubviews={Platform.OS === 'android' ? false : undefined}
         onScrollToIndexFailed={(info) => {
           flatListRef.current?.scrollToOffset({ offset: info.averageItemLength * info.index, animated: false });
         }}
       />
+      ) : (
+        <PagerView
+          ref={pagerRef}
+          key={`immersive-pager-${reelHeight}`}
+          style={{ height: reelHeight, width: '100%' }}
+          initialPage={initialIndex > 0 ? initialIndex : 0}
+          orientation="vertical"
+          offscreenPageLimit={1}
+          onPageSelected={(e) => {
+            const index = e.nativeEvent.position;
+            onViewableItemsChanged({
+              viewableItems: [{ index, item: reelsRef.current[index] }],
+            });
+          }}
+        >
+          {reels.map((item, index) => (
+            <View key={item.id} style={{ height: reelHeight, width: '100%' }} collapsable={false}>
+              {renderReel({ item, index })}
+            </View>
+          ))}
+        </PagerView>
+      )}
       </View>
 
       <TouchableOpacity style={[styles.closeBtn, { top: insets.top + 8 }]} onPress={onClose}>

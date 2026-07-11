@@ -3,7 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
-  FlatList as RNFlatList,
+  FlatList,
   Modal,
   PanResponder,
   Platform,
@@ -16,15 +16,10 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
-import { FlatList as GHFlatList } from 'react-native-gesture-handler';
+import PagerView from 'react-native-pager-view';
 import { ProgressBar } from 'react-native-paper';
 import { ReelPlayer, type ReelPlaybackStatus, type ReelPlayerHandle } from '../../components/ReelPlayer';
 import { Ionicons } from '@expo/vector-icons';
-
-/** RNGH FlatList on device so tap gestures and vertical paging share one system. */
-const FlatList = (
-  Platform.OS === 'web' ? RNFlatList : GHFlatList
-) as typeof RNFlatList;
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused, useFocusEffect, useNavigation } from '@react-navigation/native';
 import { USE_NATIVE_DRIVER } from '../../lib/animation';
@@ -111,15 +106,13 @@ export default function ReelsScreen() {
   const { feedMode, setFeedMode } = useReelFeedMode();
   const [viewportHeight, setViewportHeight] = useState(0);
   const bottomNavOffset = reelTabBarOffset(insets.bottom, usePhoneFrame);
-  // Tab navigator already lays out above the reel tab bar. After onLayout, do not
-  // subtract the bar again — that shrinks page height vs the list viewport.
+  // Tab bar is position:absolute, so onLayout is full screen — subtract bar
+  // so each page matches the visible area above the nav.
   const reelHeight = Math.max(
     320,
     usePhoneFrame
       ? Math.max(0, (viewportHeight || windowHeight) - REEL_DESKTOP_VERTICAL_INSET * 2)
-      : viewportHeight > 0
-        ? viewportHeight
-        : windowHeight - bottomNavOffset
+      : (viewportHeight || windowHeight) - bottomNavOffset
   );
 
   const feedSource = feedMode === 'forYou' ? 'feed' : 'following';
@@ -142,7 +135,8 @@ export default function ReelsScreen() {
   const myProfileId = useCurrentProfileId();
   const [showUploadPanel, setShowUploadPanel] = useState(false);
 
-  const flatListRef = useRef<RNFlatList<ReelDTO>>(null);
+  const flatListRef = useRef<FlatList<ReelDTO>>(null);
+  const pagerRef = useRef<PagerView>(null);
   const feedClipRef = useRef<View>(null);
   const wheelLockRef = useRef(false);
   const videos = useRef<Record<string, ReelPlayerHandle | null>>({});
@@ -347,7 +341,7 @@ export default function ReelsScreen() {
           if (nextGroupIdx >= 0 && mediaShouldPlayRef.current) {
             setEndScreenReelId(null);
             setProgress(0);
-            flatListRef.current?.scrollToIndex({ index: nextGroupIdx, animated: true });
+            goToReelIndexRef.current(nextGroupIdx, true);
             return;
           }
         }
@@ -414,7 +408,7 @@ export default function ReelsScreen() {
     activeReelIdRef.current = null;
     viewedReelIds.current.clear();
     setReadyReelIds(new Set());
-    flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
+    goToReelIndexRef.current(0, false);
     void Promise.all(Object.values(videos.current).map((v) => v?.pauseAsync()));
   }, [clearPins]);
 
@@ -576,9 +570,7 @@ export default function ReelsScreen() {
 
   const handlePullRefresh = useCallback(async () => {
     if (currentIndex !== 0) {
-      flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
-      setCurrentIndex(0);
-      setProgress(0);
+      goToReelIndexRef.current(0, true);
     }
     await refresh();
     void refreshFollowedAuthors();
@@ -707,6 +699,9 @@ export default function ReelsScreen() {
     }
   }, [isFocused, currentAuthorId, nextAuthorId, ensureProfileLoaded]);
 
+  const activateReelAtIndexRef = useRef<(index: number) => void>(() => {});
+  const goToReelIndexRef = useRef<(index: number, animated?: boolean) => void>(() => {});
+
   const onViewableItemsChanged = useRef(
     ({ viewableItems }: { viewableItems: { index: number | null; item: ReelDTO }[] }) => {
       if (viewableItems.length === 0) return;
@@ -727,43 +722,73 @@ export default function ReelsScreen() {
       }, candidates[0]).index;
 
       // Enforce "one reel per swipe" even if viewability gives us a stale index.
+      // When a single page is reported (PagerView), trust that index directly.
       const rawDelta = desiredIndex - prevIndex;
       const delta = Math.abs(rawDelta) <= 1 ? rawDelta : Math.sign(rawDelta);
-      let nextIndex = prevIndex + delta;
+      let nextIndex =
+        candidates.length === 1
+          ? desiredIndex
+          : prevIndex + delta;
       nextIndex = Math.max(0, Math.min(reelsLen - 1, nextIndex));
 
-      const reel =
-        reelsRef.current[nextIndex] ??
-        candidates.find((c) => c.index === nextIndex)?.item ??
-        null;
-      if (!reel?.id) return;
-
-      const prevId = activeReelIdRef.current;
-      activeReelIdRef.current = reel.id;
-      setCurrentIndex(nextIndex);
-      setProgress(0);
-      setBufferedProgress(0);
-      setEndScreenReelId(null);
-      if (endScreenTimerRef.current) clearTimeout(endScreenTimerRef.current);
-      if (prevId !== reel.id) setBadgePlayCycle((c) => c + 1);
-      const shouldAutoplay = canAutoplayRef.current;
-      if (shouldAutoplay) {
-        setIsPlaying(true);
-        setPlaybackIcon(null);
-      }
-      void playActiveReelRef.current(reel.id, shouldAutoplay);
-      if (prevId && prevId !== reel.id) {
-        releasePinRef.current(prevId);
-      }
-
-      if (!viewedReelIds.current.has(reel.id)) {
-        viewedReelIds.current.add(reel.id);
-        markReelWatched(reel.id);
-        api.reels.view(reel.id).catch(() => undefined);
-      }
-      void prefetchAroundRef.current(reelsRef.current, nextIndex);
+      activateReelAtIndexRef.current(nextIndex);
     }
   ).current;
+
+  const activateReelAtIndex = useCallback((nextIndex: number) => {
+    const list = reelsRef.current;
+    if (list.length === 0) return;
+    const clamped = Math.max(0, Math.min(list.length - 1, nextIndex));
+    const reel = list[clamped];
+    if (!reel?.id) return;
+
+    const prevId = activeReelIdRef.current;
+    if (clamped === currentIndexRef.current && prevId === reel.id) return;
+
+    activeReelIdRef.current = reel.id;
+    currentIndexRef.current = clamped;
+    setCurrentIndex(clamped);
+    setProgress(0);
+    setBufferedProgress(0);
+    setEndScreenReelId(null);
+    if (endScreenTimerRef.current) clearTimeout(endScreenTimerRef.current);
+    if (prevId !== reel.id) setBadgePlayCycle((c) => c + 1);
+    const shouldAutoplay = canAutoplayRef.current;
+    if (shouldAutoplay) {
+      setIsPlaying(true);
+      setPlaybackIcon(null);
+    }
+    void playActiveReelRef.current(reel.id, shouldAutoplay);
+    if (prevId && prevId !== reel.id) {
+      releasePinRef.current(prevId);
+    }
+
+    if (!viewedReelIds.current.has(reel.id)) {
+      viewedReelIds.current.add(reel.id);
+      markReelWatched(reel.id);
+      api.reels.view(reel.id).catch(() => undefined);
+    }
+    void prefetchAroundRef.current(list, clamped);
+  }, []);
+
+  activateReelAtIndexRef.current = activateReelAtIndex;
+
+  const goToReelIndex = useCallback((index: number, animated = true) => {
+    const list = reelsRef.current;
+    if (list.length === 0) return;
+    const clamped = Math.max(0, Math.min(list.length - 1, index));
+    if (Platform.OS === 'web') {
+      const h = reelHeightRef.current;
+      flatListRef.current?.scrollToOffset({ offset: clamped * h, animated });
+    } else if (animated) {
+      pagerRef.current?.setPage(clamped);
+    } else {
+      pagerRef.current?.setPageWithoutAnimation(clamped);
+    }
+    activateReelAtIndexRef.current(clamped);
+  }, []);
+
+  goToReelIndexRef.current = goToReelIndex;
 
   const viewabilityConfig = useMemo(
     () => ({ itemVisiblePercentThreshold: 51, minimumViewTime: 80 }),
@@ -847,7 +872,7 @@ export default function ReelsScreen() {
       scrollAnchorIndexRef.current = from;
       wheelLockRef.current = true;
       isSnappingRef.current = true;
-      flatListRef.current?.scrollToOffset({ offset: target * h, animated: true });
+      goToReelIndexRef.current(target, true);
       window.setTimeout(() => {
         isSnappingRef.current = false;
         wheelLockRef.current = false;
@@ -1151,6 +1176,7 @@ export default function ReelsScreen() {
       )}
 
       <View ref={feedClipRef} style={{ height: reelHeight, width: '100%', overflow: 'hidden' }}>
+      {Platform.OS === 'web' ? (
       <FlatList
         ref={flatListRef}
         key={`reels-feed-${reelHeight}`}
@@ -1165,24 +1191,15 @@ export default function ReelsScreen() {
         viewabilityConfig={viewabilityConfig}
         getItemLayout={getItemLayout}
         pagingEnabled
-        // snapToInterval + pagingEnabled fights on Android; keep interval snap for web only.
-        {...(Platform.OS === 'web'
-          ? {
-              snapToInterval: reelHeight,
-              snapToAlignment: 'start' as const,
-            }
-          : {})}
+        snapToInterval={reelHeight}
+        snapToAlignment="start"
         disableIntervalMomentum
         decelerationRate="fast"
-        bounces={Platform.OS !== 'web'}
-        alwaysBounceVertical={Platform.OS !== 'web'}
-        overScrollMode="never"
-        nestedScrollEnabled
+        bounces={false}
         onScrollBeginDrag={onScrollBeginDrag}
         onScrollEndDrag={onScrollEndDrag}
         onMomentumScrollEnd={onMomentumScrollEnd}
         scrollEventThrottle={16}
-        removeClippedSubviews={Platform.OS === 'android' ? false : undefined}
         windowSize={7}
         maxToRenderPerBatch={3}
         initialNumToRender={3}
@@ -1190,19 +1207,6 @@ export default function ReelsScreen() {
           if (hasMore && !loadingMore) loadMore();
         }}
         onEndReachedThreshold={0.5}
-        refreshControl={
-          Platform.OS === 'web' || currentIndex > 0 ? undefined : (
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => void handlePullRefresh()}
-            tintColor="#fff"
-            colors={['#fff', '#1e90ff']}
-            progressViewOffset={insets.top + 48}
-            title={Platform.OS === 'ios' ? 'Pull to refresh' : undefined}
-            titleColor="rgba(255,255,255,0.7)"
-          />
-          )
-        }
         ListEmptyComponent={
           <View style={[styles.emptyContainer, { height: reelHeight, width: reelWidth }]}>
             <Ionicons
@@ -1243,6 +1247,42 @@ export default function ReelsScreen() {
           ) : null
         }
       />
+      ) : reels.length === 0 ? (
+        <View style={[styles.emptyContainer, { height: reelHeight, width: reelWidth }]}>
+          <Ionicons
+            name={feedMode === 'following' ? 'people-outline' : 'film-outline'}
+            size={56}
+            color="#666"
+          />
+          <Text style={styles.emptyText}>
+            {feedMode === 'following'
+              ? 'No reels from people you follow'
+              : 'No reels yet'}
+          </Text>
+        </View>
+      ) : (
+        <PagerView
+          ref={pagerRef}
+          key={`reels-pager-${reelHeight}`}
+          style={{ height: reelHeight, width: '100%' }}
+          initialPage={0}
+          orientation="vertical"
+          offscreenPageLimit={1}
+          onPageSelected={(e) => {
+            const index = e.nativeEvent.position;
+            activateReelAtIndexRef.current(index);
+            if (index >= reelsRef.current.length - 6 && hasMore && !loadingMore) {
+              loadMore();
+            }
+          }}
+        >
+          {reels.map((item, index) => (
+            <View key={item.id} style={{ height: reelHeight, width: '100%' }} collapsable={false}>
+              {renderReel({ item, index })}
+            </View>
+          ))}
+        </PagerView>
+      )}
       </View>
       {reels.length > 0 && (
         <ReelFeedOverlays
@@ -1297,7 +1337,7 @@ export default function ReelsScreen() {
             style={[navArrowStyles.btn, currentIndex === 0 && navArrowStyles.btnDisabled]}
             onPress={() => {
               if (currentIndex > 0) {
-                flatListRef.current?.scrollToIndex({ index: currentIndex - 1, animated: true });
+                goToReelIndex(currentIndex - 1, true);
               }
             }}
             disabled={currentIndex === 0}
@@ -1309,7 +1349,7 @@ export default function ReelsScreen() {
             style={[navArrowStyles.btn, currentIndex >= reels.length - 1 && navArrowStyles.btnDisabled]}
             onPress={() => {
               if (currentIndex < reels.length - 1) {
-                flatListRef.current?.scrollToIndex({ index: currentIndex + 1, animated: true });
+                goToReelIndex(currentIndex + 1, true);
               }
             }}
             disabled={currentIndex >= reels.length - 1}
