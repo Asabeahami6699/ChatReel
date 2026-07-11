@@ -7,7 +7,6 @@ import {
   Modal,
   PanResponder,
   Platform,
-  RefreshControl,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -16,7 +15,6 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
-import { PagerView } from './reelPagerView';
 import { ProgressBar } from 'react-native-paper';
 import { ReelPlayer, type ReelPlaybackStatus, type ReelPlayerHandle } from '../../components/ReelPlayer';
 import { Ionicons } from '@expo/vector-icons';
@@ -63,6 +61,8 @@ import { ReelBuyCoinsSheet } from './ReelBuyCoinsSheet';
 import { ReelGiftBurst, type GiftBurstPayload } from './ReelGiftBurst';
 import { useWallet } from '../../hooks/useWallet';
 import { useReelProfileStore } from '../../stores/reelProfileStore';
+import { ReelNativeFeed, type ReelNativeFeedHandle } from './ReelNativeFeed';
+import { ReelFloatingChrome } from './ReelFloatingChrome';
 
 const WINDOW_HEIGHT = SCREEN_HEIGHT;
 const PROGRESS_UI_MS = 280;
@@ -136,10 +136,7 @@ export default function ReelsScreen() {
   const [showUploadPanel, setShowUploadPanel] = useState(false);
 
   const flatListRef = useRef<FlatList<ReelDTO>>(null);
-  const pagerRef = useRef<{
-    setPage: (index: number) => void;
-    setPageWithoutAnimation: (index: number) => void;
-  } | null>(null);
+  const nativeFeedRef = useRef<ReelNativeFeedHandle>(null);
   const feedClipRef = useRef<View>(null);
   const wheelLockRef = useRef(false);
   const videos = useRef<Record<string, ReelPlayerHandle | null>>({});
@@ -783,10 +780,8 @@ export default function ReelsScreen() {
     if (Platform.OS === 'web') {
       const h = reelHeightRef.current;
       flatListRef.current?.scrollToOffset({ offset: clamped * h, animated });
-    } else if (animated) {
-      pagerRef.current?.setPage(clamped);
     } else {
-      pagerRef.current?.setPageWithoutAnimation(clamped);
+      nativeFeedRef.current?.scrollToIndex(clamped, animated);
     }
     activateReelAtIndexRef.current(clamped);
   }, []);
@@ -1264,29 +1259,60 @@ export default function ReelsScreen() {
           </Text>
         </View>
       ) : (
-        <PagerView
-          ref={pagerRef}
-          key={`reels-pager-${reelHeight}`}
-          style={{ height: reelHeight, width: '100%' }}
-          initialPage={0}
-          orientation="vertical"
-          offscreenPageLimit={1}
-          onPageSelected={(e) => {
-            const index = e.nativeEvent.position;
-            activateReelAtIndexRef.current(index);
-            if (index >= reelsRef.current.length - 6 && hasMore && !loadingMore) {
-              loadMore();
-            }
+        <ReelNativeFeed
+          ref={nativeFeedRef}
+          reels={reels}
+          currentIndex={currentIndex}
+          reelWidth={reelWidth}
+          reelHeight={reelHeight}
+          isFocused={isFocused}
+          mediaShouldPlay={mediaShouldPlay}
+          isMuted={isMuted}
+          volume={volume}
+          readyReelIds={readyReelIds}
+          endScreenReelId={endScreenReelId}
+          resolveUri={resolveUri}
+          onIndexChange={(index) => activateReelAtIndexRef.current(index)}
+          onReady={handleVideoReady}
+          onPlaybackStatus={handlePlaybackStatus}
+          onRef={registerVideoRef}
+          onMediaIndexChange={handleMediaIndexChange}
+          onEndReached={() => {
+            if (hasMore && !loadingMore) loadMore();
           }}
-        >
-          {reels.map((item, index) => (
-            <View key={item.id} style={{ height: reelHeight, width: '100%' }} collapsable={false}>
-              {renderReel({ item, index })}
-            </View>
-          ))}
-        </PagerView>
+        />
       )}
       </View>
+      {Platform.OS !== 'web' && currentReel ? (
+        <View
+          style={[
+            StyleSheet.absoluteFill,
+            { height: reelHeight },
+            usePhoneFrame && { width: reelWidth + desktopActionOffset, alignSelf: 'flex-start' },
+          ]}
+          pointerEvents="box-none"
+        >
+          <ReelFloatingChrome
+            reel={currentReel}
+            reelWidth={reelWidth}
+            reelHeight={reelHeight}
+            usePhoneFrame={usePhoneFrame}
+            desktopActionOffset={desktopActionOffset}
+            metaBottom={metaBottom}
+            myProfileId={myProfileId}
+            isFollowing={followedAuthorIds.has(currentReel.author_id)}
+            onToggleLike={() => void toggleLike(currentReel)}
+            onQuickFollow={() => void quickFollow(currentReel)}
+            onOpenComments={() => onOpenComments(currentReel)}
+            onOpenShare={() => onOpenShare(currentReel)}
+            onOpenGift={() => onOpenGift(currentReel)}
+            onOpenProfile={() => onOpenProfile(currentReel)}
+            onNavigateSound={onNavigateSound}
+            onUseReelAudio={() => onUseReelAudio(currentReel)}
+            onTogglePlayPause={() => void togglePlayPause()}
+          />
+        </View>
+      ) : null}
       {reels.length > 0 && (
         <ReelFeedOverlays
           reel={currentReel}
