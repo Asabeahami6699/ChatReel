@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { StyleSheet } from 'react-native';
+import { Alert, Platform, StyleSheet, View } from 'react-native';
 import { Portal, Snackbar, Text } from 'react-native-paper';
 import {
   emitReelAudioExtract,
@@ -7,7 +7,7 @@ import {
   type ReelAudioExtractEvent,
 } from '../lib/reelAudioExtractNotify';
 import { uploadReelExtractTemp } from '../lib/reelUploader';
-import { api } from '../lib/api';
+import { ApiError, api } from '../lib/api';
 
 type SnackState = {
   visible: boolean;
@@ -43,21 +43,28 @@ export function AudioExtractToast() {
           isError: true,
           pending: false,
         });
+        // Snackbar can sit under modals on web — surface a hard alert too.
+        if (Platform.OS === 'web') {
+          Alert.alert('Audio extract failed', event.message);
+        }
       }
     });
   }, []);
 
   return (
     <Portal>
-      <Snackbar
-        visible={snackbar.visible}
-        onDismiss={() => setSnackbar((s) => ({ ...s, visible: false, pending: false }))}
-        duration={snackbar.pending ? Snackbar.DURATION_INDEFINITE : 4000}
-        style={snackbar.isError ? styles.error : styles.ok}
-        theme={{ colors: { onSurface: snackbar.isError ? '#fff' : '#111' } }}
-      >
-        <Text style={snackbar.isError ? styles.textError : styles.textOk}>{snackbar.message}</Text>
-      </Snackbar>
+      <View pointerEvents="box-none" style={styles.host}>
+        <Snackbar
+          visible={snackbar.visible}
+          onDismiss={() => setSnackbar((s) => ({ ...s, visible: false, pending: false }))}
+          duration={snackbar.pending ? Snackbar.DURATION_INDEFINITE : 4500}
+          style={snackbar.isError ? styles.error : styles.ok}
+          theme={{ colors: { onSurface: snackbar.isError ? '#fff' : '#111' } }}
+          wrapperStyle={styles.wrapper}
+        >
+          <Text style={snackbar.isError ? styles.textError : styles.textOk}>{snackbar.message}</Text>
+        </Snackbar>
+      </View>
     </Portal>
   );
 }
@@ -80,17 +87,32 @@ export function startBackgroundReelAudioExtract(input: {
       const { sound } = await api.reels.extractSound({
         video_url: videoUrl,
         title: 'Extracted audio',
-        duration_sec: input.durationSec,
+        duration_sec: Math.max(1, Math.round(input.durationSec || 0)) || undefined,
       });
       emitReelAudioExtract({ type: 'done', sound });
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Could not extract audio';
+      const message =
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : 'Could not extract audio';
       emitReelAudioExtract({ type: 'error', message });
     }
   })();
 }
 
 const styles = StyleSheet.create({
+  host: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 99999,
+    elevation: 99999,
+    justifyContent: 'flex-end',
+  },
+  wrapper: {
+    zIndex: 99999,
+    elevation: 99999,
+  },
   ok: {
     backgroundColor: '#fff',
     borderWidth: StyleSheet.hairlineWidth,

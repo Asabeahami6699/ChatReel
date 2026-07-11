@@ -23,6 +23,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused, useFocusEffect, useNavigation } from '@react-navigation/native';
 import { USE_NATIVE_DRIVER } from '../../lib/animation';
 import { api, ApiError, type ReelDTO } from '../../lib/api';
+import { scheduleGiftCatalogPrefetch } from '../../lib/giftCatalogPrefetch';
 import { useReelsFeed } from '../../hooks/useReelsFeed';
 import { useReelUploadQueue } from '../../hooks/useReelUploadQueue';
 import { useCurrentProfileId } from '../../hooks/useCurrentProfileId';
@@ -42,6 +43,7 @@ import {
   REEL_ACTION_RAIL_RIGHT,
   REEL_ACTION_RAIL_WIDTH,
   REEL_BOTTOM_INSET,
+  REEL_DESKTOP_VERTICAL_INSET,
   REEL_PHONE_MAX_WIDTH,
   getReelFrameDimensions,
 } from './reelVideoLayout';
@@ -100,10 +102,13 @@ export default function ReelsScreen() {
   const isMainAppTabFocused = useReelsMainTabFocused();
   const isFocused = isReelTabFocused && isMainAppTabFocused;
   const { feedMode, setFeedMode } = useReelFeedMode();
+  const [viewportHeight, setViewportHeight] = useState(0);
   const bottomNavOffset = reelTabBarOffset(insets.bottom, usePhoneFrame);
-  const reelHeight = Math.max(320, usePhoneFrame
-    ? windowHeight - 32
-    : windowHeight - bottomNavOffset
+  const reelHeight = Math.max(
+    320,
+    usePhoneFrame
+      ? Math.max(0, (viewportHeight || windowHeight) - REEL_DESKTOP_VERTICAL_INSET * 2)
+      : (viewportHeight || windowHeight) - bottomNavOffset
   );
 
   const feedSource = feedMode === 'forYou' ? 'feed' : 'following';
@@ -639,6 +644,12 @@ export default function ReelsScreen() {
     void refreshFollowedAuthors();
   }, [refreshFollowedAuthors]);
 
+  // Prefetch gift catalog while watching reels — never blocks first paint.
+  useEffect(() => {
+    if (!isFocused) return;
+    void scheduleGiftCatalogPrefetch(0);
+  }, [isFocused]);
+
   useEffect(() => {
     if (!isFocused || reels.length === 0) return;
     if (!activeReelIdRef.current) {
@@ -985,7 +996,13 @@ export default function ReelsScreen() {
   }
 
   return (
-    <View style={[styles.container, usePhoneFrame && styles.containerPhoneFrame]}>
+    <View
+      style={[styles.container, usePhoneFrame && styles.containerPhoneFrame]}
+      onLayout={(e) => {
+        const h = Math.round(e.nativeEvent.layout.height);
+        if (h > 0) setViewportHeight(h);
+      }}
+    >
       <StatusBar barStyle="light-content" backgroundColor="#000" translucent />
 
       <View
@@ -994,6 +1011,8 @@ export default function ReelsScreen() {
           usePhoneFrame && styles.feedColumnPhone,
           {
             width: usePhoneFrame ? reelWidth + desktopActionOffset : reelWidth,
+            height: reelHeight,
+            overflow: 'hidden',
           },
         ]}
       >
@@ -1037,7 +1056,27 @@ export default function ReelsScreen() {
             </View>
           )}
 
-          <View style={styles.topIconBtnSpacer} />
+          {Platform.OS === 'web' ? (
+            <VolumeControl
+              inline
+              volume={volume}
+              isMuted={isMuted}
+              onVolumeChange={(v) => {
+                setVolume(v);
+                setIsMuted(v === 0);
+              }}
+              onMuteToggle={() => {
+                if (isMuted) {
+                  setIsMuted(false);
+                  if (volume === 0) setVolume(1);
+                } else {
+                  setIsMuted(true);
+                }
+              }}
+            />
+          ) : (
+            <View style={styles.topIconBtnSpacer} />
+          )}
         </View>
       </View>
 
@@ -1061,10 +1100,11 @@ export default function ReelsScreen() {
         </TouchableOpacity>
       )}
 
+      <View style={{ height: reelHeight, width: '100%', overflow: 'hidden' }}>
       <FlatList
         ref={flatListRef}
         data={reels}
-        style={{ height: reelHeight }}
+        style={{ height: reelHeight, overflow: 'hidden' }}
         contentContainerStyle={reels.length === 0 ? undefined : { flexGrow: 0 }}
         extraData={currentIndex}
         renderItem={renderReel}
@@ -1078,13 +1118,36 @@ export default function ReelsScreen() {
         snapToAlignment="start"
         disableIntervalMomentum
         decelerationRate="fast"
-        bounces
-        alwaysBounceVertical
-        overScrollMode="always"
+        bounces={Platform.OS !== 'web'}
+        alwaysBounceVertical={Platform.OS !== 'web'}
+        overScrollMode="never"
         onScrollBeginDrag={onScrollBeginDrag}
         onScrollEndDrag={onScrollEndDrag}
         onMomentumScrollEnd={onMomentumScrollEnd}
         scrollEventThrottle={16}
+        // Desktop mouse wheel: advance exactly one reel (RN Web paging alone is flaky).
+        {...(Platform.OS === 'web'
+          ? {
+              onWheel: (e: { nativeEvent: { deltaY: number }; preventDefault?: () => void }) => {
+                const dy = e.nativeEvent.deltaY;
+                if (Math.abs(dy) < 8) return;
+                e.preventDefault?.();
+                if (isSnappingRef.current) return;
+                const h = reelHeightRef.current;
+                if (h <= 0) return;
+                const dir = dy > 0 ? 1 : -1;
+                const from = currentIndexRef.current;
+                const target = Math.max(0, Math.min(reelsRef.current.length - 1, from + dir));
+                if (target === from) return;
+                scrollAnchorIndexRef.current = from;
+                isSnappingRef.current = true;
+                flatListRef.current?.scrollToOffset({ offset: target * h, animated: true });
+                requestAnimationFrame(() => {
+                  isSnappingRef.current = false;
+                });
+              },
+            }
+          : {})}
         removeClippedSubviews={Platform.OS === 'android' ? false : undefined}
         windowSize={7}
         maxToRenderPerBatch={3}
@@ -1144,6 +1207,7 @@ export default function ReelsScreen() {
           ) : null
         }
       />
+      </View>
       {reels.length > 0 && (
         <ReelFeedOverlays
           reel={currentReel}
@@ -1191,34 +1255,6 @@ export default function ReelsScreen() {
         onClose={() => setBuyCoinsOpen(false)}
         onPurchased={(balanceCoins) => setBalanceCoins(balanceCoins)}
       />
-
-      {Platform.OS === 'web' && isFocused && (
-        <View
-          style={[
-            styles.volumeOverlay,
-            { height: reelHeight },
-            usePhoneFrame && { width: reelWidth, alignSelf: 'center' },
-          ]}
-          pointerEvents="box-none"
-        >
-          <VolumeControl
-            volume={volume}
-            isMuted={isMuted}
-            onVolumeChange={(v) => {
-              setVolume(v);
-              setIsMuted(v === 0);
-            }}
-            onMuteToggle={() => {
-              if (isMuted) {
-                setIsMuted(false);
-                if (volume === 0) setVolume(1);
-              } else {
-                setIsMuted(true);
-              }
-            }}
-          />
-        </View>
-      )}
 
       {usePhoneFrame && reels.length > 0 && (
         <View style={navArrowStyles.container}>
@@ -1431,9 +1467,9 @@ const styles = StyleSheet.create({
   feedColumnPhone: {
     alignSelf: 'center',
     maxWidth: '100%',
-    overflow: 'visible',
-    marginVertical: 8,
+    overflow: 'hidden',
     flex: undefined,
+    borderRadius: 16,
   },
   center: { justifyContent: 'center', alignItems: 'center' },
   reelContainer: { position: 'relative', backgroundColor: '#000', overflow: 'hidden' },
@@ -1606,6 +1642,11 @@ const styles = StyleSheet.create({
     zIndex: 200,
     elevation: 200,
     pointerEvents: 'box-none',
+  },
+  /** Sit in the engagement gutter to the right of the phone-frame video. */
+  volumeControlDesktop: {
+    right: 6,
+    top: 56,
   },
   scrubArea: {
     position: 'absolute',

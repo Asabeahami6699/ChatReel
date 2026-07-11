@@ -610,15 +610,27 @@ router.post(
       profile?.email?.split('@')[0] ||
       'You';
 
-    const sound = await extractSoundFromVideoUrl({
-      videoUrl: body.video_url,
-      profileId,
-      title: body.title?.trim() || 'Extracted audio',
-      artist,
-      durationSec: body.duration_sec,
-    });
-
-    return res.status(201).json({ sound });
+    try {
+      const sound = await extractSoundFromVideoUrl({
+        videoUrl: body.video_url,
+        profileId,
+        title: body.title?.trim() || 'Extracted audio',
+        artist,
+        durationSec: body.duration_sec,
+      });
+      return res.status(201).json({ sound });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not extract audio';
+      const lower = message.toLowerCase();
+      const status =
+        lower.includes('no audio') ||
+        lower.includes('download') ||
+        lower.includes('unavailable')
+          ? 400
+          : 500;
+      console.error('[reels/sounds/extract]', message);
+      return res.status(status).json({ error: message });
+    }
   })
 );
 

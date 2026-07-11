@@ -458,6 +458,15 @@ export function PostReelVideoComposer({
                 );
               })}
             </View>
+            <Text style={styles.audienceHint}>
+              {visibility === 'public'
+                ? 'Anyone on ChatReel can find and watch this reel.'
+                : visibility === 'friends'
+                  ? 'Only people you’re friends with can see this reel.'
+                  : visibility === 'group'
+                    ? 'Only members of the chat group you pick can see this reel. It won’t appear in the public For You feed.'
+                    : 'Only you can see this reel.'}
+            </Text>
             {visibility === 'group' ? (
               <View style={styles.groupRow}>
                 {groups.map((g) => {
@@ -691,6 +700,12 @@ const styles = StyleSheet.create({
   visChipActive: { backgroundColor: '#0e2a44', borderWidth: 1, borderColor: REEL_ACCENT },
   visChipText: { color: '#888', fontSize: 12, fontWeight: '600' },
   visChipTextActive: { color: '#fff' },
+  audienceHint: {
+    color: '#888',
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 10,
+  },
   groupRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
   groupChip: {
     paddingHorizontal: 12,

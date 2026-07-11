@@ -1,5 +1,5 @@
 import React, { useCallback, useRef, useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 const VOL_TRACK_H = 100;
@@ -10,11 +10,16 @@ export function VolumeControl({
   isMuted,
   onVolumeChange,
   onMuteToggle,
+  style,
+  inline = false,
 }: {
   volume: number;
   isMuted: boolean;
   onVolumeChange: (v: number) => void;
   onMuteToggle: () => void;
+  style?: StyleProp<ViewStyle>;
+  /** Place in normal layout flow (e.g. top bar) instead of absolute overlay. */
+  inline?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const trackRef = useRef<View>(null);
@@ -76,7 +81,7 @@ export function VolumeControl({
         : 'volume-medium';
 
   return (
-    <View style={styles.wrap} pointerEvents="auto">
+    <View style={[styles.wrap, inline && styles.wrapInline, style]} pointerEvents="auto">
       <Pressable
         style={styles.btn}
         onPress={(e) => {
@@ -115,6 +120,13 @@ const styles = StyleSheet.create({
     zIndex: 9999,
     elevation: 9999,
     alignItems: 'center',
+  },
+  wrapInline: {
+    position: 'relative',
+    right: 0,
+    top: 0,
+    zIndex: 1,
+    elevation: 1,
   },
   btn: {
     backgroundColor: 'rgba(0,0,0,0.45)',

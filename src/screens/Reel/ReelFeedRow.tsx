@@ -24,7 +24,21 @@ function ActionIcon({
   size?: number;
   color?: string;
 }) {
-  return <Ionicons name={name} size={size} color={color} />;
+  const box = Math.max(44, size + 14);
+  return (
+    <View
+      style={[
+        styles.actionIcon3d,
+        {
+          width: box,
+          height: box,
+          borderRadius: box / 2,
+        },
+      ]}
+    >
+      <Ionicons name={name} size={size} color={color} style={styles.actionIconGlyph} />
+    </View>
+  );
 }
 
 export type ReelFeedRowProps = {
@@ -339,7 +353,33 @@ const styles = StyleSheet.create({
     paddingRight: 4,
   },
   actionButton: { alignItems: 'center', gap: 1, minWidth: 48 },
-  actionText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  actionIcon3d: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(12,12,14,0.55)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.28)',
+    borderTopColor: 'rgba(255,255,255,0.45)',
+    borderBottomColor: 'rgba(0,0,0,0.35)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.45,
+    shadowRadius: 6,
+    elevation: 8,
+  },
+  actionIconGlyph: {
+    textShadowColor: 'rgba(0,0,0,0.65)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  actionText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
+    textShadowColor: 'rgba(0,0,0,0.75)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
   actionTextDesktop: { fontSize: 10 },
   profileActionWrap: { alignItems: 'center', marginBottom: 2 },
   profileButton: { marginBottom: -8 },

@@ -694,6 +694,15 @@ export default function PostReelScreen() {
                 );
               })}
             </View>
+            <Text style={styles.audienceHint}>
+              {visibility === 'public'
+                ? 'Anyone on ChatReel can find and watch this reel.'
+                : visibility === 'friends'
+                  ? 'Only people you’re friends with can see this reel.'
+                  : visibility === 'group'
+                    ? 'Only members of the chat group you pick can see this reel. It won’t appear in the public For You feed.'
+                    : 'Only you can see this reel.'}
+            </Text>
             {visibility === 'group' ? (
               <View style={styles.groupPicker}>
                 {groups.length === 0 ? (
@@ -871,6 +880,12 @@ const styles = StyleSheet.create({
   visBtnActive: { borderColor: '#1976d2', backgroundColor: '#0e2a44' },
   visBtnText: { color: '#aaa', fontSize: 13, fontWeight: '600' },
   visBtnTextActive: { color: '#fff' },
+  audienceHint: {
+    color: '#888',
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 10,
+  },
   groupPicker: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
   groupPickerHint: { color: '#888', fontSize: 13 },
   groupChip: {

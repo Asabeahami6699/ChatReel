@@ -9,11 +9,16 @@ export const REEL_PHONE_MAX_WIDTH = 430;
 /** Space to keep captions from sitting under the right engagement column. */
 export const REEL_ACTION_RAIL_WIDTH = 56;
 
+/** Vertical inset around the centered phone frame on desktop web. */
+export const REEL_DESKTOP_VERTICAL_INSET = 16;
+
 export function getReelFrameDimensions(windowWidth: number, windowHeight: number) {
   const usePhoneFrame =
     Platform.OS === 'web' && windowWidth > REEL_PHONE_MAX_WIDTH + 64;
   const frameWidth = usePhoneFrame ? REEL_PHONE_MAX_WIDTH : windowWidth;
-  const frameHeight = windowHeight;
+  const frameHeight = usePhoneFrame
+    ? Math.max(320, windowHeight - REEL_DESKTOP_VERTICAL_INSET * 2)
+    : windowHeight;
   /** On desktop, action buttons sit outside the video to the right (YouTube Shorts style). */
   const desktopActionOffset = usePhoneFrame ? REEL_ACTION_RAIL_WIDTH + 12 : 0;
   return { frameWidth, frameHeight, usePhoneFrame, desktopActionOffset };

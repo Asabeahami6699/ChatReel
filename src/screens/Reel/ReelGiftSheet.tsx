@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { api, ApiError, type GiftCatalogDTO, type ReelDTO } from '../../lib/api';
+import { getCachedGiftCatalog, loadGiftCatalog, scheduleGiftCatalogPrefetch } from '../../lib/giftCatalogPrefetch';
 import { REEL_ACCENT } from './reelTheme';
 
 type Props = {
@@ -30,18 +31,31 @@ function makeIdempotencyKey(reelId: string, giftId: string): string {
 }
 
 export function ReelGiftSheet({ visible, reel, balanceCoins, onClose, onSent, onBuyCoins }: Props) {
-  const [catalog, setCatalog] = useState<GiftCatalogDTO[]>([]);
-  const [loadingCatalog, setLoadingCatalog] = useState(false);
+  const cached = getCachedGiftCatalog();
+  const [catalog, setCatalog] = useState<GiftCatalogDTO[]>(() => cached ?? []);
+  const [loadingCatalog, setLoadingCatalog] = useState(() => !cached);
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!visible) return;
     setError(null);
+    const hit = getCachedGiftCatalog();
+    if (hit?.length) {
+      setCatalog(hit);
+      setLoadingCatalog(false);
+      // Refresh quietly in the background.
+      void scheduleGiftCatalogPrefetch(0).then((gifts) => {
+        if (gifts.length) setCatalog(gifts);
+      });
+      return;
+    }
     setLoadingCatalog(true);
-    api.gifts
-      .catalog()
-      .then((res) => setCatalog(res.gifts))
+    void loadGiftCatalog()
+      .then((gifts) => {
+        setCatalog(gifts);
+        if (!gifts.length) setError('Could not load gifts');
+      })
       .catch(() => setError('Could not load gifts'))
       .finally(() => setLoadingCatalog(false));
   }, [visible]);

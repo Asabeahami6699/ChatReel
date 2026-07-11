@@ -6,6 +6,7 @@ import {
   Image,
   Modal,
   PanResponder,
+  Platform,
   StatusBar,
   StyleSheet,
   Text,
@@ -526,7 +527,16 @@ export function ReelImmersiveViewer({
             )}
           </TouchableOpacity>
 
-          <TouchableOpacity style={[styles.muteButton, { top: insets.top + 56 }]} onPress={() => setIsMuted((m) => !m)}>
+          <TouchableOpacity
+            style={[
+              styles.muteButton,
+              { top: insets.top + 56 },
+              usePhoneFrame
+                ? { left: reelWidth + 8, right: undefined }
+                : null,
+            ]}
+            onPress={() => setIsMuted((m) => !m)}
+          >
             <Ionicons name={isMuted ? 'volume-mute' : 'volume-medium'} size={22} color="#fff" />
           </TouchableOpacity>
 
@@ -631,17 +641,21 @@ export function ReelImmersiveViewer({
         style={[
           styles.feedColumn,
           usePhoneFrame && styles.feedColumnPhone,
-          { width: usePhoneFrame ? reelWidth + desktopActionOffset : reelWidth },
+          {
+            width: usePhoneFrame ? reelWidth + desktopActionOffset : reelWidth,
+            height: reelHeight,
+          },
         ]}
       >
       <StatusBar barStyle="light-content" />
       <FlatList
         ref={flatListRef}
         data={reels}
+        style={{ height: reelHeight, overflow: 'hidden' }}
         keyExtractor={(r) => r.id}
         renderItem={renderReel}
-        pagingEnabled
         showsVerticalScrollIndicator={false}
+        pagingEnabled
         snapToInterval={reelHeight}
         snapToAlignment="start"
         disableIntervalMomentum
@@ -654,6 +668,28 @@ export function ReelImmersiveViewer({
         onScrollBeginDrag={onScrollBeginDrag}
         onMomentumScrollEnd={onMomentumScrollEnd}
         scrollEventThrottle={16}
+        {...(Platform.OS === 'web'
+          ? {
+              onWheel: (e: { nativeEvent: { deltaY: number }; preventDefault?: () => void }) => {
+                const dy = e.nativeEvent.deltaY;
+                if (Math.abs(dy) < 8) return;
+                e.preventDefault?.();
+                if (isSnappingRef.current) return;
+                const h = reelHeightRef.current;
+                if (h <= 0) return;
+                const dir = dy > 0 ? 1 : -1;
+                const from = currentIndexRef.current;
+                const target = Math.max(0, Math.min(reelsRef.current.length - 1, from + dir));
+                if (target === from) return;
+                scrollAnchorIndexRef.current = from;
+                isSnappingRef.current = true;
+                flatListRef.current?.scrollToOffset({ offset: target * h, animated: true });
+                requestAnimationFrame(() => {
+                  isSnappingRef.current = false;
+                });
+              },
+            }
+          : {})}
         onScrollToIndexFailed={(info) => {
           flatListRef.current?.scrollToOffset({ offset: info.averageItemLength * info.index, animated: false });
         }}
@@ -704,8 +740,12 @@ export function ReelImmersiveViewer({
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
-  containerPhoneFrame: { backgroundColor: '#0a0a0a' },
-  feedColumn: { flex: 1, alignSelf: 'stretch' },
+  containerPhoneFrame: {
+    backgroundColor: '#0a0a0a',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  feedColumn: { flex: 1, alignSelf: 'stretch', overflow: 'hidden' },
   feedColumnPhone: {
     alignSelf: 'center',
     maxWidth: '100%',
@@ -713,6 +753,8 @@ const styles = StyleSheet.create({
     borderRightWidth: StyleSheet.hairlineWidth,
     borderColor: '#1f1f1f',
     overflow: 'hidden',
+    flex: undefined,
+    borderRadius: 16,
   },
   videoTouch: { flex: 1 },
   closeBtn: {
@@ -736,6 +778,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 10,
+  },
+  muteButtonDesktop: {
+    right: 6,
   },
   progressContainer: {
     position: 'absolute',
