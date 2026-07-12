@@ -1,7 +1,6 @@
 import React, { useRef } from 'react';
 import {
   Platform,
-  Pressable as RNPressable,
   StyleSheet,
   View,
   type StyleProp,
@@ -15,23 +14,21 @@ type Props = {
   delayLongPress?: number;
 };
 
-function WebTapLayer({ style, onPress, onLongPress, delayLongPress = 700 }: Props) {
-  return (
-    <RNPressable
-      onPress={onPress}
-      onLongPress={onLongPress}
-      delayLongPress={delayLongPress}
-      style={[styles.overlay, style]}
-    />
-  );
-}
-
 /**
  * Passive touch observers only — never become the JS responder and never
  * register an RNGH gesture. Pressable / GestureDetector / TouchableOpacity
- * all steal vertical pans from the parent pager on many Android devices.
+ * all steal vertical pans from the parent pager — this is true on native
+ * (Android especially) AND on web (react-native-web's Pressable claims the
+ * touch responder on touchstart/pointerdown just like native Touchables do,
+ * which is what was blocking swipe-to-advance on mobile Chrome).
+ * So both platforms use this same touch-listener-only implementation.
  */
-function NativeTapLayer({ style, onPress, onLongPress, delayLongPress = 700 }: Props) {
+export function ReelVideoTapLayer({
+  style,
+  onPress,
+  onLongPress,
+  delayLongPress = 700,
+}: Props) {
   const startRef = useRef<{ x: number; y: number } | null>(null);
   const movedRef = useRef(false);
   const longTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -46,7 +43,7 @@ function NativeTapLayer({ style, onPress, onLongPress, delayLongPress = 700 }: P
 
   return (
     <View
-      style={[styles.overlay, style]}
+      style={[styles.overlay, style, Platform.OS === 'web' ? webPanStyle : null]}
       collapsable={false}
       onStartShouldSetResponder={() => false}
       onMoveShouldSetResponder={() => false}
@@ -93,12 +90,6 @@ function NativeTapLayer({ style, onPress, onLongPress, delayLongPress = 700 }: P
   );
 }
 
-/** Sibling overlay above video — must not wrap VideoView or claim scroll gestures. */
-export function ReelVideoTapLayer(props: Props) {
-  if (Platform.OS === 'web') return <WebTapLayer {...props} />;
-  return <NativeTapLayer {...props} />;
-}
-
 const styles = StyleSheet.create({
   overlay: {
     position: 'absolute',
@@ -109,3 +100,7 @@ const styles = StyleSheet.create({
     zIndex: 3,
   },
 });
+
+// touchAction isn't in RN's ViewStyle typings — cast, same pattern this
+// codebase already uses for web-only CSS (e.g. `cursor` in ReelsScreen styles).
+const webPanStyle = { touchAction: 'pan-y' } as object;
