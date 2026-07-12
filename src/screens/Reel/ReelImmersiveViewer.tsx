@@ -30,7 +30,6 @@ import { markReelWatched } from './reelVideoCache';
 import { REEL_ACTION_RAIL_RIGHT, REEL_ACTION_RAIL_WIDTH, REEL_BOTTOM_INSET, REEL_PHONE_MAX_WIDTH, REEL_PROGRESS_BAR_HEIGHT, getReelFrameDimensions } from './reelVideoLayout';
 import { ExpandableCaption } from './ExpandableCaption';
 import { ReelSoundStrip } from './ReelSoundStrip';
-import { ReelVideoTapLayer } from './ReelVideoTapLayer';
 import { ReelBrandBadge } from './ReelBrandBadge';
 import { ReelEndScreen } from './ReelEndScreen';
 import { REEL_ACCENT, REEL_END_SCREEN_MS, reelBottomLayout } from './reelTheme';
@@ -566,7 +565,6 @@ export function ReelImmersiveViewer({
             {isCurrent && endScreenReelId === item.id && (
               <ReelEndScreen ownerName={authorLabel(item)} />
             )}
-            <ReelVideoTapLayer onPress={() => handleVideoPress(item)} />
           </View>
 
           <TouchableOpacity

@@ -84,7 +84,7 @@ const navArrowStyles = StyleSheet.create({
     position: 'absolute',
     left: 10,
     top: '50%' as unknown as number,
-    marginTop: -56,
+    marginTop: -78,
     zIndex: 40,
     elevation: 40,
     gap: 10,
@@ -1331,7 +1331,6 @@ export default function ReelsScreen() {
             onOpenProfile={() => onOpenProfile(currentReel)}
             onNavigateSound={onNavigateSound}
             onUseReelAudio={() => onUseReelAudio(currentReel)}
-            onTogglePlayPause={() => void togglePlayPause()}
           />
         </View>
       ) : null}
@@ -1404,6 +1403,19 @@ export default function ReelsScreen() {
               name="chevron-up"
               size={usePhoneFrame ? 28 : 26}
               color={currentIndex === 0 ? 'rgba(255,255,255,0.25)' : '#fff'}
+            />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={usePhoneFrame ? navArrowStyles.btn : navArrowStyles.btnPhone}
+            onPress={() => void togglePlayPause()}
+            activeOpacity={0.7}
+            hitSlop={8}
+            accessibilityLabel={isPlaying ? 'Pause' : 'Play'}
+          >
+            <Ionicons
+              name={isPlaying ? 'pause' : 'play'}
+              size={usePhoneFrame ? 26 : 24}
+              color="#fff"
             />
           </TouchableOpacity>
           <TouchableOpacity

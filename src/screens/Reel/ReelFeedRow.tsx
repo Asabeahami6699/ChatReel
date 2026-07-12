@@ -15,7 +15,6 @@ import {
   reelRowDataEqual,
 } from './reelFeedRowUtils';
 import { ReelEndScreen } from './ReelEndScreen';
-import { ReelVideoTapLayer } from './ReelVideoTapLayer';
 
 function ActionIcon({
   name,
@@ -90,8 +89,8 @@ function ReelFeedRowComponent({
   metaBottom,
   myProfileId,
   videoUri,
-  onVideoPress,
-  onDelete,
+  onVideoPress: _onVideoPress,
+  onDelete: _onDelete,
   onToggleLike,
   onQuickFollow,
   onOpenComments,
@@ -126,12 +125,13 @@ function ReelFeedRowComponent({
           !usePhoneFrame && { transform: [{ translateY: REEL_CONTENT_SHIFT_DOWN }] },
         ]}
       >
-      <View
-        style={[
-          styles.videoTouchLayer,
-          usePhoneFrame && [styles.videoTouchLayerDesktop, { width: reelWidth }],
-        ]}
-      >
+          <View
+            style={[
+              styles.videoTouchLayer,
+              usePhoneFrame && [styles.videoTouchLayerDesktop, { width: reelWidth }],
+              { pointerEvents: 'none' },
+            ]}
+          >
         <ReelFeedMedia
           reel={item}
           reelIndex={index}
@@ -157,12 +157,6 @@ function ReelFeedRowComponent({
             <ReelEndScreen ownerName={author} />
           </View>
         ) : null}
-        {/* Sibling overlay — never wrap VideoView or FlatList will lose vertical pans */}
-        <ReelVideoTapLayer
-          onPress={() => onVideoPress(item)}
-          onLongPress={() => onDelete(item)}
-          delayLongPress={700}
-        />
       </View>
 
       <View

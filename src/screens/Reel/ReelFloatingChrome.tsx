@@ -7,7 +7,6 @@ import { ExpandableCaption } from './ExpandableCaption';
 import { ReelSoundStrip } from './ReelSoundStrip';
 import { REEL_ACCENT } from './reelTheme';
 import { formatReelCount, reelAuthorLabel, reelAvatarUrl } from './reelFeedRowUtils';
-import { ReelVideoTapLayer } from './ReelVideoTapLayer';
 
 function ActionIcon({
   name,
@@ -48,12 +47,12 @@ type Props = {
   onOpenProfile: () => void;
   onNavigateSound: (soundId: string) => void;
   onUseReelAudio: () => void;
-  onTogglePlayPause: () => void;
 };
 
 /**
  * Captions + engagement rail floated ABOVE the scroller (pointerEvents box-none).
  * Empty space passes touches through to the ScrollView so vertical swipe works.
+ * No full-screen / center tap target — that steals pans and false-fires pause.
  */
 function ReelFloatingChromeComponent({
   reel,
@@ -70,7 +69,6 @@ function ReelFloatingChromeComponent({
   onOpenProfile,
   onNavigateSound,
   onUseReelAudio,
-  onTogglePlayPause,
 }: Props) {
   const avatar = reelAvatarUrl(reel);
   const author = reelAuthorLabel(reel);
@@ -81,9 +79,6 @@ function ReelFloatingChromeComponent({
       style={[styles.layer, !usePhoneFrame && { transform: [{ translateY: REEL_CONTENT_SHIFT_DOWN }] }]}
       pointerEvents="box-none"
     >
-      {/* Center tap — passive layer so vertical swipes still reach the ScrollView */}
-      <ReelVideoTapLayer style={styles.centerTap} onPress={onTogglePlayPause} />
-
       <View
         style={[
           styles.bottomMeta,
@@ -196,14 +191,6 @@ const styles = StyleSheet.create({
   layer: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 14,
-  },
-  centerTap: {
-    position: 'absolute',
-    top: '22%',
-    bottom: '28%',
-    left: '26%',
-    right: '22%',
-    zIndex: 2,
   },
   bottomMeta: {
     position: 'absolute',
