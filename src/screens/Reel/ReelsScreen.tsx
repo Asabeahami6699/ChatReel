@@ -1617,7 +1617,11 @@ const styles = StyleSheet.create({
   center: { justifyContent: 'center', alignItems: 'center' },
   reelContainer: { position: 'relative', backgroundColor: '#000', overflow: 'hidden' },
   reelContainerDesktop: { borderRadius: 16, overflow: 'hidden' },
-  videoTouchLayer: { ...StyleSheet.absoluteFill, zIndex: 1 },
+  videoTouchLayer: {
+    ...StyleSheet.absoluteFill,
+    zIndex: 1,
+    touchAction: 'pan-y',
+  } as object,
   videoTouchLayerDesktop: {
     position: 'absolute' as const,
     top: 0,
