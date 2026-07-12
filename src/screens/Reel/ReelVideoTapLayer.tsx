@@ -14,14 +14,17 @@ type Props = {
   delayLongPress?: number;
 };
 
+/** Pixels of movement that cancel a tap (vertical is stricter — that's the swipe axis). */
+const TAP_SLOP_X = 12;
+const TAP_SLOP_Y = 8;
+
 /**
  * Passive touch observers only — never become the JS responder and never
- * register an RNGH gesture. Pressable / GestureDetector / TouchableOpacity
- * all steal vertical pans from the parent pager — this is true on native
- * (Android especially) AND on web (react-native-web's Pressable claims the
- * touch responder on touchstart/pointerdown just like native Touchables do,
- * which is what was blocking swipe-to-advance on mobile Chrome).
- * So both platforms use this same touch-listener-only implementation.
+ * register an RNGH gesture. Pressable / TouchableOpacity steal vertical pans.
+ *
+ * Important: when a parent ScrollView/FlatList takes the gesture, onTouchMove
+ * may never fire on this view. Always re-check pageX/pageY on touchEnd so a
+ * swipe does not get mis-detected as a tap (which was pausing the reel).
  */
 export function ReelVideoTapLayer({
   style,
@@ -29,7 +32,7 @@ export function ReelVideoTapLayer({
   onLongPress,
   delayLongPress = 700,
 }: Props) {
-  const startRef = useRef<{ x: number; y: number } | null>(null);
+  const startRef = useRef<{ x: number; y: number; t: number } | null>(null);
   const movedRef = useRef(false);
   const longTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longFiredRef = useRef(false);
@@ -38,6 +41,17 @@ export function ReelVideoTapLayer({
     if (longTimerRef.current) {
       clearTimeout(longTimerRef.current);
       longTimerRef.current = null;
+    }
+  };
+
+  const markMovedIfNeeded = (pageX: number, pageY: number) => {
+    const start = startRef.current;
+    if (!start || movedRef.current) return;
+    const dx = Math.abs(pageX - start.x);
+    const dy = Math.abs(pageY - start.y);
+    if (dx > TAP_SLOP_X || dy > TAP_SLOP_Y) {
+      movedRef.current = true;
+      clearLongTimer();
     }
   };
 
@@ -51,7 +65,7 @@ export function ReelVideoTapLayer({
       onMoveShouldSetResponderCapture={() => false}
       onTouchStart={(e) => {
         const { pageX, pageY } = e.nativeEvent;
-        startRef.current = { x: pageX, y: pageY };
+        startRef.current = { x: pageX, y: pageY, t: Date.now() };
         movedRef.current = false;
         longFiredRef.current = false;
         clearLongTimer();
@@ -65,17 +79,13 @@ export function ReelVideoTapLayer({
         }
       }}
       onTouchMove={(e) => {
-        const start = startRef.current;
-        if (!start || movedRef.current) return;
-        const dx = Math.abs(e.nativeEvent.pageX - start.x);
-        const dy = Math.abs(e.nativeEvent.pageY - start.y);
-        if (dx > 10 || dy > 10) {
-          movedRef.current = true;
-          clearLongTimer();
-        }
+        markMovedIfNeeded(e.nativeEvent.pageX, e.nativeEvent.pageY);
       }}
-      onTouchEnd={() => {
+      onTouchEnd={(e) => {
         clearLongTimer();
+        markMovedIfNeeded(e.nativeEvent.pageX, e.nativeEvent.pageY);
+        // Parent scroller often suppresses move events; if the finger still
+        // traveled, never treat this as a tap.
         if (!movedRef.current && !longFiredRef.current && startRef.current) {
           onPress();
         }
@@ -101,6 +111,4 @@ const styles = StyleSheet.create({
   },
 });
 
-// touchAction isn't in RN's ViewStyle typings — cast, same pattern this
-// codebase already uses for web-only CSS (e.g. `cursor` in ReelsScreen styles).
 const webPanStyle = { touchAction: 'pan-y' } as object;

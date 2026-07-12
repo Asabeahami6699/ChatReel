@@ -7,6 +7,7 @@ import { ExpandableCaption } from './ExpandableCaption';
 import { ReelSoundStrip } from './ReelSoundStrip';
 import { REEL_ACCENT } from './reelTheme';
 import { formatReelCount, reelAuthorLabel, reelAvatarUrl } from './reelFeedRowUtils';
+import { ReelVideoTapLayer } from './ReelVideoTapLayer';
 
 function ActionIcon({
   name,
@@ -80,13 +81,8 @@ function ReelFloatingChromeComponent({
       style={[styles.layer, !usePhoneFrame && { transform: [{ translateY: REEL_CONTENT_SHIFT_DOWN }] }]}
       pointerEvents="box-none"
     >
-      {/* Center tap target — NOT full-bleed, so edge swipes hit the ScrollView */}
-      <TouchableOpacity
-        activeOpacity={1}
-        onPress={onTogglePlayPause}
-        style={styles.centerTap}
-        accessibilityLabel="Play or pause"
-      />
+      {/* Center tap — passive layer so vertical swipes still reach the ScrollView */}
+      <ReelVideoTapLayer style={styles.centerTap} onPress={onTogglePlayPause} />
 
       <View
         style={[
@@ -207,6 +203,7 @@ const styles = StyleSheet.create({
     bottom: '28%',
     left: '26%',
     right: '22%',
+    zIndex: 2,
   },
   bottomMeta: {
     position: 'absolute',
