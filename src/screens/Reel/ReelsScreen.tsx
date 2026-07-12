@@ -5,6 +5,8 @@ import {
   Animated,
   FlatList,
   Modal,
+  NativeSyntheticEvent,
+  NativeScrollEvent,
   PanResponder,
   Platform,
   ScrollView,
@@ -853,24 +855,23 @@ export default function ReelsScreen() {
   }, []);
 
   const onScrollEndDrag = useCallback(
-    (e: { nativeEvent: { contentOffset: { y: number }; velocity?: { y: number } } }) => {
-      // If there's little/no momentum left, snap immediately.
-      const vy = Math.abs(e.nativeEvent.velocity?.y ?? 0);
-      if (vy < 0.05) {
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const rawVelocity = e.nativeEvent.velocity?.y;
+      // On web/touch, velocity is frequently undefined — don't treat that as "no momentum".
+      if (rawVelocity != null && Math.abs(rawVelocity) < 0.05) {
         snapToAdjacentReel(e.nativeEvent.contentOffset.y);
       }
     },
     [snapToAdjacentReel]
   );
-
+  
   const onMomentumScrollEnd = useCallback(
-    (e: { nativeEvent: { contentOffset: { y: number } } }) => {
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
       if (isSnappingRef.current) return;
       snapToAdjacentReel(e.nativeEvent.contentOffset.y);
     },
     [snapToAdjacentReel]
   );
-
   // Web: non-passive wheel listener (React's onWheel is passive → preventDefault warns / fails).
   useEffect(() => {
     if (Platform.OS !== 'web') return;
