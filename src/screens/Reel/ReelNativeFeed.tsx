@@ -9,6 +9,7 @@ import {
 import type { ReelDTO } from '../../lib/api';
 import type { ReelPlaybackStatus, ReelPlayerHandle } from '../../components/ReelPlayer';
 import { ReelPageMedia } from './ReelPageMedia';
+import { ReelVideoTapLayer } from './ReelVideoTapLayer';
 
 export type ReelNativeFeedHandle = {
   scrollToIndex: (index: number, animated?: boolean) => void;
@@ -31,12 +32,14 @@ type Props = {
   onPlaybackStatus: (reelId: string, status: ReelPlaybackStatus, isCurrent: boolean) => void;
   onRef: (reelId: string, ref: ReelPlayerHandle | null) => void;
   onMediaIndexChange: (reelId: string, mediaIndex: number) => void;
+  onVideoPress: (reel: ReelDTO) => void;
   onEndReached?: () => void;
 };
 
 /**
- * Native reel scroller — plain RN ScrollView + pagingEnabled.
- * Pages are video-only (pointerEvents none). No FlatList, no PagerView, no tap wrappers.
+ * Horizontal paging ScrollView (diagnostic / alternate gesture axis).
+ * Tap layer lives INSIDE each page (ScrollView child) so horizontal pans
+ * can still be claimed by the parent scroller.
  */
 export const ReelNativeFeed = forwardRef<ReelNativeFeedHandle, Props>(function ReelNativeFeed(
   {
@@ -56,34 +59,30 @@ export const ReelNativeFeed = forwardRef<ReelNativeFeedHandle, Props>(function R
     onPlaybackStatus,
     onRef,
     onMediaIndexChange,
+    onVideoPress,
     onEndReached,
   },
   ref
 ) {
   const scrollRef = useRef<ScrollView>(null);
-  const heightRef = useRef(reelHeight);
-  heightRef.current = reelHeight;
+  const widthRef = useRef(reelWidth);
+  widthRef.current = reelWidth;
   const indexRef = useRef(currentIndex);
   indexRef.current = currentIndex;
-  const lockingRef = useRef(false);
 
   useImperativeHandle(ref, () => ({
     scrollToIndex: (index: number, animated = true) => {
-      const h = heightRef.current;
-      lockingRef.current = true;
-      scrollRef.current?.scrollTo({ y: Math.max(0, index) * h, animated });
-      requestAnimationFrame(() => {
-        lockingRef.current = false;
-      });
+      const w = widthRef.current;
+      scrollRef.current?.scrollTo({ x: Math.max(0, index) * w, animated });
     },
   }));
 
   const onMomentumScrollEnd = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const h = heightRef.current;
-      if (h <= 0) return;
-      const y = e.nativeEvent.contentOffset.y;
-      const next = Math.max(0, Math.min(reels.length - 1, Math.round(y / h)));
+      const w = widthRef.current;
+      if (w <= 0) return;
+      const x = e.nativeEvent.contentOffset.x;
+      const next = Math.max(0, Math.min(reels.length - 1, Math.round(x / w)));
       if (next !== indexRef.current) onIndexChange(next);
       if (next >= reels.length - 4) onEndReached?.();
     },
@@ -92,21 +91,16 @@ export const ReelNativeFeed = forwardRef<ReelNativeFeedHandle, Props>(function R
 
   const onScrollEndDrag = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const h = heightRef.current;
-      if (h <= 0) return;
-      const y = e.nativeEvent.contentOffset.y;
-      const raw = Math.round(y / h);
-      // One page at a time from the drag start index.
+      const w = widthRef.current;
+      if (w <= 0) return;
+      const x = e.nativeEvent.contentOffset.x;
+      const raw = Math.round(x / w);
       const anchor = indexRef.current;
       const next = Math.max(anchor - 1, Math.min(anchor + 1, raw));
       const clamped = Math.max(0, Math.min(reels.length - 1, next));
-      const targetY = clamped * h;
-      if (Math.abs(y - targetY) > 1) {
-        lockingRef.current = true;
-        scrollRef.current?.scrollTo({ y: targetY, animated: true });
-        requestAnimationFrame(() => {
-          lockingRef.current = false;
-        });
+      const targetX = clamped * w;
+      if (Math.abs(x - targetX) > 1) {
+        scrollRef.current?.scrollTo({ x: targetX, animated: true });
       }
       if (clamped !== indexRef.current) onIndexChange(clamped);
     },
@@ -116,42 +110,51 @@ export const ReelNativeFeed = forwardRef<ReelNativeFeedHandle, Props>(function R
   return (
     <ScrollView
       ref={scrollRef}
+      horizontal
       style={{ height: reelHeight, width: reelWidth }}
       contentContainerStyle={{ flexGrow: 0 }}
       pagingEnabled
       decelerationRate="fast"
       disableIntervalMomentum
-      showsVerticalScrollIndicator={false}
+      showsHorizontalScrollIndicator={false}
       bounces={false}
       overScrollMode="never"
       nestedScrollEnabled={false}
+      directionalLockEnabled
       scrollEventThrottle={16}
       onScrollEndDrag={onScrollEndDrag}
       onMomentumScrollEnd={onMomentumScrollEnd}
       removeClippedSubviews={false}
     >
       {reels.map((item, index) => (
-        <View key={item.id} style={{ height: reelHeight, width: reelWidth }} collapsable={false}>
-          {/* Only mount nearby pages to keep memory down */}
+        <View
+          key={item.id}
+          style={{ height: reelHeight, width: reelWidth }}
+          collapsable={false}
+          pointerEvents="box-none"
+        >
           {Math.abs(index - currentIndex) <= 2 ? (
-            <ReelPageMedia
-              item={item}
-              index={index}
-              currentIndex={currentIndex}
-              reelWidth={reelWidth}
-              reelHeight={reelHeight}
-              isFocused={isFocused}
-              mediaShouldPlay={mediaShouldPlay}
-              isMuted={isMuted}
-              volume={volume}
-              isReady={readyReelIds.has(item.id)}
-              videoUri={resolveUri(item)}
-              onReady={onReady}
-              onPlaybackStatus={onPlaybackStatus}
-              onRef={onRef}
-              onMediaIndexChange={onMediaIndexChange}
-              showEndScreen={endScreenReelId === item.id}
-            />
+            <>
+              <ReelPageMedia
+                item={item}
+                index={index}
+                currentIndex={currentIndex}
+                reelWidth={reelWidth}
+                reelHeight={reelHeight}
+                isFocused={isFocused}
+                mediaShouldPlay={mediaShouldPlay}
+                isMuted={isMuted}
+                volume={volume}
+                isReady={readyReelIds.has(item.id)}
+                videoUri={resolveUri(item)}
+                onReady={onReady}
+                onPlaybackStatus={onPlaybackStatus}
+                onRef={onRef}
+                onMediaIndexChange={onMediaIndexChange}
+                showEndScreen={endScreenReelId === item.id}
+              />
+              <ReelVideoTapLayer onPress={() => onVideoPress(item)} />
+            </>
           ) : (
             <View style={[styles.placeholder, { height: reelHeight, width: reelWidth }]} />
           )}

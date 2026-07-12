@@ -84,7 +84,7 @@ const navArrowStyles = StyleSheet.create({
     position: 'absolute',
     left: 10,
     top: '50%' as unknown as number,
-    marginTop: -78,
+    marginTop: -52,
     zIndex: 40,
     elevation: 40,
     gap: 10,
@@ -622,26 +622,31 @@ export default function ReelsScreen() {
     setIsPlaying((p) => !p);
   }, [getActivePlayer, isPlaying]);
 
+  const tapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const handleVideoPress = useCallback(
     (reel: ReelDTO) => {
       const now = Date.now();
-      if (now - lastTap.current < 300) {
+      if (now - lastTap.current < 350) {
         tapCount.current += 1;
-        if (tapCount.current === 2) {
-          if (!reel.liked_by_me) void toggleLike(reel, true);
-          else animateHeart();
-          tapCount.current = 0;
-        }
       } else {
         tapCount.current = 1;
       }
       lastTap.current = now;
-      setTimeout(() => {
-        if (tapCount.current === 1) {
+
+      if (tapTimerRef.current) clearTimeout(tapTimerRef.current);
+      tapTimerRef.current = setTimeout(() => {
+        const count = tapCount.current;
+        tapCount.current = 0;
+        tapTimerRef.current = null;
+        // Single tap → pause/play. Double / triple / more → like.
+        if (count >= 2) {
+          if (!reel.liked_by_me) void toggleLike(reel, true);
+          else animateHeart();
+        } else if (count === 1) {
           void togglePlayPause();
         }
-        tapCount.current = 0;
-      }, 300);
+      }, 320);
     },
     [animateHeart, toggleLike, togglePlayPause]
   );
@@ -801,13 +806,16 @@ export default function ReelsScreen() {
     if (list.length === 0) return;
     const clamped = Math.max(0, Math.min(list.length - 1, index));
     if (Platform.OS === 'web') {
-      const h = reelHeightRef.current;
-      flatListRef.current?.scrollToOffset({ offset: clamped * h, animated });
+      // Horizontal paging diagnostic — page width is reelWidth.
+      flatListRef.current?.scrollToOffset({
+        offset: clamped * reelWidth,
+        animated,
+      });
     } else {
       nativeFeedRef.current?.scrollToIndex(clamped, animated);
     }
     activateReelAtIndexRef.current(clamped);
-  }, []);
+  }, [reelWidth]);
 
   goToReelIndexRef.current = goToReelIndex;
 
@@ -818,28 +826,28 @@ export default function ReelsScreen() {
 
   const getItemLayout = useCallback(
     (_data: ArrayLike<ReelDTO> | null | undefined, index: number) => ({
-      length: reelHeight,
-      offset: reelHeight * index,
+      length: reelWidth,
+      offset: reelWidth * index,
       index,
     }),
-    [reelHeight]
+    [reelWidth]
   );
 
-  /** No matter how fast the fling, only allow landing on the adjacent reel. */
+  /** Snap to adjacent page on the horizontal axis. */
   const snapToAdjacentReel = useCallback(
-    (offsetY: number) => {
-      const h = reelHeightRef.current;
-      if (h <= 0) return;
+    (offsetX: number) => {
+      const w = reelWidth;
+      if (w <= 0) return;
       const reelsLen = reelsRef.current.length;
       if (reelsLen <= 0) return;
 
-      const rawIndex = Math.round(offsetY / h);
+      const rawIndex = Math.round(offsetX / w);
       const anchor = scrollAnchorIndexRef.current;
       const clamped = Math.max(anchor - 1, Math.min(anchor + 1, rawIndex));
       const target = Math.max(0, Math.min(reelsLen - 1, clamped));
-      const targetOffset = target * h;
+      const targetOffset = target * w;
 
-      if (Math.abs(offsetY - targetOffset) > 2 || target !== rawIndex) {
+      if (Math.abs(offsetX - targetOffset) > 2 || target !== rawIndex) {
         isSnappingRef.current = true;
         flatListRef.current?.scrollToOffset({ offset: targetOffset, animated: true });
         requestAnimationFrame(() => {
@@ -847,7 +855,7 @@ export default function ReelsScreen() {
         });
       }
     },
-    []
+    [reelWidth]
   );
 
   const onScrollBeginDrag = useCallback(() => {
@@ -856,10 +864,9 @@ export default function ReelsScreen() {
 
   const onScrollEndDrag = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const rawVelocity = e.nativeEvent.velocity?.y;
-      // On web/touch, velocity is frequently undefined — don't treat that as "no momentum".
+      const rawVelocity = e.nativeEvent.velocity?.x;
       if (rawVelocity != null && Math.abs(rawVelocity) < 0.05) {
-        snapToAdjacentReel(e.nativeEvent.contentOffset.y);
+        snapToAdjacentReel(e.nativeEvent.contentOffset.x);
       }
     },
     [snapToAdjacentReel]
@@ -868,7 +875,7 @@ export default function ReelsScreen() {
   const onMomentumScrollEnd = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
       if (isSnappingRef.current) return;
-      snapToAdjacentReel(e.nativeEvent.contentOffset.y);
+      snapToAdjacentReel(e.nativeEvent.contentOffset.x);
     },
     [snapToAdjacentReel]
   );
@@ -879,13 +886,11 @@ export default function ReelsScreen() {
     if (!node) return;
 
     const onWheel = (e: WheelEvent) => {
-      if (Math.abs(e.deltaY) < 10) return;
+      if (Math.abs(e.deltaY) < 10 && Math.abs(e.deltaX) < 10) return;
       e.preventDefault();
       e.stopPropagation();
       if (wheelLockRef.current || isSnappingRef.current) return;
-      const h = reelHeightRef.current;
-      if (h <= 0) return;
-      const dir = e.deltaY > 0 ? 1 : -1;
+      const dir = e.deltaY > 0 || e.deltaX > 0 ? 1 : -1;
       const from = currentIndexRef.current;
       const target = Math.max(0, Math.min(reelsRef.current.length - 1, from + dir));
       if (target === from) return;
@@ -1199,19 +1204,20 @@ export default function ReelsScreen() {
       {Platform.OS === 'web' ? (
       <FlatList
         ref={flatListRef}
-        key={`reels-feed-${reelHeight}`}
+        key={`reels-feed-h-${reelWidth}`}
         data={reels}
-        style={{ height: reelHeight, overflow: 'hidden' }}
+        horizontal
+        style={{ height: reelHeight, width: reelWidth, overflow: 'hidden' }}
         contentContainerStyle={reels.length === 0 ? undefined : { flexGrow: 0 }}
         extraData={currentIndex}
         renderItem={renderReel}
         keyExtractor={(item) => item.id}
-        showsVerticalScrollIndicator={false}
+        showsHorizontalScrollIndicator={false}
         onViewableItemsChanged={onViewableItemsChanged}
         viewabilityConfig={viewabilityConfig}
         getItemLayout={getItemLayout}
         pagingEnabled
-        snapToInterval={reelHeight}
+        snapToInterval={reelWidth}
         snapToAlignment="start"
         disableIntervalMomentum
         decelerationRate="fast"
@@ -1299,6 +1305,7 @@ export default function ReelsScreen() {
           onPlaybackStatus={handlePlaybackStatus}
           onRef={registerVideoRef}
           onMediaIndexChange={handleMediaIndexChange}
+          onVideoPress={handleVideoPress}
           onEndReached={() => {
             if (hasMore && !loadingMore) loadMore();
           }}
@@ -1400,22 +1407,9 @@ export default function ReelsScreen() {
             accessibilityLabel="Previous reel"
           >
             <Ionicons
-              name="chevron-up"
+              name="chevron-back"
               size={usePhoneFrame ? 28 : 26}
               color={currentIndex === 0 ? 'rgba(255,255,255,0.25)' : '#fff'}
-            />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={usePhoneFrame ? navArrowStyles.btn : navArrowStyles.btnPhone}
-            onPress={() => void togglePlayPause()}
-            activeOpacity={0.7}
-            hitSlop={8}
-            accessibilityLabel={isPlaying ? 'Pause' : 'Play'}
-          >
-            <Ionicons
-              name={isPlaying ? 'pause' : 'play'}
-              size={usePhoneFrame ? 26 : 24}
-              color="#fff"
             />
           </TouchableOpacity>
           <TouchableOpacity
@@ -1432,7 +1426,7 @@ export default function ReelsScreen() {
             accessibilityLabel="Next reel"
           >
             <Ionicons
-              name="chevron-down"
+              name="chevron-forward"
               size={usePhoneFrame ? 28 : 26}
               color={currentIndex >= reels.length - 1 ? 'rgba(255,255,255,0.25)' : '#fff'}
             />

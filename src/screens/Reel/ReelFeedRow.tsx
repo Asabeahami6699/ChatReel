@@ -15,6 +15,7 @@ import {
   reelRowDataEqual,
 } from './reelFeedRowUtils';
 import { ReelEndScreen } from './ReelEndScreen';
+import { ReelVideoTapLayer } from './ReelVideoTapLayer';
 
 function ActionIcon({
   name,
@@ -89,7 +90,7 @@ function ReelFeedRowComponent({
   metaBottom,
   myProfileId,
   videoUri,
-  onVideoPress: _onVideoPress,
+  onVideoPress,
   onDelete: _onDelete,
   onToggleLike,
   onQuickFollow,
@@ -129,26 +130,28 @@ function ReelFeedRowComponent({
             style={[
               styles.videoTouchLayer,
               usePhoneFrame && [styles.videoTouchLayerDesktop, { width: reelWidth }],
-              { pointerEvents: 'none' },
             ]}
+            pointerEvents="box-none"
           >
-        <ReelFeedMedia
-          reel={item}
-          reelIndex={index}
-          currentReelIndex={currentIndex}
-          videoUri={videoUri}
-          frameWidth={reelWidth}
-          frameHeight={reelHeight}
-          isFocused={isFocused}
-          isPlaying={rowPlaying}
-          isMuted={isMuted}
-          volume={isMuted ? 0 : volume}
-          isReady={isReady}
-          onReady={onReady}
-          onPlaybackStatus={onPlaybackStatus}
-          onRef={onRef}
-          onMediaIndexChange={onMediaIndexChange}
-        />
+        <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+          <ReelFeedMedia
+            reel={item}
+            reelIndex={index}
+            currentReelIndex={currentIndex}
+            videoUri={videoUri}
+            frameWidth={reelWidth}
+            frameHeight={reelHeight}
+            isFocused={isFocused}
+            isPlaying={rowPlaying}
+            isMuted={isMuted}
+            volume={isMuted ? 0 : volume}
+            isReady={isReady}
+            onReady={onReady}
+            onPlaybackStatus={onPlaybackStatus}
+            onRef={onRef}
+            onMediaIndexChange={onMediaIndexChange}
+          />
+        </View>
         {showEndScreen && isCurrent ? (
           <View
             style={[styles.endScreenHost, usePhoneFrame && { width: reelWidth }]}
@@ -157,6 +160,7 @@ function ReelFeedRowComponent({
             <ReelEndScreen ownerName={author} />
           </View>
         ) : null}
+        <ReelVideoTapLayer onPress={() => onVideoPress(item)} />
       </View>
 
       <View
@@ -307,10 +311,10 @@ export const ReelFeedRow = memo(ReelFeedRowComponent, propsAreEqual);
 const styles = StyleSheet.create({
   reelContainer: { position: 'relative', backgroundColor: '#000', overflow: 'hidden' },
   reelContainerDesktop: { borderRadius: 16, overflow: 'hidden' },
-  reelContent: { ...StyleSheet.absoluteFillObject },
-  videoTouchLayer: { ...StyleSheet.absoluteFillObject, zIndex: 1 },
+  reelContent: { ...StyleSheet.absoluteFill },
+  videoTouchLayer: { ...StyleSheet.absoluteFill, zIndex: 1 },
   endScreenHost: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 2,
   },
   videoTouchLayerDesktop: {

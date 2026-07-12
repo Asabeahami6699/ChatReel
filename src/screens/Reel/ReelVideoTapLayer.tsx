@@ -14,17 +14,13 @@ type Props = {
   delayLongPress?: number;
 };
 
-/** Pixels of movement that cancel a tap (vertical is stricter — that's the swipe axis). */
-const TAP_SLOP_X = 12;
-const TAP_SLOP_Y = 8;
+/** Cancel tap if the finger moved — stricter on X because feed pages horizontally. */
+const TAP_SLOP_X = 8;
+const TAP_SLOP_Y = 12;
 
 /**
- * Passive touch observers only — never become the JS responder and never
- * register an RNGH gesture. Pressable / TouchableOpacity steal vertical pans.
- *
- * Important: when a parent ScrollView/FlatList takes the gesture, onTouchMove
- * may never fire on this view. Always re-check pageX/pageY on touchEnd so a
- * swipe does not get mis-detected as a tap (which was pausing the reel).
+ * Passive touch observers only — never become the JS responder.
+ * Must be a CHILD of the paging ScrollView (not a sibling overlay above it).
  */
 export function ReelVideoTapLayer({
   style,
@@ -32,7 +28,7 @@ export function ReelVideoTapLayer({
   onLongPress,
   delayLongPress = 700,
 }: Props) {
-  const startRef = useRef<{ x: number; y: number; t: number } | null>(null);
+  const startRef = useRef<{ x: number; y: number } | null>(null);
   const movedRef = useRef(false);
   const longTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longFiredRef = useRef(false);
@@ -65,7 +61,7 @@ export function ReelVideoTapLayer({
       onMoveShouldSetResponderCapture={() => false}
       onTouchStart={(e) => {
         const { pageX, pageY } = e.nativeEvent;
-        startRef.current = { x: pageX, y: pageY, t: Date.now() };
+        startRef.current = { x: pageX, y: pageY };
         movedRef.current = false;
         longFiredRef.current = false;
         clearLongTimer();
@@ -84,8 +80,6 @@ export function ReelVideoTapLayer({
       onTouchEnd={(e) => {
         clearLongTimer();
         markMovedIfNeeded(e.nativeEvent.pageX, e.nativeEvent.pageY);
-        // Parent scroller often suppresses move events; if the finger still
-        // traveled, never treat this as a tap.
         if (!movedRef.current && !longFiredRef.current && startRef.current) {
           onPress();
         }
@@ -111,4 +105,4 @@ const styles = StyleSheet.create({
   },
 });
 
-const webPanStyle = { touchAction: 'pan-y' } as object;
+const webPanStyle = { touchAction: 'pan-x' } as object;
