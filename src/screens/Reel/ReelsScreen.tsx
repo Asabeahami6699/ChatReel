@@ -64,6 +64,8 @@ import { ReelGiftBurst, type GiftBurstPayload } from './ReelGiftBurst';
 import { useWallet } from '../../hooks/useWallet';
 import { useReelProfileStore } from '../../stores/reelProfileStore';
 import { ReelNativeFeed, type ReelNativeFeedHandle } from './ReelNativeFeed';
+import { ReelWebFeed, type ReelWebFeedHandle } from './ReelWebFeed';
+import { dbgReelSwipe } from './dbgReelSwipe';
 import { ReelFloatingChrome } from './ReelFloatingChrome';
 
 const WINDOW_HEIGHT = SCREEN_HEIGHT;
@@ -159,6 +161,7 @@ export default function ReelsScreen() {
   const [showUploadPanel, setShowUploadPanel] = useState(false);
 
   const flatListRef = useRef<FlatList<ReelDTO>>(null);
+  const webFeedRef = useRef<ReelWebFeedHandle>(null);
   const nativeFeedRef = useRef<ReelNativeFeedHandle>(null);
   const feedClipRef = useRef<View>(null);
   const wheelLockRef = useRef(false);
@@ -806,16 +809,12 @@ export default function ReelsScreen() {
     if (list.length === 0) return;
     const clamped = Math.max(0, Math.min(list.length - 1, index));
     if (Platform.OS === 'web') {
-      // Horizontal paging diagnostic — page width is reelWidth.
-      flatListRef.current?.scrollToOffset({
-        offset: clamped * reelWidth,
-        animated,
-      });
+      webFeedRef.current?.scrollToIndex(clamped, animated);
     } else {
       nativeFeedRef.current?.scrollToIndex(clamped, animated);
     }
     activateReelAtIndexRef.current(clamped);
-  }, [reelWidth]);
+  }, []);
 
   goToReelIndexRef.current = goToReelIndex;
 
@@ -826,28 +825,28 @@ export default function ReelsScreen() {
 
   const getItemLayout = useCallback(
     (_data: ArrayLike<ReelDTO> | null | undefined, index: number) => ({
-      length: reelWidth,
-      offset: reelWidth * index,
+      length: reelHeight,
+      offset: reelHeight * index,
       index,
     }),
-    [reelWidth]
+    [reelHeight]
   );
 
-  /** Snap to adjacent page on the horizontal axis. */
+  /** No matter how fast the fling, only allow landing on the adjacent reel. */
   const snapToAdjacentReel = useCallback(
-    (offsetX: number) => {
-      const w = reelWidth;
-      if (w <= 0) return;
+    (offsetY: number) => {
+      const h = reelHeightRef.current;
+      if (h <= 0) return;
       const reelsLen = reelsRef.current.length;
       if (reelsLen <= 0) return;
 
-      const rawIndex = Math.round(offsetX / w);
+      const rawIndex = Math.round(offsetY / h);
       const anchor = scrollAnchorIndexRef.current;
       const clamped = Math.max(anchor - 1, Math.min(anchor + 1, rawIndex));
       const target = Math.max(0, Math.min(reelsLen - 1, clamped));
-      const targetOffset = target * w;
+      const targetOffset = target * h;
 
-      if (Math.abs(offsetX - targetOffset) > 2 || target !== rawIndex) {
+      if (Math.abs(offsetY - targetOffset) > 2 || target !== rawIndex) {
         isSnappingRef.current = true;
         flatListRef.current?.scrollToOffset({ offset: targetOffset, animated: true });
         requestAnimationFrame(() => {
@@ -855,45 +854,99 @@ export default function ReelsScreen() {
         });
       }
     },
-    [reelWidth]
+    []
   );
 
   const onScrollBeginDrag = useCallback(() => {
     scrollAnchorIndexRef.current = currentIndexRef.current;
+    // #region agent log
+    dbgReelSwipe('A', 'ReelsScreen.tsx:onScrollBeginDrag', 'flatlist scroll begin drag', {
+      index: currentIndexRef.current,
+      platform: Platform.OS,
+    });
+    // #endregion
   }, []);
 
   const onScrollEndDrag = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const rawVelocity = e.nativeEvent.velocity?.x;
+      const rawVelocity = e.nativeEvent.velocity?.y;
+      // #region agent log
+      dbgReelSwipe('D', 'ReelsScreen.tsx:onScrollEndDrag', 'flatlist scroll end drag', {
+        y: e.nativeEvent.contentOffset.y,
+        velocityY: rawVelocity ?? null,
+        index: currentIndexRef.current,
+      });
+      // #endregion
+      // On web/touch, velocity is frequently undefined — don't treat that as "no momentum".
       if (rawVelocity != null && Math.abs(rawVelocity) < 0.05) {
-        snapToAdjacentReel(e.nativeEvent.contentOffset.x);
+        snapToAdjacentReel(e.nativeEvent.contentOffset.y);
       }
     },
     [snapToAdjacentReel]
   );
-  
+
   const onMomentumScrollEnd = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      // #region agent log
+      dbgReelSwipe('D', 'ReelsScreen.tsx:onMomentumScrollEnd', 'flatlist momentum end', {
+        y: e.nativeEvent.contentOffset.y,
+        index: currentIndexRef.current,
+        snapping: isSnappingRef.current,
+      });
+      // #endregion
       if (isSnappingRef.current) return;
-      snapToAdjacentReel(e.nativeEvent.contentOffset.x);
+      snapToAdjacentReel(e.nativeEvent.contentOffset.y);
     },
     [snapToAdjacentReel]
   );
-  // Web: non-passive wheel listener (React's onWheel is passive → preventDefault warns / fails).
+
+  const scrollLogLastRef = useRef(0);
+  const onFeedScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const now = Date.now();
+    if (now - scrollLogLastRef.current < 120) return;
+    scrollLogLastRef.current = now;
+    // #region agent log
+    dbgReelSwipe('E', 'ReelsScreen.tsx:onFeedScroll', 'flatlist onScroll', {
+      y: e.nativeEvent.contentOffset.y,
+      contentH: e.nativeEvent.contentSize?.height ?? null,
+      layoutH: e.nativeEvent.layoutMeasurement?.height ?? null,
+    });
+    // #endregion
+  }, []);
+
+  // Web: desktop still uses discrete wheel paging. Mobile touch uses ReelWebFeed
+  // (native CSS overflow + scroll-snap) — synthetic JS swipes never received move events.
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     const node = feedClipRef.current as unknown as HTMLElement | null;
     if (!node) return;
 
     const onWheel = (e: WheelEvent) => {
-      if (Math.abs(e.deltaY) < 10 && Math.abs(e.deltaX) < 10) return;
+      if (Math.abs(e.deltaY) < 10) return;
+      const rect = node.getBoundingClientRect();
+      if (
+        e.clientX < rect.left ||
+        e.clientX > rect.right ||
+        e.clientY < rect.top ||
+        e.clientY > rect.bottom
+      ) {
+        return;
+      }
       e.preventDefault();
       e.stopPropagation();
       if (wheelLockRef.current || isSnappingRef.current) return;
-      const dir = e.deltaY > 0 || e.deltaX > 0 ? 1 : -1;
+      const dir = e.deltaY > 0 ? 1 : -1;
       const from = currentIndexRef.current;
       const target = Math.max(0, Math.min(reelsRef.current.length - 1, from + dir));
       if (target === from) return;
+      // #region agent log
+      dbgReelSwipe('A', 'ReelsScreen.tsx:onWheel', 'wheel advance path', {
+        deltaY: e.deltaY,
+        from,
+        target,
+        runId: 'post-fix',
+      });
+      // #endregion
       scrollAnchorIndexRef.current = from;
       wheelLockRef.current = true;
       isSnappingRef.current = true;
@@ -903,6 +956,14 @@ export default function ReelsScreen() {
         wheelLockRef.current = false;
       }, 420);
     };
+
+    // #region agent log
+    dbgReelSwipe('A', 'ReelsScreen.tsx:webWheelEffect', 'web wheel handler armed', {
+      reelHeight,
+      reelCount: reelsRef.current.length,
+      runId: 'post-fix',
+    });
+    // #endregion
 
     node.addEventListener('wheel', onWheel, { passive: false });
     return () => node.removeEventListener('wheel', onWheel);
@@ -1202,37 +1263,17 @@ export default function ReelsScreen() {
 
       <View ref={feedClipRef} style={{ height: reelHeight, width: '100%', overflow: 'hidden' }}>
       {Platform.OS === 'web' ? (
-      <FlatList
-        ref={flatListRef}
-        key={`reels-feed-h-${reelWidth}`}
-        data={reels}
-        horizontal
-        style={{ height: reelHeight, width: reelWidth, overflow: 'hidden' }}
-        contentContainerStyle={reels.length === 0 ? undefined : { flexGrow: 0 }}
-        extraData={currentIndex}
+      <ReelWebFeed
+        ref={webFeedRef}
+        reels={reels}
+        currentIndex={currentIndex}
+        reelWidth={reelWidth}
+        reelHeight={reelHeight}
         renderItem={renderReel}
-        keyExtractor={(item) => item.id}
-        showsHorizontalScrollIndicator={false}
-        onViewableItemsChanged={onViewableItemsChanged}
-        viewabilityConfig={viewabilityConfig}
-        getItemLayout={getItemLayout}
-        pagingEnabled
-        snapToInterval={reelWidth}
-        snapToAlignment="start"
-        disableIntervalMomentum
-        decelerationRate="fast"
-        bounces={false}
-        onScrollBeginDrag={onScrollBeginDrag}
-        onScrollEndDrag={onScrollEndDrag}
-        onMomentumScrollEnd={onMomentumScrollEnd}
-        scrollEventThrottle={16}
-        windowSize={7}
-        maxToRenderPerBatch={3}
-        initialNumToRender={3}
+        onIndexChange={(index) => activateReelAtIndexRef.current(index)}
         onEndReached={() => {
           if (hasMore && !loadingMore) loadMore();
         }}
-        onEndReachedThreshold={0.5}
         ListEmptyComponent={
           <View style={[styles.emptyContainer, { height: reelHeight, width: reelWidth }]}>
             <Ionicons
@@ -1264,13 +1305,6 @@ export default function ReelsScreen() {
               </TouchableOpacity>
             )}
           </View>
-        }
-        ListFooterComponent={
-          loadingMore ? (
-            <View style={styles.footerLoader}>
-              <ActivityIndicator color="#fff" />
-            </View>
-          ) : null
         }
       />
       ) : reels.length === 0 ? (
@@ -1407,7 +1441,7 @@ export default function ReelsScreen() {
             accessibilityLabel="Previous reel"
           >
             <Ionicons
-              name="chevron-back"
+              name="chevron-up"
               size={usePhoneFrame ? 28 : 26}
               color={currentIndex === 0 ? 'rgba(255,255,255,0.25)' : '#fff'}
             />
@@ -1426,7 +1460,7 @@ export default function ReelsScreen() {
             accessibilityLabel="Next reel"
           >
             <Ionicons
-              name="chevron-forward"
+              name="chevron-down"
               size={usePhoneFrame ? 28 : 26}
               color={currentIndex >= reels.length - 1 ? 'rgba(255,255,255,0.25)' : '#fff'}
             />

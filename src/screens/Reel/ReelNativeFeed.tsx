@@ -37,8 +37,8 @@ type Props = {
 };
 
 /**
- * Horizontal paging ScrollView (diagnostic / alternate gesture axis).
- * Tap layer lives INSIDE each page (ScrollView child) so horizontal pans
+ * Vertical paging ScrollView.
+ * Tap layer lives INSIDE each page (ScrollView child) so vertical pans
  * can still be claimed by the parent scroller.
  */
 export const ReelNativeFeed = forwardRef<ReelNativeFeedHandle, Props>(function ReelNativeFeed(
@@ -65,24 +65,24 @@ export const ReelNativeFeed = forwardRef<ReelNativeFeedHandle, Props>(function R
   ref
 ) {
   const scrollRef = useRef<ScrollView>(null);
-  const widthRef = useRef(reelWidth);
-  widthRef.current = reelWidth;
+  const heightRef = useRef(reelHeight);
+  heightRef.current = reelHeight;
   const indexRef = useRef(currentIndex);
   indexRef.current = currentIndex;
 
   useImperativeHandle(ref, () => ({
     scrollToIndex: (index: number, animated = true) => {
-      const w = widthRef.current;
-      scrollRef.current?.scrollTo({ x: Math.max(0, index) * w, animated });
+      const h = heightRef.current;
+      scrollRef.current?.scrollTo({ y: Math.max(0, index) * h, animated });
     },
   }));
 
   const onMomentumScrollEnd = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const w = widthRef.current;
-      if (w <= 0) return;
-      const x = e.nativeEvent.contentOffset.x;
-      const next = Math.max(0, Math.min(reels.length - 1, Math.round(x / w)));
+      const h = heightRef.current;
+      if (h <= 0) return;
+      const y = e.nativeEvent.contentOffset.y;
+      const next = Math.max(0, Math.min(reels.length - 1, Math.round(y / h)));
       if (next !== indexRef.current) onIndexChange(next);
       if (next >= reels.length - 4) onEndReached?.();
     },
@@ -91,16 +91,16 @@ export const ReelNativeFeed = forwardRef<ReelNativeFeedHandle, Props>(function R
 
   const onScrollEndDrag = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const w = widthRef.current;
-      if (w <= 0) return;
-      const x = e.nativeEvent.contentOffset.x;
-      const raw = Math.round(x / w);
+      const h = heightRef.current;
+      if (h <= 0) return;
+      const y = e.nativeEvent.contentOffset.y;
+      const raw = Math.round(y / h);
       const anchor = indexRef.current;
       const next = Math.max(anchor - 1, Math.min(anchor + 1, raw));
       const clamped = Math.max(0, Math.min(reels.length - 1, next));
-      const targetX = clamped * w;
-      if (Math.abs(x - targetX) > 1) {
-        scrollRef.current?.scrollTo({ x: targetX, animated: true });
+      const targetY = clamped * h;
+      if (Math.abs(y - targetY) > 1) {
+        scrollRef.current?.scrollTo({ y: targetY, animated: true });
       }
       if (clamped !== indexRef.current) onIndexChange(clamped);
     },
@@ -110,13 +110,12 @@ export const ReelNativeFeed = forwardRef<ReelNativeFeedHandle, Props>(function R
   return (
     <ScrollView
       ref={scrollRef}
-      horizontal
       style={{ height: reelHeight, width: reelWidth }}
       contentContainerStyle={{ flexGrow: 0 }}
       pagingEnabled
       decelerationRate="fast"
       disableIntervalMomentum
-      showsHorizontalScrollIndicator={false}
+      showsVerticalScrollIndicator={false}
       bounces={false}
       overScrollMode="never"
       nestedScrollEnabled={false}
