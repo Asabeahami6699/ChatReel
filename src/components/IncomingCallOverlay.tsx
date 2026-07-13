@@ -13,22 +13,34 @@ import { supabase } from '../lib/supabase';
  */
 export function IncomingCallOverlay() {
   const incoming = useIncomingCall();
+  const [suppressedCallId, setSuppressedCallId] = useState<string | null>(null);
   const [peer, setPeer] = useState<{
     display_name: string | null;
     avatar_url: string | null;
   } | null>(null);
 
+  // New incoming call → clear prior dismiss so the next ring can show.
   useEffect(() => {
-    if (!incoming) {
+    if (incoming && suppressedCallId && incoming.id !== suppressedCallId) {
+      setSuppressedCallId(null);
+    }
+    if (!incoming) setSuppressedCallId(null);
+  }, [incoming, suppressedCallId]);
+
+  const activeCall =
+    incoming && incoming.id !== suppressedCallId ? incoming : null;
+
+  useEffect(() => {
+    if (!activeCall) {
       setPeer(null);
       return;
     }
     let alive = true;
     supabase.auth.getUser().then(async ({ data: meRes }) => {
       const myAuth = meRes.user?.id;
-      if (incoming.scope === 'group' && incoming.group_id) {
+      if (activeCall.scope === 'group' && activeCall.group_id) {
         try {
-          const { group } = await api.groups.get(incoming.group_id);
+          const { group } = await api.groups.get(activeCall.group_id);
           if (!alive) return;
           const g = group as { name?: string; avatar_url?: string | null };
           setPeer({
@@ -41,7 +53,7 @@ export function IncomingCallOverlay() {
         return;
       }
       const otherAuth =
-        incoming.caller_id === myAuth ? incoming.callee_id : incoming.caller_id;
+        activeCall.caller_id === myAuth ? activeCall.callee_id : activeCall.caller_id;
       if (!otherAuth) return;
       try {
         const { profile } = (await api.profiles.getByUserId(otherAuth)) as {
@@ -59,9 +71,15 @@ export function IncomingCallOverlay() {
     return () => {
       alive = false;
     };
-  }, [incoming]);
+  }, [activeCall]);
 
-  const visible = !!incoming && (incoming.status === 'ringing' || incoming.status === 'accepted');
+  const visible =
+    !!activeCall &&
+    (activeCall.status === 'ringing' || activeCall.status === 'accepted');
+
+  const dismiss = () => {
+    if (activeCall?.id) setSuppressedCallId(activeCall.id);
+  };
 
   return (
     <Modal
@@ -74,12 +92,8 @@ export function IncomingCallOverlay() {
         /* Decline is handled by IncomingCallScreen buttons only. */
       }}
     >
-      {incoming ? (
-        <IncomingCallScreen
-          call={incoming}
-          peer={peer}
-          onDismiss={() => undefined}
-        />
+      {activeCall ? (
+        <IncomingCallScreen call={activeCall} peer={peer} onDismiss={dismiss} />
       ) : null}
     </Modal>
   );

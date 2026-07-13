@@ -201,12 +201,15 @@ router.post(
       if (call.callee_id !== userId) {
         return res.status(403).json({ error: 'This call is not for you' });
       }
-      if (call.status !== 'ringing') {
-        return res.status(409).json({ error: 'Call is no longer ringing' });
-      }
     }
 
-    // Authorisation: must be invited.
+    // Terminal states cannot be joined. Already-accepted is OK (idempotent rejoin /
+    // double-tap after the first accept succeeded / mid-call invite).
+    if (!['ringing', 'accepted'].includes(call.status)) {
+      return res.status(409).json({ error: 'Call is no longer active' });
+    }
+
+    // Authorisation: must be invited (or already joined for reconnect).
     const { data: participant } = await supabaseAdmin
       .from('call_participants')
       .select('id, state')
@@ -224,10 +227,9 @@ router.post(
         state: 'joined',
         joined_at: new Date().toISOString(),
       });
-    } else {
-      if (call.scope === 'direct' && participant.state !== 'invited') {
-        return res.status(403).json({ error: 'Not allowed to accept this call' });
-      }
+    } else if (participant.state === 'declined') {
+      return res.status(403).json({ error: 'Not allowed to accept this call' });
+    } else if (participant.state !== 'joined') {
       await supabaseAdmin
         .from('call_participants')
         .update({ state: 'joined', joined_at: new Date().toISOString() })
@@ -238,20 +240,29 @@ router.post(
     if (call.status === 'ringing') {
       await supabaseAdmin
         .from('calls')
-        .update({ status: 'accepted' })
+        .update({
+          status: 'accepted',
+          started_at: new Date().toISOString(),
+        })
         .eq('id', id)
         .eq('status', 'ringing');
     }
+
+    const { data: freshCall } = await supabaseAdmin
+      .from('calls')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
 
     const displayName = await resolveDisplayName(userId);
     const liveKit = await createLiveKitToken({
       userId,
       identity: userId,
       displayName,
-      roomName: call.room_name,
+      roomName: (freshCall ?? call).room_name,
     });
 
-    return res.json({ call, live_kit: liveKit });
+    return res.json({ call: freshCall ?? call, live_kit: liveKit });
   })
 );
 

@@ -63,17 +63,24 @@ export default function IncomingCallScreen({ call, peer, onDismiss }: Props) {
     };
   }, [call.caller_id, peer]);
 
+  const acceptingRef = React.useRef(false);
+
   const accept = async () => {
+    if (acceptingRef.current) return;
+    acceptingRef.current = true;
+    Vibration.cancel();
+    // Hide overlay immediately so it cannot sit on top of ActiveCall and
+    // trigger a second accept (which used to 409).
+    onDismiss();
     try {
       const { call: acceptedCall, live_kit } = await api.calls.accept(call.id);
-      Vibration.cancel();
-      onDismiss();
       replaceWithActiveCall({
         call: acceptedCall,
         token: live_kit.token,
         url: live_kit.url,
       });
     } catch (err) {
+      acceptingRef.current = false;
       const message = err instanceof ApiError ? err.message : 'Could not join the call';
       Alert.alert('Call', message);
     }
@@ -81,10 +88,11 @@ export default function IncomingCallScreen({ call, peer, onDismiss }: Props) {
 
   const decline = async () => {
     Vibration.cancel();
+    onDismiss();
     try {
       await api.calls.decline(call.id);
-    } finally {
-      onDismiss();
+    } catch {
+      /* ignore — UI already dismissed */
     }
   };
 

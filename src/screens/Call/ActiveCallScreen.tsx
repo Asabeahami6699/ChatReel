@@ -226,17 +226,17 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
   }, []);
 
   const enableLocalVideo = React.useCallback(async () => {
-    const lk = await import('livekit-client');
     const room = roomRef.current;
     if (!room) return;
-    if (localVideoTrackRef.current) {
-      await room.localParticipant.setCameraEnabled(true);
-      return;
+    await room.localParticipant.setCameraEnabled(true);
+    const camPub = room.localParticipant.getTrackPublication?.(
+      (await import('livekit-client')).Track.Source.Camera
+    );
+    const track = camPub?.track;
+    if (track && localVideoRef.current) {
+      localVideoTrackRef.current = track;
+      track.attach(localVideoRef.current);
     }
-    const localTrack = await lk.createLocalVideoTrack();
-    localVideoTrackRef.current = localTrack;
-    await room.localParticipant.publishTrack(localTrack);
-    if (localVideoRef.current) localTrack.attach(localVideoRef.current);
   }, []);
 
   const disableLocalVideo = React.useCallback(async () => {
@@ -245,7 +245,6 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
     await room.localParticipant.setCameraEnabled(false);
     try {
       localVideoTrackRef.current?.detach?.();
-      localVideoTrackRef.current?.stop?.();
     } catch {
       /* ignore */
     }
@@ -340,7 +339,15 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
         await room.localParticipant.setMicrophoneEnabled(true);
 
         if (startedAsVideo) {
-          await enableLocalVideo();
+          try {
+            await enableLocalVideo();
+          } catch (camErr) {
+            console.warn('[call] camera enable failed:', camErr);
+            Alert.alert(
+              'Camera',
+              'Could not start the camera. You are still connected — check browser camera permissions and try the video button.'
+            );
+          }
         }
       } catch (err) {
         Alert.alert('Call error', err instanceof Error ? err.message : 'Failed to connect call');
