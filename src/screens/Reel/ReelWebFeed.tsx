@@ -15,7 +15,10 @@ export type ReelWebFeedHandle = {
 type Props = {
   reels: ReelDTO[];
   currentIndex: number;
+  /** Video frame width. */
   reelWidth: number;
+  /** Full page width (video + desktop action gutter when present). */
+  feedWidth: number;
   reelHeight: number;
   renderItem: (info: { item: ReelDTO; index: number }) => React.ReactElement | null;
   onIndexChange: (index: number) => void;
@@ -27,12 +30,15 @@ type Props = {
  * Mobile Chrome cannot pan RN FlatList (overflow:hidden + JS offset).
  * This uses a real overflow:scroll + CSS scroll-snap container so the
  * browser owns the vertical gesture.
+ *
+ * feedWidth must include desktopActionOffset so the engagement rail is not clipped.
  */
 export const ReelWebFeed = forwardRef<ReelWebFeedHandle, Props>(function ReelWebFeed(
   {
     reels,
     currentIndex,
     reelWidth,
+    feedWidth,
     reelHeight,
     renderItem,
     onIndexChange,
@@ -46,6 +52,7 @@ export const ReelWebFeed = forwardRef<ReelWebFeedHandle, Props>(function ReelWeb
   heightRef.current = reelHeight;
   const indexRef = useRef(currentIndex);
   indexRef.current = currentIndex;
+  const pageWidth = Math.max(reelWidth, feedWidth);
 
   const getEl = () => scrollerRef.current as unknown as HTMLElement | null;
 
@@ -113,12 +120,11 @@ export const ReelWebFeed = forwardRef<ReelWebFeedHandle, Props>(function ReelWeb
   return (
     <View
       ref={scrollerRef}
-      // RN-web maps these to real CSS so mobile Chrome can pan-y natively.
       style={[
         styles.scroller,
         {
           height: reelHeight,
-          width: reelWidth,
+          width: pageWidth,
         },
       ]}
       // @ts-expect-error RN-web scroll DOM attrs
@@ -131,7 +137,7 @@ export const ReelWebFeed = forwardRef<ReelWebFeedHandle, Props>(function ReelWeb
             styles.page,
             {
               height: reelHeight,
-              width: reelWidth,
+              width: pageWidth,
             },
           ]}
           collapsable={false}
@@ -143,14 +149,14 @@ export const ReelWebFeed = forwardRef<ReelWebFeedHandle, Props>(function ReelWeb
             pageEl.style.scrollSnapAlign = 'start';
             pageEl.style.scrollSnapStop = 'always';
             pageEl.style.height = `${reelHeight}px`;
-            pageEl.style.width = `${reelWidth}px`;
+            pageEl.style.width = `${pageWidth}px`;
             pageEl.style.flexShrink = '0';
           }}
         >
           {Math.abs(index - currentIndex) <= 2 ? (
             renderItem({ item, index })
           ) : (
-            <View style={{ height: reelHeight, width: reelWidth, backgroundColor: '#000' }} />
+            <View style={{ height: reelHeight, width: pageWidth, backgroundColor: '#000' }} />
           )}
         </View>
       ))}

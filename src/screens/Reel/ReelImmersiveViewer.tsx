@@ -119,7 +119,7 @@ export function ReelImmersiveViewer({
   const tapCount = useRef(0);
   const lastTap = useRef(0);
 
-  const { resolveUri, prefetchAround } = useReelVideoPrefetch(activeReelIdRef);
+  const { resolveUri, prefetchAround, warmReel } = useReelVideoPrefetch(activeReelIdRef);
 
   const patchReel = useCallback(
     (id: string, patch: Partial<ReelDTO>) => {
@@ -159,6 +159,19 @@ export function ReelImmersiveViewer({
       if (endScreenTimerRef.current) clearTimeout(endScreenTimerRef.current);
     };
   }, []);
+
+  // TikTok-style: on open, warm current + prefetch ahead so the first swipe is ready.
+  useEffect(() => {
+    const list = reelsRef.current;
+    if (!list.length) return;
+    const idx = Math.max(0, Math.min(list.length - 1, initialIndex));
+    const reel = list[idx];
+    if (!reel?.id) return;
+    activeReelIdRef.current = reel.id;
+    currentIndexRef.current = idx;
+    warmReel(reel);
+    prefetchAround(list, idx);
+  }, [initialIndex, reels, warmReel, prefetchAround]);
 
   const pausePlayers = useCallback(async () => {
     await Promise.all(
@@ -204,27 +217,28 @@ export function ReelImmersiveViewer({
     activeReelIdRef.current = reelId;
     const slideIndex = reelId ? (activeMediaIndexRef.current[reelId] ?? 0) : 0;
     const activeSlideKey = reelId ? `${reelId}:${slideIndex}` : null;
+
     await Promise.all(
-      Object.entries(videos.current).map(async ([id, player]) => {
+      Object.values(videos.current).map(async (player) => {
         if (!player) return;
         try {
-          const isActive =
-            reelId != null && (id === reelId || id === activeSlideKey || id.startsWith(`${reelId}:`));
-          if (isActive && (id === reelId || id === activeSlideKey)) {
-            if (wantPlay) {
-              const status = await player.getStatusAsync();
-              if (status.isLoaded) await player.playAsync();
-            } else {
-              await player.pauseAsync();
-            }
-          } else {
-            await player.pauseAsync();
-          }
+          await player.pauseAsync();
         } catch {
           /* ignore */
         }
       })
     );
+
+    if (!reelId || !wantPlay) return;
+    const active =
+      (activeSlideKey ? videos.current[activeSlideKey] : null) ?? videos.current[reelId] ?? null;
+    if (!active) return;
+    try {
+      const status = await active.getStatusAsync();
+      if (status.isLoaded) await active.playAsync();
+    } catch {
+      /* ignore */
+    }
   }, []);
 
   const playActiveReelRef = useRef(playActiveReel);

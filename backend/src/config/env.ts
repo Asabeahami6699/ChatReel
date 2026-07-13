@@ -43,6 +43,8 @@ export const env = {
     publicKey: process.env.PAYSTACK_PUBLIC_KEY ?? '',
     callbackUrl: process.env.PAYSTACK_CALLBACK_URL ?? '',
   },
+  /** Optional Expo push access token (Expo dashboard → Access tokens). */
+  expoAccessToken: process.env.EXPO_ACCESS_TOKEN ?? '',
 };
 
 export function isReelModerationEnabled(): boolean {

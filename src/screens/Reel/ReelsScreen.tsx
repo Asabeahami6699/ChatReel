@@ -60,58 +60,12 @@ import { ReelBuyCoinsSheet } from './ReelBuyCoinsSheet';
 import { ReelGiftBurst, type GiftBurstPayload } from './ReelGiftBurst';
 import { useWallet } from '../../hooks/useWallet';
 import { useReelProfileStore } from '../../stores/reelProfileStore';
-import { ReelNativeFeed, type ReelNativeFeedHandle } from './ReelNativeFeed';
 import { ReelWebFeed, type ReelWebFeedHandle } from './ReelWebFeed';
+import { ReelNativeFeed, type ReelNativeFeedHandle } from './ReelNativeFeed';
 import { ReelFloatingChrome } from './ReelFloatingChrome';
 
 const WINDOW_HEIGHT = SCREEN_HEIGHT;
 const PROGRESS_UI_MS = 280;
-
-const navArrowStyles = StyleSheet.create({
-  container: {
-    position: 'absolute',
-    right: 20,
-    top: '50%' as unknown as number,
-    marginTop: -52,
-    zIndex: 40,
-    elevation: 40,
-    gap: 8,
-    alignItems: 'center',
-  },
-  containerPhone: {
-    position: 'absolute',
-    left: 10,
-    top: '50%' as unknown as number,
-    marginTop: -52,
-    zIndex: 40,
-    elevation: 40,
-    gap: 10,
-    alignItems: 'center',
-  },
-  btn: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: 'rgba(255,255,255,0.12)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-  },
-  btnPhone: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.35)',
-  },
-  btnDisabled: {
-    opacity: 0.35,
-  },
-});
 
 export default function ReelsScreen() {
   const insets = useSafeAreaInsets();
@@ -510,23 +464,31 @@ export default function ReelsScreen() {
       activeReelIdRef.current = reelId;
       const slideIndex = reelId ? (activeMediaIndexRef.current[reelId] ?? 0) : 0;
       const activeSlideKey = reelId ? `${reelId}:${slideIndex}` : null;
+
+      // Pause everyone first so adjacent prefetched players never overlap audio/video.
+      const entries = Object.entries(videos.current);
       await Promise.all(
-        Object.entries(videos.current).map(async ([id, player]) => {
+        entries.map(async ([, player]) => {
           if (!player) return;
           try {
-            const isActive =
-              reelId != null && (id === reelId || id === activeSlideKey || id.startsWith(`${reelId}:`));
-            if (isActive && (id === reelId || id === activeSlideKey)) {
-              if (wantPlay) await player.playAsync();
-              else await player.pauseAsync();
-            } else {
-              await player.pauseAsync();
-            }
+            await player.pauseAsync();
           } catch {
-            /* ignore transient av errors */
+            /* ignore */
           }
         })
       );
+
+      if (!reelId || !wantPlay) return;
+      const active =
+        (activeSlideKey ? videos.current[activeSlideKey] : null) ??
+        videos.current[reelId] ??
+        null;
+      if (!active) return;
+      try {
+        await active.playAsync();
+      } catch {
+        /* ignore transient av errors */
+      }
     },
     []
   );
@@ -1117,6 +1079,7 @@ export default function ReelsScreen() {
         reels={reels}
         currentIndex={currentIndex}
         reelWidth={reelWidth}
+        feedWidth={reelWidth + desktopActionOffset}
         reelHeight={reelHeight}
         renderItem={renderReel}
         onIndexChange={(index) => activateReelAtIndexRef.current(index)}
@@ -1270,52 +1233,6 @@ export default function ReelsScreen() {
         onClose={() => setBuyCoinsOpen(false)}
         onPurchased={(balanceCoins) => setBalanceCoins(balanceCoins)}
       />
-
-      {reels.length > 0 && (
-        <View
-          style={usePhoneFrame ? navArrowStyles.container : navArrowStyles.containerPhone}
-          pointerEvents="box-none"
-        >
-          <TouchableOpacity
-            style={[
-              usePhoneFrame ? navArrowStyles.btn : navArrowStyles.btnPhone,
-              currentIndex === 0 && navArrowStyles.btnDisabled,
-            ]}
-            onPress={() => {
-              if (currentIndex > 0) goToReelIndex(currentIndex - 1, true);
-            }}
-            disabled={currentIndex === 0}
-            activeOpacity={0.7}
-            hitSlop={8}
-            accessibilityLabel="Previous reel"
-          >
-            <Ionicons
-              name="chevron-up"
-              size={usePhoneFrame ? 28 : 26}
-              color={currentIndex === 0 ? 'rgba(255,255,255,0.25)' : '#fff'}
-            />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[
-              usePhoneFrame ? navArrowStyles.btn : navArrowStyles.btnPhone,
-              currentIndex >= reels.length - 1 && navArrowStyles.btnDisabled,
-            ]}
-            onPress={() => {
-              if (currentIndex < reels.length - 1) goToReelIndex(currentIndex + 1, true);
-            }}
-            disabled={currentIndex >= reels.length - 1}
-            activeOpacity={0.7}
-            hitSlop={8}
-            accessibilityLabel="Next reel"
-          >
-            <Ionicons
-              name="chevron-down"
-              size={usePhoneFrame ? 28 : 26}
-              color={currentIndex >= reels.length - 1 ? 'rgba(255,255,255,0.25)' : '#fff'}
-            />
-          </TouchableOpacity>
-        </View>
-      )}
 
       <Modal
         visible={!!openComments}

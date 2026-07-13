@@ -1,7 +1,8 @@
 import React from 'react';
-import { Image, Platform, StyleSheet, View, type ImageStyle, type StyleProp, type ViewStyle } from 'react-native';
+import { Platform, StyleSheet, View, type ImageStyle, type StyleProp, type ViewStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { ReelDTO } from '../../lib/api';
+import { SoftFadeImage } from '../../components/SoftFadeImage';
 import { getReelGridThumbnail } from '../../lib/reelThumbnails';
 import { isImageReelUrl } from '../../lib/reelPlayback';
 
@@ -23,7 +24,18 @@ export function ReelGridThumb({ reel, generatedUri, style }: Props) {
   const preview = videoPreviewUrl(reel);
 
   if (thumb) {
-    return <Image source={{ uri: thumb }} style={style as StyleProp<ImageStyle>} resizeMode="cover" />;
+    return (
+      <SoftFadeImage
+        uri={thumb}
+        style={style}
+        resizeMode="cover"
+        fallback={
+          <View style={[styles.fill, styles.placeholder]}>
+            <Ionicons name="film-outline" size={28} color="#666" />
+          </View>
+        }
+      />
+    );
   }
 
   if (Platform.OS === 'web' && preview && !isImageReelUrl(preview)) {
@@ -39,7 +51,7 @@ export function ReelGridThumb({ reel, generatedUri, style }: Props) {
             height: '100%',
             objectFit: 'cover',
             display: 'block',
-            backgroundColor: '#111',
+            backgroundColor: '#2a2a2a',
             pointerEvents: 'none',
           },
         })}
@@ -55,10 +67,8 @@ export function ReelGridThumb({ reel, generatedUri, style }: Props) {
 }
 
 const styles = StyleSheet.create({
-  fill: { width: '100%', height: '100%' },
+  fill: { width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' },
   placeholder: {
-    backgroundColor: '#222',
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: '#2a2a2a',
   },
 });

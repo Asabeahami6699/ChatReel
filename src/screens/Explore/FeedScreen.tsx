@@ -17,6 +17,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import { SoftFadeImage } from '../../components/SoftFadeImage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api, type MomentAuthorFeedDTO, type MomentSlideDTO } from '../../lib/api';
 import {
@@ -120,7 +121,7 @@ function MomentSlidePreview({
     if (thumb) {
       return (
         <View style={style}>
-          <Image source={{ uri: thumb }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+          <SoftFadeImage uri={thumb} style={StyleSheet.absoluteFill} resizeMode="cover" />
           <View style={styles.reelPreviewBadge}>
             <Ionicons name="film-outline" size={14} color="#fff" />
           </View>
@@ -135,7 +136,7 @@ function MomentSlidePreview({
     if (thumb) {
       return (
         <View style={style}>
-          <Image source={{ uri: thumb }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+          <SoftFadeImage uri={thumb} style={StyleSheet.absoluteFill} resizeMode="cover" />
           <View style={styles.videoPreviewPlay}>
             <Ionicons name="play" size={16} color="#fff" />
           </View>
@@ -150,7 +151,7 @@ function MomentSlidePreview({
   }
 
   if (slide.media_url) {
-    return <Image source={{ uri: slide.media_url }} style={style} resizeMode="cover" />;
+    return <SoftFadeImage uri={slide.media_url} style={style} resizeMode="cover" />;
   }
 
   return <View style={[style, styles.videoThumbFallback]} />;
@@ -421,7 +422,7 @@ export default function FeedScreen() {
               {preview ? (
                 renderSlidePreview(preview, styles.bubbleImage)
               ) : item.author.avatar_url ? (
-                <Image source={{ uri: item.author.avatar_url }} style={styles.bubbleImage} />
+                <SoftFadeImage uri={item.author.avatar_url} style={styles.bubbleImage} />
               ) : (
                 <View style={styles.bubbleFallback}>
                   <Text style={styles.bubbleLetter}>{authorName(item.author).charAt(0)}</Text>
@@ -435,7 +436,7 @@ export default function FeedScreen() {
               {preview ? (
                 renderSlidePreview(preview, styles.bubbleImage)
               ) : item.author.avatar_url ? (
-                <Image source={{ uri: item.author.avatar_url }} style={styles.bubbleImage} />
+                <SoftFadeImage uri={item.author.avatar_url} style={styles.bubbleImage} />
               ) : (
                 <View style={styles.bubbleFallback}>
                   <Text style={styles.bubbleLetter}>{authorName(item.author).charAt(0)}</Text>
@@ -535,7 +536,7 @@ export default function FeedScreen() {
       >
         <View style={[styles.listAvatarRing, item.has_unseen && styles.listAvatarRingNew]}>
           {item.author.avatar_url ? (
-            <Image source={{ uri: item.author.avatar_url }} style={styles.listAvatar} />
+            <SoftFadeImage uri={item.author.avatar_url} style={styles.listAvatar} />
           ) : (
             <View style={[styles.listAvatar, styles.bubbleFallback]}>
               <Text style={styles.bubbleLetter}>{authorName(item.author).charAt(0)}</Text>

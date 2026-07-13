@@ -386,6 +386,11 @@ export async function applyModerationDecision(
   if (decision.status === 'rejected') {
     await cleanupRejectedReelStorage(reelId, opts?.videoUrl, opts?.thumbnailUrl);
   }
+
+  if (decision.status === 'approved') {
+    const { notifyAudienceOfApprovedReelSafe } = await import('./reelPublishNotify.service');
+    notifyAudienceOfApprovedReelSafe(reelId);
+  }
 }
 
 async function autoApprove(reelId: string, reason: string) {

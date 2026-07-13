@@ -139,7 +139,11 @@ router.post(
       sendPushToUserSafe(recipientUserId, {
         title: 'New friend request',
         body: `${senderName} sent you a friend request`,
-        data: { type: 'friend_request', friendship_id: data.id },
+        data: {
+          type: 'friend_request',
+          friendship_id: data.id,
+          screen: 'FriendRequests',
+        },
       });
     }
 
@@ -201,7 +205,11 @@ router.patch(
       sendPushToUserSafe(requesterUserId, {
         title: 'Friend request accepted',
         body: `${accepterName} accepted your friend request`,
-        data: { type: 'friend_accepted', friendship_id: friendship.id },
+        data: {
+          type: 'friend_accepted',
+          friendship_id: friendship.id,
+          screen: 'FriendsList',
+        },
       });
     }
 

@@ -12,6 +12,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { SoftFadeImage } from '../../components/SoftFadeImage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -240,7 +241,7 @@ export default function ReelProfileView({ profileId, isSelf = false, showBack = 
 
       <View style={styles.profileHeader}>
         {avatar ? (
-          <Image source={{ uri: avatar }} style={styles.avatar} />
+          <SoftFadeImage uri={avatar} style={styles.avatar} />
         ) : (
           <View style={[styles.avatar, styles.avatarFallback]}>
             <Text style={styles.avatarFallbackText}>{username.charAt(0).toUpperCase()}</Text>

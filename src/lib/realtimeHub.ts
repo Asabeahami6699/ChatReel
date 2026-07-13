@@ -125,27 +125,50 @@ export async function startRealtimeHub(
 
   hubChannel = ch;
   let errorRetries = 0;
+  let restartTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Bind message_reads on the CORE channel (avoid a dedicated aux join that often CHANNEL_ERRORs).
+  ch.on(
+    'postgres_changes',
+    { event: '*', schema: 'public', table: 'message_reads' },
+    (payload) => {
+      const row = (payload.new ?? payload.old) as { user_id?: string } | undefined;
+      if (row?.user_id === authUserId) {
+        realtimeTopics.messages.notifyImmediate();
+      }
+    }
+  );
+
   ch.subscribe(async (status, err) => {
     if (status === 'SUBSCRIBED') {
       errorRetries = 0;
+      // Start optional tables only after core is healthy — reduces join storms on web.
+      if (auxChannels.size === 0) {
+        startAuxChannels(authUserId, profileId);
+      }
     } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
       console.error('[realtimeHub] status', status, err);
       if (errorRetries < 3) {
         errorRetries += 1;
-        // Re-push the JWT in case the previous join lost the auth race or the
-        // token rotated. supabase-js will auto-reconnect after this.
         try {
           await ensureSupabaseSession();
         } catch {
           /* ignore */
         }
+      } else if (!restartTimer) {
+        // Full hub rebuild after auth refresh failed to heal the channel.
+        const uid = authUserId;
+        restartTimer = setTimeout(() => {
+          restartTimer = null;
+          void startRealtimeHub(uid, { force: true }).catch((e) => {
+            console.error('[realtimeHub] force restart failed', e);
+          });
+        }, 2500);
       }
     } else if (status === 'CLOSED' && !hubCloseIntentional) {
       console.warn('[realtimeHub] channel closed unexpectedly');
     }
   });
-
-  startAuxChannels(authUserId, profileId);
 }
 
 let hubCloseIntentional = false;
@@ -251,19 +274,6 @@ function startAuxChannels(authUserId: string, profileId: string | null) {
     authUserId,
     { event: '*', schema: 'public', table: 'moment_views' },
     () => realtimeTopics.momentViews.notify()
-  );
-
-  // Group read receipts — refresh chat list unread badges when messages are marked read.
-  startAuxChannel(
-    'message-reads',
-    authUserId,
-    { event: '*', schema: 'public', table: 'message_reads' },
-    (payload) => {
-      const row = (payload.new ?? payload.old) as { user_id?: string } | undefined;
-      if (row?.user_id === authUserId) {
-        realtimeTopics.messages.notifyImmediate();
-      }
-    }
   );
 }
 

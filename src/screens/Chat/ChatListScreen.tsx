@@ -17,6 +17,7 @@ import {
   Animated,
   Easing,
 } from 'react-native'
+import { SoftFadeImage } from '../../components/SoftFadeImage'
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { TextInput, FAB, Button } from 'react-native-paper'
 import { Ionicons } from '@expo/vector-icons'
@@ -720,7 +721,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
 
   const AvatarComponent = ({ uri, name }: { uri?: string; name: string }) => {
     const [error, setError] = useState(false);
-    
+
     if (error || !uri || uri.includes('placeholder.com')) {
       return (
         <View style={styles.avatarFallback}>
@@ -730,12 +731,19 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
         </View>
       );
     }
-    
+
     return (
-      <Image 
-        source={{ uri }} 
+      <SoftFadeImage
+        uri={uri}
         style={styles.avatar}
         onError={() => setError(true)}
+        fallback={
+          <View style={styles.avatarFallback}>
+            <Text style={styles.avatarInitials}>
+              {name ? name.charAt(0).toUpperCase() : '?'}
+            </Text>
+          </View>
+        }
       />
     );
   };
@@ -1245,6 +1253,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
               !isOnline && styles.disabledFab,
               fabMenuOpen && styles.fabOpen,
             ]}
+            color="#FFFFFF"
             icon={fabMenuOpen ? 'close' : 'plus'}
             onPress={() => (isOnline ? toggleFabMenu() : undefined)}
           />
@@ -1254,6 +1263,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
       {index === friendsTabIndex && !searchOpen && (
         <FAB
           style={[styles.fab, { bottom: fabBottom }, !isOnline && styles.disabledFab]}
+          color="#FFFFFF"
           icon="account-plus"
           onPress={() => isOnline && navigation.navigate('FriendsList')}
         />
@@ -1261,6 +1271,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
       {index === groupsTabIndex && !searchOpen && (
         <FAB
           style={[styles.fab, { bottom: fabBottom }, !isOnline && styles.disabledFab]}
+          color="#FFFFFF"
           icon="account-group"
           onPress={() => isOnline && navigation.navigate('NewGroup')}
         />
@@ -1268,6 +1279,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
       {index === requestsTabIndex && !searchOpen && (
         <FAB
           style={[styles.fab, { bottom: fabBottom }, !isOnline && styles.disabledFab]}
+          color="#FFFFFF"
           icon="account-plus"
           onPress={() => isOnline && navigation.navigate('AddFriend')}
         />
@@ -1695,7 +1707,7 @@ const styles = StyleSheet.create({
       : {}),
   },
   fabOpen: {
-    backgroundColor: '#1c1c1e',
+    backgroundColor: '#007AFF',
   },
   fabActionRow: {
     position: 'absolute',

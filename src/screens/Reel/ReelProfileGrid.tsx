@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -10,6 +10,7 @@ import {
   Text,
   TouchableOpacity,
   View,
+  type ViewToken,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { api, ApiError, type ReelDTO } from '../../lib/api';
@@ -20,6 +21,7 @@ import type { SavedReelComposeDraft } from '../../lib/reelComposeDraftStore';
 import { REEL_ACCENT } from './reelTheme';
 import { ReelDeleteConfirmFloat } from './ReelDeleteConfirmFloat';
 import { ReelGridThumb } from './ReelGridThumb';
+import { prefetchProfileFeed, prefetchProfileGridWindow } from './reelProfilePrefetch';
 
 const GRID_COLS = 3;
 const GRID_GAP = 4;
@@ -318,13 +320,31 @@ export function ReelProfileGrid({
     setPendingDeleteIds(null);
   }, [deleting]);
 
+  const postsRef = useRef(posts);
+  postsRef.current = posts;
+
   const handleTilePress = (reel: ReelDTO, index: number) => {
     if (selectionMode && canDelete) {
       toggleSelect(reel.id);
       return;
     }
+    // Warm tapped reel + neighbors before immersive opens (TikTok-style).
+    prefetchProfileFeed(postsRef.current, index);
     onOpen(index);
   };
+
+  const viewabilityConfig = useRef({
+    itemVisiblePercentThreshold: 40,
+    minimumViewTime: 80,
+  }).current;
+
+  const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
+    const firstReel = viewableItems
+      .map((v) => v.item as GridItem | undefined)
+      .find((item): item is Extract<GridItem, { kind: 'reel' }> => item?.kind === 'reel');
+    if (!firstReel) return;
+    prefetchProfileGridWindow(postsRef.current, firstReel.reelIndex);
+  }).current;
 
   const handleTileLongPress = (reel: ReelDTO) => {
     if (!canDelete || deleting) return;
@@ -374,6 +394,12 @@ export function ReelProfileGrid({
         contentContainerStyle={{ paddingBottom: bottomPad + (selectionMode ? 56 : 16) }}
         columnWrapperStyle={styles.gridRow}
         showsVerticalScrollIndicator={false}
+        onViewableItemsChanged={onViewableItemsChanged}
+        viewabilityConfig={viewabilityConfig}
+        windowSize={7}
+        maxToRenderPerBatch={9}
+        initialNumToRender={9}
+        removeClippedSubviews={Platform.OS !== 'web'}
         refreshControl={
           onRefresh ? (
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#fff" />

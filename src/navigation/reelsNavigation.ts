@@ -6,7 +6,7 @@ export type ReelsTabParamList = {
 };
 
 export type ReelsStackParamList = {
-  ReelTabs: undefined;
+  ReelTabs: undefined | { screen?: keyof ReelsTabParamList };
   ReelCreatorProfile: { profileId: string; displayName?: string };
   ReelCreatorWallet: undefined;
   ReelDetail: { reelId: string; contextReels?: import('../lib/api').ReelDTO[]; initialIndex?: number };

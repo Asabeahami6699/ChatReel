@@ -13,6 +13,7 @@ import ReelSoundScreen from '../screens/Reel/ReelSoundScreen';
 import ReelsTabBar from '../screens/Reel/ReelsTabBar';
 import { ReelFeedModeProvider, useReelFeedMode } from '../screens/Reel/ReelFeedModeContext';
 import type { ReelsStackParamList, ReelsTabParamList } from './reelsNavigation';
+import { registerReelsNavigation } from './reelsNavigationBridge';
 
 const Tab = createBottomTabNavigator<ReelsTabParamList>();
 const Stack = createNativeStackNavigator<ReelsStackParamList>();
@@ -56,7 +57,11 @@ function ReelTabs() {
 export default function ReelsNavigator() {
   return (
     <NavigationIndependentTree>
-      <NavigationContainer>
+      <NavigationContainer
+        ref={(ref) => {
+          registerReelsNavigation(ref);
+        }}
+      >
         <Stack.Navigator
           screenOptions={{
             headerShown: false,

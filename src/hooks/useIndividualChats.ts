@@ -6,6 +6,7 @@ import { api, ApiError } from '../lib/api';
 import { useAuth } from './useAuth';
 import { useCurrentProfileId } from './useCurrentProfileId';
 import { useFriendshipsRealtime } from './useFriendshipsRealtime';
+import { useRealtimeTopic } from './useRealtimeTopic';
 import { subscribeChatListMessageEvents } from '../lib/chatListRealtimeBridge';
 
 export type IndividualChat = {
@@ -110,6 +111,9 @@ export const useIndividualChats = (searchQuery: string = '') => {
   }, [fetchChats]);
 
   useFriendshipsRealtime(profileId, () => fetchChats(true, true));
+
+  // Safety net when row-dispatch misses (hub flakiness): topic ping → silent refetch.
+  useRealtimeTopic('messages', () => void fetchChats(true, true), Boolean(user?.id));
 
   // ---------------------------------------------------------------------------
   // Realtime: uses the global hub dispatch (subscribeToMessageRows) — the same

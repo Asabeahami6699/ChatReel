@@ -307,6 +307,7 @@ export const useGroupList = (searchQuery = '') => {
   // Group metadata changes (name, avatar, members) — refetch once.
   useRealtimeTopic('groups', () => { if (isOnline) fetchGroups(true, true); }, Boolean(user?.id));
   useRealtimeTopic('groupMembers', () => { if (isOnline) fetchGroups(true, true); }, Boolean(user?.id));
+  useRealtimeTopic('messages', () => { if (isOnline) fetchGroups(true, true); }, Boolean(user?.id));
 
   // ---------------------------------------------------------------------------
   // Realtime: uses the global hub dispatch (subscribeToMessageRows) — the same

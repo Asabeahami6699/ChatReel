@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { supabaseAdmin } from '../lib/supabaseAdmin';
 import { asyncHandler, AuthedRequest, requireAuth } from '../middleware/auth';
-import { sendPushToUserSafe } from '../services/push.service';
+import { sendPushToUserSafe, sendPushToUsersSafe } from '../services/push.service';
 
 const router = Router();
 
@@ -277,6 +277,49 @@ router.post(
         data: {
           type: 'message',
           chat_id: userId,
+          chat_type: 'individual',
+          message_id: data.id,
+        },
+      });
+    } else if (body.group_id) {
+      const [{ data: senderProfile }, { data: members }, { data: group }] = await Promise.all([
+        supabaseAdmin
+          .from('profiles')
+          .select('display_name, email')
+          .eq('user_id', userId)
+          .maybeSingle(),
+        supabaseAdmin.from('group_members').select('user_id').eq('group_id', body.group_id),
+        supabaseAdmin.from('groups').select('name').eq('id', body.group_id).maybeSingle(),
+      ]);
+
+      const senderName =
+        senderProfile?.display_name || senderProfile?.email?.split('@')[0] || 'Someone';
+      const groupName = (group?.name as string | undefined) || 'Group';
+      const preview =
+        body.message_type === 'text'
+          ? body.content.slice(0, 120)
+          : body.message_type === 'reel'
+            ? 'Shared a reel'
+            : body.message_type === 'moment'
+              ? 'Shared a moment'
+              : `Sent a ${body.message_type}`;
+
+      const recipientIds = [
+        ...new Set(
+          (members ?? [])
+            .map((m) => m.user_id as string)
+            .filter((uid) => uid && uid !== userId)
+        ),
+      ];
+
+      sendPushToUsersSafe(recipientIds, {
+        title: groupName,
+        body: `${senderName}: ${preview}`,
+        data: {
+          type: 'message',
+          chat_id: body.group_id,
+          chat_type: 'group',
+          chat_name: groupName,
           message_id: data.id,
         },
       });

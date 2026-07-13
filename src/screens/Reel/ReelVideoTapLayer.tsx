@@ -44,6 +44,7 @@ const TAP_SLOP_Y = 8;
 /**
  * Passive touch observers only — never become the JS responder.
  * Must be a CHILD of the paging ScrollView (not a sibling overlay above it).
+ * On web desktop, also handles mouse click (touch events do not fire for mouse).
  */
 export function ReelVideoTapLayer({
   style,
@@ -55,6 +56,8 @@ export function ReelVideoTapLayer({
   const movedRef = useRef(false);
   const longTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longFiredRef = useRef(false);
+  /** Ignore the synthetic mouse click that follows a touch on hybrid devices. */
+  const ignoreMouseClickUntilRef = useRef(0);
 
   const clearLongTimer = () => {
     if (longTimerRef.current) {
@@ -74,6 +77,18 @@ export function ReelVideoTapLayer({
     }
   };
 
+  const firePressIfTap = () => {
+    if (
+      !movedRef.current &&
+      !longFiredRef.current &&
+      startRef.current &&
+      !wasRecentReelWebSwipe()
+    ) {
+      onPress();
+    }
+    startRef.current = null;
+  };
+
   return (
     <View
       style={[styles.overlay, style, Platform.OS === 'web' ? webPanStyle : null]}
@@ -83,6 +98,7 @@ export function ReelVideoTapLayer({
       onStartShouldSetResponderCapture={() => false}
       onMoveShouldSetResponderCapture={() => false}
       onTouchStart={(e) => {
+        ignoreMouseClickUntilRef.current = Date.now() + 700;
         const { x: pageX, y: pageY } = touchPagePoint(e);
         startRef.current = { x: pageX, y: pageY };
         movedRef.current = false;
@@ -105,20 +121,20 @@ export function ReelVideoTapLayer({
         clearLongTimer();
         const { x: pageX, y: pageY } = touchPagePoint(e);
         markMovedIfNeeded(pageX, pageY);
-        if (
-          !movedRef.current &&
-          !longFiredRef.current &&
-          startRef.current &&
-          !wasRecentReelWebSwipe()
-        ) {
-          onPress();
-        }
-        startRef.current = null;
+        firePressIfTap();
       }}
       onTouchCancel={() => {
         clearLongTimer();
         startRef.current = null;
         movedRef.current = true;
+      }}
+      // @ts-expect-error RN-web mouse click for desktop pause/like
+      onClick={(e: { stopPropagation?: () => void }) => {
+        if (Platform.OS !== 'web') return;
+        if (Date.now() < ignoreMouseClickUntilRef.current) return;
+        if (wasRecentReelWebSwipe()) return;
+        e.stopPropagation?.();
+        onPress();
       }}
     />
   );
@@ -135,4 +151,4 @@ const styles = StyleSheet.create({
   },
 });
 
-const webPanStyle = { touchAction: 'pan-y' } as object;
+const webPanStyle = { touchAction: 'pan-y', cursor: 'pointer' } as object;

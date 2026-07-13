@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import { useReelProfileStore } from '../../stores/reelProfileStore';
 import { useRealtimeTopic } from '../../hooks/useRealtimeTopic';
 import type { ReelDTO } from '../../lib/api';
+import { prefetchProfileFeed } from './reelProfilePrefetch';
 
 const emptyEntry = {
   posts: [] as ReelDTO[],
@@ -27,6 +28,12 @@ export function useReelProfilePosts(profileId: string | undefined, limit = 48) {
     if (!profileId) return;
     void ensureLoaded(profileId, limit);
   }, [profileId, limit, ensureLoaded]);
+
+  // While the grid is on screen, warm the top of the feed like TikTok.
+  useEffect(() => {
+    if (!entry.posts.length || entry.loading) return;
+    prefetchProfileFeed(entry.posts, 0);
+  }, [entry.posts, entry.loading]);
 
   useEffect(() => {
     return () => {

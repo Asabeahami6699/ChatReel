@@ -52,18 +52,39 @@ module.exports = {
   },
   android: {
     package: 'com.chatapp',
+    versionCode: 1,
     adaptiveIcon: {
       foregroundImage: './assets/favIconChat.png',
       backgroundColor: '#4f46e5',
     },
-    permissions: ['READ_MEDIA_AUDIO', 'READ_EXTERNAL_STORAGE'],
+    permissions: [
+      'CAMERA',
+      'RECORD_AUDIO',
+      'MODIFY_AUDIO_SETTINGS',
+      'READ_MEDIA_IMAGES',
+      'READ_MEDIA_VIDEO',
+      'READ_MEDIA_AUDIO',
+      'READ_EXTERNAL_STORAGE',
+      'POST_NOTIFICATIONS',
+      'VIBRATE',
+    ],
+    googleServicesFile: process.env.GOOGLE_SERVICES_JSON || undefined,
   },
   ios: {
     bundleIdentifier: 'com.chatapp',
+    buildNumber: '1',
     icon: './assets/favIconChat.png',
     infoPlist: {
       NSAppleMusicUsageDescription:
         'Allow ChatReel to browse music on your device for reel sounds.',
+      NSCameraUsageDescription:
+        'Allow ChatReel to access your camera for photos, video, and QR codes.',
+      NSMicrophoneUsageDescription:
+        'Allow ChatReel to access your microphone for voice messages and calls.',
+      NSPhotoLibraryUsageDescription:
+        'Allow ChatReel to access your photo library.',
+      NSPhotoLibraryAddUsageDescription:
+        'Allow ChatReel to save media to your library.',
     },
   },
   plugins: [
