@@ -3,10 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
-  FlatList,
   Modal,
-  NativeSyntheticEvent,
-  NativeScrollEvent,
   PanResponder,
   Platform,
   ScrollView,
@@ -65,7 +62,6 @@ import { useWallet } from '../../hooks/useWallet';
 import { useReelProfileStore } from '../../stores/reelProfileStore';
 import { ReelNativeFeed, type ReelNativeFeedHandle } from './ReelNativeFeed';
 import { ReelWebFeed, type ReelWebFeedHandle } from './ReelWebFeed';
-import { dbgReelSwipe } from './dbgReelSwipe';
 import { ReelFloatingChrome } from './ReelFloatingChrome';
 
 const WINDOW_HEIGHT = SCREEN_HEIGHT;
@@ -160,7 +156,6 @@ export default function ReelsScreen() {
   const myProfileId = useCurrentProfileId();
   const [showUploadPanel, setShowUploadPanel] = useState(false);
 
-  const flatListRef = useRef<FlatList<ReelDTO>>(null);
   const webFeedRef = useRef<ReelWebFeedHandle>(null);
   const nativeFeedRef = useRef<ReelNativeFeedHandle>(null);
   const feedClipRef = useRef<View>(null);
@@ -733,39 +728,6 @@ export default function ReelsScreen() {
   const activateReelAtIndexRef = useRef<(index: number) => void>(() => {});
   const goToReelIndexRef = useRef<(index: number, animated?: boolean) => void>(() => {});
 
-  const onViewableItemsChanged = useRef(
-    ({ viewableItems }: { viewableItems: { index: number | null; item: ReelDTO }[] }) => {
-      if (viewableItems.length === 0) return;
-      const candidates = viewableItems
-        .filter((v) => v.index != null && v.item?.id)
-        .map((v) => ({ index: v.index as number, item: v.item }));
-
-      if (candidates.length === 0) return;
-
-      const reelsLen = reelsRef.current.length;
-      if (reelsLen === 0) return;
-
-      const prevIndex = currentIndexRef.current;
-      // Pick the index that moved farthest from the previous one (this avoids selecting the
-      // old reel when both old+new are briefly in view during snapping).
-      const desiredIndex = candidates.reduce((best, c) => {
-        return Math.abs(c.index - prevIndex) > Math.abs(best.index - prevIndex) ? c : best;
-      }, candidates[0]).index;
-
-      // Enforce "one reel per swipe" even if viewability gives us a stale index.
-      // When a single page is reported (PagerView), trust that index directly.
-      const rawDelta = desiredIndex - prevIndex;
-      const delta = Math.abs(rawDelta) <= 1 ? rawDelta : Math.sign(rawDelta);
-      let nextIndex =
-        candidates.length === 1
-          ? desiredIndex
-          : prevIndex + delta;
-      nextIndex = Math.max(0, Math.min(reelsLen - 1, nextIndex));
-
-      activateReelAtIndexRef.current(nextIndex);
-    }
-  ).current;
-
   const activateReelAtIndex = useCallback((nextIndex: number) => {
     const list = reelsRef.current;
     if (list.length === 0) return;
@@ -818,104 +780,7 @@ export default function ReelsScreen() {
 
   goToReelIndexRef.current = goToReelIndex;
 
-  const viewabilityConfig = useMemo(
-    () => ({ itemVisiblePercentThreshold: 51, minimumViewTime: 80 }),
-    []
-  );
-
-  const getItemLayout = useCallback(
-    (_data: ArrayLike<ReelDTO> | null | undefined, index: number) => ({
-      length: reelHeight,
-      offset: reelHeight * index,
-      index,
-    }),
-    [reelHeight]
-  );
-
-  /** No matter how fast the fling, only allow landing on the adjacent reel. */
-  const snapToAdjacentReel = useCallback(
-    (offsetY: number) => {
-      const h = reelHeightRef.current;
-      if (h <= 0) return;
-      const reelsLen = reelsRef.current.length;
-      if (reelsLen <= 0) return;
-
-      const rawIndex = Math.round(offsetY / h);
-      const anchor = scrollAnchorIndexRef.current;
-      const clamped = Math.max(anchor - 1, Math.min(anchor + 1, rawIndex));
-      const target = Math.max(0, Math.min(reelsLen - 1, clamped));
-      const targetOffset = target * h;
-
-      if (Math.abs(offsetY - targetOffset) > 2 || target !== rawIndex) {
-        isSnappingRef.current = true;
-        flatListRef.current?.scrollToOffset({ offset: targetOffset, animated: true });
-        requestAnimationFrame(() => {
-          isSnappingRef.current = false;
-        });
-      }
-    },
-    []
-  );
-
-  const onScrollBeginDrag = useCallback(() => {
-    scrollAnchorIndexRef.current = currentIndexRef.current;
-    // #region agent log
-    dbgReelSwipe('A', 'ReelsScreen.tsx:onScrollBeginDrag', 'flatlist scroll begin drag', {
-      index: currentIndexRef.current,
-      platform: Platform.OS,
-    });
-    // #endregion
-  }, []);
-
-  const onScrollEndDrag = useCallback(
-    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const rawVelocity = e.nativeEvent.velocity?.y;
-      // #region agent log
-      dbgReelSwipe('D', 'ReelsScreen.tsx:onScrollEndDrag', 'flatlist scroll end drag', {
-        y: e.nativeEvent.contentOffset.y,
-        velocityY: rawVelocity ?? null,
-        index: currentIndexRef.current,
-      });
-      // #endregion
-      // On web/touch, velocity is frequently undefined — don't treat that as "no momentum".
-      if (rawVelocity != null && Math.abs(rawVelocity) < 0.05) {
-        snapToAdjacentReel(e.nativeEvent.contentOffset.y);
-      }
-    },
-    [snapToAdjacentReel]
-  );
-
-  const onMomentumScrollEnd = useCallback(
-    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-      // #region agent log
-      dbgReelSwipe('D', 'ReelsScreen.tsx:onMomentumScrollEnd', 'flatlist momentum end', {
-        y: e.nativeEvent.contentOffset.y,
-        index: currentIndexRef.current,
-        snapping: isSnappingRef.current,
-      });
-      // #endregion
-      if (isSnappingRef.current) return;
-      snapToAdjacentReel(e.nativeEvent.contentOffset.y);
-    },
-    [snapToAdjacentReel]
-  );
-
-  const scrollLogLastRef = useRef(0);
-  const onFeedScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const now = Date.now();
-    if (now - scrollLogLastRef.current < 120) return;
-    scrollLogLastRef.current = now;
-    // #region agent log
-    dbgReelSwipe('E', 'ReelsScreen.tsx:onFeedScroll', 'flatlist onScroll', {
-      y: e.nativeEvent.contentOffset.y,
-      contentH: e.nativeEvent.contentSize?.height ?? null,
-      layoutH: e.nativeEvent.layoutMeasurement?.height ?? null,
-    });
-    // #endregion
-  }, []);
-
-  // Web: desktop still uses discrete wheel paging. Mobile touch uses ReelWebFeed
-  // (native CSS overflow + scroll-snap) — synthetic JS swipes never received move events.
+  // Web: desktop wheel paging. Mobile touch uses ReelWebFeed (CSS overflow + scroll-snap).
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     const node = feedClipRef.current as unknown as HTMLElement | null;
@@ -939,14 +804,6 @@ export default function ReelsScreen() {
       const from = currentIndexRef.current;
       const target = Math.max(0, Math.min(reelsRef.current.length - 1, from + dir));
       if (target === from) return;
-      // #region agent log
-      dbgReelSwipe('A', 'ReelsScreen.tsx:onWheel', 'wheel advance path', {
-        deltaY: e.deltaY,
-        from,
-        target,
-        runId: 'post-fix',
-      });
-      // #endregion
       scrollAnchorIndexRef.current = from;
       wheelLockRef.current = true;
       isSnappingRef.current = true;
@@ -956,14 +813,6 @@ export default function ReelsScreen() {
         wheelLockRef.current = false;
       }, 420);
     };
-
-    // #region agent log
-    dbgReelSwipe('A', 'ReelsScreen.tsx:webWheelEffect', 'web wheel handler armed', {
-      reelHeight,
-      reelCount: reelsRef.current.length,
-      runId: 'post-fix',
-    });
-    // #endregion
 
     node.addEventListener('wheel', onWheel, { passive: false });
     return () => node.removeEventListener('wheel', onWheel);

@@ -6,7 +6,6 @@ import React, {
 } from 'react';
 import { StyleSheet, View } from 'react-native';
 import type { ReelDTO } from '../../lib/api';
-import { dbgReelSwipe } from './dbgReelSwipe';
 import { markReelWebSwipe } from './reelWebSwipeGate';
 
 export type ReelWebFeedHandle = {
@@ -47,7 +46,6 @@ export const ReelWebFeed = forwardRef<ReelWebFeedHandle, Props>(function ReelWeb
   heightRef.current = reelHeight;
   const indexRef = useRef(currentIndex);
   indexRef.current = currentIndex;
-  const scrollLogLastRef = useRef(0);
 
   const getEl = () => scrollerRef.current as unknown as HTMLElement | null;
 
@@ -73,18 +71,6 @@ export const ReelWebFeed = forwardRef<ReelWebFeedHandle, Props>(function ReelWeb
     el.style.overscrollBehavior = 'contain';
     (el.style as CSSStyleDeclaration & { scrollbarWidth?: string }).scrollbarWidth = 'none';
 
-    // #region agent log
-    dbgReelSwipe('E', 'ReelWebFeed.tsx:mount', 'css scroll feed armed', {
-      overflowY: getComputedStyle(el).overflowY,
-      touchAction: getComputedStyle(el).touchAction,
-      scrollSnapType: getComputedStyle(el).scrollSnapType,
-      scrollHeight: el.scrollHeight,
-      clientHeight: el.clientHeight,
-      reelCount: reels.length,
-      runId: 'post-fix',
-    });
-    // #endregion
-
     let settleTimer: ReturnType<typeof setTimeout> | null = null;
 
     const applyIndexFromScroll = () => {
@@ -101,17 +87,6 @@ export const ReelWebFeed = forwardRef<ReelWebFeedHandle, Props>(function ReelWeb
 
     const onScroll = () => {
       markReelWebSwipe();
-      const now = Date.now();
-      if (now - scrollLogLastRef.current > 120) {
-        scrollLogLastRef.current = now;
-        // #region agent log
-        dbgReelSwipe('E', 'ReelWebFeed.tsx:onScroll', 'css scroller scroll', {
-          y: el.scrollTop,
-          overflowY: getComputedStyle(el).overflowY,
-          runId: 'post-fix',
-        });
-        // #endregion
-      }
       if (settleTimer) clearTimeout(settleTimer);
       settleTimer = setTimeout(() => {
         applyIndexFromScroll();
