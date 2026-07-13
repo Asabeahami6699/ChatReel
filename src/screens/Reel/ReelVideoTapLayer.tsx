@@ -3,6 +3,7 @@ import {
   Platform,
   StyleSheet,
   View,
+  type GestureResponderEvent,
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
@@ -15,17 +16,20 @@ type Props = {
   delayLongPress?: number;
 };
 
+type TouchPoint = {
+  pageX?: number;
+  pageY?: number;
+  clientX?: number;
+  clientY?: number;
+  locationX?: number;
+  locationY?: number;
+};
+
 /** RN-web often omits pageX/pageY on touch nativeEvents. */
-function touchPagePoint(e: { nativeEvent: Record<string, unknown> }) {
-  const ne = e.nativeEvent as {
-    pageX?: number;
-    pageY?: number;
-    clientX?: number;
-    clientY?: number;
-    locationX?: number;
-    locationY?: number;
-    touches?: Array<{ pageX?: number; pageY?: number; clientX?: number; clientY?: number }>;
-    changedTouches?: Array<{ pageX?: number; pageY?: number; clientX?: number; clientY?: number }>;
+function touchPagePoint(e: GestureResponderEvent) {
+  const ne = e.nativeEvent as TouchPoint & {
+    touches?: TouchPoint[];
+    changedTouches?: TouchPoint[];
   };
   const t = ne.touches?.[0] || ne.changedTouches?.[0];
   const x = ne.pageX ?? t?.pageX ?? ne.clientX ?? t?.clientX ?? ne.locationX ?? 0;
