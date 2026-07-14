@@ -1,4 +1,4 @@
-import { api, type CallDTO } from '../lib/api';
+import { api, type CallDTO } from '../../lib/api';
 
 export type CallPeerInfo = {
   peerName: string;
