@@ -48,13 +48,13 @@ export async function ensureMicPermission(): Promise<boolean> {
   return granted;
 }
 
-export function createLoopingPlayer(source: number | string): AudioPlayer {
+export function createLoopingPlayer(source: number | string | { uri: string }): AudioPlayer {
   const player = createAudioPlayer(source);
   player.loop = true;
   return player;
 }
 
-export function createPlaybackPlayer(source: string | number): AudioPlayer {
+export function createPlaybackPlayer(source: string | number | { uri: string }): AudioPlayer {
   return createAudioPlayer(source);
 }
 
@@ -65,6 +65,51 @@ export async function releasePlayer(player: AudioPlayer | null): Promise<void> {
     player.remove();
   } catch {
     /* ignore */
+  }
+}
+
+/**
+ * Resolve module assets to a real URI (needed on web so HTMLAudioElement
+ * doesn't throw NotSupportedError for an empty/invalid source).
+ */
+export async function resolvePlayableAudioSource(
+  source: number | string
+): Promise<number | string | { uri: string }> {
+  if (typeof source === 'string') {
+    return source;
+  }
+  try {
+    const { Asset } = await import('expo-asset');
+    const asset = Asset.fromModule(source);
+    if (!asset.downloaded) {
+      await asset.downloadAsync();
+    }
+    const uri = asset.localUri ?? asset.uri;
+    if (uri) return { uri };
+  } catch (err) {
+    console.warn('[appAudio] resolve asset failed', err);
+  }
+  return source;
+}
+
+/**
+ * Play without leaking uncaught HTMLMediaElement.play() rejections
+ * (common web NotSupportedError when the source can't decode).
+ */
+export async function safePlayAudioPlayer(player: AudioPlayer): Promise<boolean> {
+  try {
+    const media = (player as AudioPlayer & { media?: HTMLMediaElement }).media;
+    if (media && typeof media.play === 'function') {
+      if (!media.src && !media.currentSrc) return false;
+      await media.play();
+      (player as AudioPlayer & { isPlaying?: boolean }).isPlaying = true;
+      return true;
+    }
+    player.play();
+    return true;
+  } catch (err) {
+    console.warn('[appAudio] play failed', err);
+    return false;
   }
 }
 

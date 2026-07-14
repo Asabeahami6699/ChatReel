@@ -1,7 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Image,
   RefreshControl,
   SectionList,
@@ -16,7 +15,9 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { FAB } from 'react-native-paper';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api, ApiError, type CallHistoryItemDTO } from '../../lib/api';
-import { supabase } from '../../lib/supabase';
+import { showAppToast } from '../../lib/appToast';
+import { startCallGuarded } from '../../lib/startCallGuarded';
+import { useAuth } from '../../hooks/useAuth';
 import { navigateToChat } from '../../navigation/navigateToChat';
 import { useCurrentProfileId } from '../../hooks/useCurrentProfileId';
 import { useCallsFeed } from '../../hooks/useCallsFeed';
@@ -94,8 +95,13 @@ function missedLabel(c: CallHistoryItemDTO): string {
   return 'Missed';
 }
 
-function peerUserId(c: CallHistoryItemDTO, myAuthId: string | null): string | null {
-  if (c.scope !== 'direct' || !myAuthId) return null;
+function peerUserId(c: CallHistoryItemDTO, myAuthId?: string | null): string | null {
+  if (c.scope !== 'direct') return null;
+  // Prefer direction from history (server already labeled it) so callback
+  // works even before local auth id has resolved.
+  if (c.direction === 'outgoing' && c.callee_id) return c.callee_id;
+  if (c.direction === 'incoming' && c.caller_id) return c.caller_id;
+  if (!myAuthId) return null;
   return c.caller_id === myAuthId ? c.callee_id : c.caller_id;
 }
 
@@ -111,6 +117,7 @@ function groupCalls(calls: CallHistoryItemDTO[]): CallSection[] {
 
 export default function CallsScreen() {
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
   const myProfileId = useCurrentProfileId();
   const {
     calls,
@@ -123,12 +130,8 @@ export default function CallsScreen() {
   } = useCallsFeed(myProfileId);
 
   const [tab, setTab] = useState<Tab>('all');
-  const [myAuthId, setMyAuthId] = useState<string | null>(null);
+  const myAuthId = user?.id ?? null;
   const [pickerOpen, setPickerOpen] = useState(false);
-
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setMyAuthId(data.user?.id ?? null));
-  }, []);
 
   const missedCount = useMemo(() => calls.filter(isMissedFor).length, [calls]);
 
@@ -149,16 +152,18 @@ export default function CallsScreen() {
   const startCallToUser = useCallback(
     async (userId: string, type: 'voice' | 'video') => {
       if (callsEnabled === false) {
-        Alert.alert('Calls', 'Calls are not enabled on this server yet.');
+        showAppToast('Calls are not enabled on this server yet', { isError: true });
         return;
       }
       try {
-        const { call, live_kit } = await api.calls.start({ type, callee_id: userId });
+        const { call, live_kit } = await startCallGuarded({ type, callee_id: userId });
         setPickerOpen(false);
         const { navigateToOutgoingCall } = await import('../../navigation/rootNavigation');
         navigateToOutgoingCall({ call, token: live_kit.token, url: live_kit.url });
       } catch (err) {
-        Alert.alert('Call', err instanceof ApiError ? err.message : 'Could not start call');
+        showAppToast(err instanceof ApiError ? err.message : 'Could not start call', {
+          isError: true,
+        });
       }
     },
     [callsEnabled]
@@ -169,7 +174,9 @@ export default function CallsScreen() {
       if (target.scope === 'direct') {
         const otherUserId = peerUserId(target, myAuthId);
         if (!otherUserId) {
-          Alert.alert('Call', 'Still loading your account. Try again in a moment.');
+          showAppToast('Still loading your account — try again in a moment', {
+            isError: true,
+          });
           return;
         }
         await startCallToUser(otherUserId, type);
@@ -177,15 +184,17 @@ export default function CallsScreen() {
       }
       if (target.scope === 'group' && target.group_id) {
         if (callsEnabled === false) {
-          Alert.alert('Calls', 'Calls are not enabled on this server yet.');
+          showAppToast('Calls are not enabled on this server yet', { isError: true });
           return;
         }
         try {
-          const { call, live_kit } = await api.calls.start({ type, group_id: target.group_id });
+          const { call, live_kit } = await startCallGuarded({ type, group_id: target.group_id });
           const { navigateToOutgoingCall } = await import('../../navigation/rootNavigation');
           navigateToOutgoingCall({ call, token: live_kit.token, url: live_kit.url });
         } catch (err) {
-          Alert.alert('Call', err instanceof ApiError ? err.message : 'Could not start call');
+          showAppToast(err instanceof ApiError ? err.message : 'Could not start call', {
+            isError: true,
+          });
         }
       }
     },
@@ -267,12 +276,14 @@ export default function CallsScreen() {
         <View style={styles.callbackRow}>
           <TouchableOpacity
             style={[styles.callbackButton, styles.callbackVoice]}
+            accessibilityLabel="Call back"
             onPress={() => void startCall(item, 'voice')}
           >
             <Ionicons name="call" size={20} color="#1976d2" />
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.callbackButton, styles.callbackVideo]}
+            accessibilityLabel="Video call back"
             onPress={() => void startCall(item, 'video')}
           >
             <Ionicons name="videocam" size={20} color="#34c759" />

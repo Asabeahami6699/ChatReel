@@ -7,6 +7,7 @@ import {
   areAuthUsersFriends,
   countActiveParticipants,
   createLiveKitToken,
+  findUserBusyCall,
   isGroupMember,
   isJoinedParticipant,
   makeDirectRoomName,
@@ -56,6 +57,14 @@ router.post(
     const body = startSchema.parse(req.body);
     const callerId = req.userId!;
 
+    const callerBusy = await findUserBusyCall(callerId);
+    if (callerBusy) {
+      return res.status(409).json({
+        error: 'You are already on a call. End it before starting another.',
+        busy_call_id: callerBusy.id,
+      });
+    }
+
     let scope: 'direct' | 'group';
     let roomName: string;
 
@@ -75,6 +84,13 @@ router.post(
       const friends = await areAuthUsersFriends(callerId, body.callee_id);
       if (!friends) {
         return res.status(403).json({ error: 'You can only call accepted friends' });
+      }
+      const calleeBusy = await findUserBusyCall(body.callee_id);
+      if (calleeBusy) {
+        return res.status(409).json({
+          error: 'That person is busy on another call. Try again later.',
+          busy_call_id: calleeBusy.id,
+        });
       }
       scope = 'direct';
       roomName = makeDirectRoomName(callerId, body.callee_id);

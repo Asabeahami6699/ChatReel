@@ -2,8 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { Modal } from 'react-native';
 import { useIncomingCall } from '../hooks/useIncomingCall';
 import IncomingCallScreen from '../screens/Call/IncomingCallScreen';
-import { api } from '../lib/api';
-import { supabase } from '../lib/supabase';
+import { rememberCallReturnPoint } from '../navigation/callSessionNav';
+import { useAuth } from '../hooks/useAuth';
+import { fetchCallPeerInfo } from '../screens/Call/callPeerInfo';
 
 /**
  * Global ringer overlay. Rendered once at the app shell level.
@@ -13,6 +14,7 @@ import { supabase } from '../lib/supabase';
  */
 export function IncomingCallOverlay() {
   const incoming = useIncomingCall();
+  const { user } = useAuth();
   const [suppressedCallId, setSuppressedCallId] = useState<string | null>(null);
   const [peer, setPeer] = useState<{
     display_name: string | null;
@@ -31,47 +33,31 @@ export function IncomingCallOverlay() {
     incoming && incoming.id !== suppressedCallId ? incoming : null;
 
   useEffect(() => {
+    if (activeCall?.status === 'ringing') {
+      rememberCallReturnPoint();
+    }
+  }, [activeCall?.id, activeCall?.status]);
+
+  useEffect(() => {
     if (!activeCall) {
       setPeer(null);
       return;
     }
     let alive = true;
-    supabase.auth.getUser().then(async ({ data: meRes }) => {
-      const myAuth = meRes.user?.id;
-      if (activeCall.scope === 'group' && activeCall.group_id) {
-        try {
-          const { group } = await api.groups.get(activeCall.group_id);
-          if (!alive) return;
-          const g = group as { name?: string; avatar_url?: string | null };
-          setPeer({
-            display_name: g.name?.trim() || 'Group call',
-            avatar_url: g.avatar_url ?? null,
-          });
-        } catch {
-          if (alive) setPeer({ display_name: 'Group call', avatar_url: null });
-        }
-        return;
-      }
-      const otherAuth =
-        activeCall.caller_id === myAuth ? activeCall.callee_id : activeCall.caller_id;
-      if (!otherAuth) return;
-      try {
-        const { profile } = (await api.profiles.getByUserId(otherAuth)) as {
-          profile: { display_name: string | null; avatar_url: string | null };
-        };
-        if (alive)
-          setPeer({
-            display_name: profile?.display_name ?? null,
-            avatar_url: profile?.avatar_url ?? null,
-          });
-      } catch {
-        /* ignore */
-      }
-    });
+    (async () => {
+      const info = await fetchCallPeerInfo(activeCall, user?.id ?? null, {
+        preferIncomingCaller: true,
+      });
+      if (!alive) return;
+      setPeer({
+        display_name: info.peerName,
+        avatar_url: info.peerAvatar,
+      });
+    })();
     return () => {
       alive = false;
     };
-  }, [activeCall]);
+  }, [activeCall, user?.id]);
 
   const visible =
     !!activeCall &&

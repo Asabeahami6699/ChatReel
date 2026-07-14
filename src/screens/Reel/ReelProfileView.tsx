@@ -18,7 +18,7 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { ReelImmersiveViewer } from './ReelImmersiveViewer';
 import { api, ApiError, type ReelDTO } from '../../lib/api';
-import { rootNavigationRef } from '../../navigation/rootNavigation';
+import { navigateToOutgoingCall, rootNavigationRef } from '../../navigation/rootNavigation';
 import { openPostReelCompose } from '../../lib/reelPlaybackBridge';
 import type { SavedReelComposeDraft } from '../../lib/reelComposeDraftStore';
 import {
@@ -26,6 +26,8 @@ import {
   listReelComposeDrafts,
 } from '../../lib/reelComposeDraftStore';
 import { useReelPlaybackGate } from '../../hooks/useReelPlaybackGate';
+import { showAppToast } from '../../lib/appToast';
+import { startCallGuarded } from '../../lib/startCallGuarded';
 import type { ReelsStackParamList } from '../../navigation/reelsNavigation';
 import { REEL_ACCENT } from './reelTheme';
 import { reelTabBarOffset } from './ReelsTabBar';
@@ -68,6 +70,7 @@ export default function ReelProfileView({ profileId, isSelf = false, showBack = 
     display_name?: string | null;
     email?: string | null;
     avatar_url?: string | null;
+    user_id?: string | null;
   } | null>(null);
   const {
     posts,
@@ -276,6 +279,61 @@ export default function ReelProfileView({ profileId, isSelf = false, showBack = 
         </TouchableOpacity>
       )}
 
+      {!isSelf && followState === 'following' && profile?.user_id ? (
+        <View style={styles.callRow}>
+          <TouchableOpacity
+            style={styles.callBtn}
+            onPress={() => {
+              void (async () => {
+                try {
+                  const { call, live_kit } = await startCallGuarded({
+                    type: 'voice',
+                    callee_id: profile.user_id!,
+                  });
+                  navigateToOutgoingCall({
+                    call,
+                    token: live_kit.token,
+                    url: live_kit.url,
+                  });
+                } catch (err) {
+                  showAppToast(err instanceof Error ? err.message : 'Could not start call', {
+                    isError: true,
+                  });
+                }
+              })();
+            }}
+          >
+            <Ionicons name="call" size={16} color="#fff" />
+            <Text style={styles.followText}>Call</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.callBtn, styles.videoCallBtn]}
+            onPress={() => {
+              void (async () => {
+                try {
+                  const { call, live_kit } = await startCallGuarded({
+                    type: 'video',
+                    callee_id: profile.user_id!,
+                  });
+                  navigateToOutgoingCall({
+                    call,
+                    token: live_kit.token,
+                    url: live_kit.url,
+                  });
+                } catch (err) {
+                  showAppToast(err instanceof Error ? err.message : 'Could not start call', {
+                    isError: true,
+                  });
+                }
+              })();
+            }}
+          >
+            <Ionicons name="videocam" size={16} color="#fff" />
+            <Text style={styles.followText}>Video</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
       {isSelf && (
         <TouchableOpacity style={styles.followBtn} onPress={() => openPostReel()}>
           <Ionicons name="videocam" size={16} color="#fff" />
@@ -384,6 +442,23 @@ const styles = StyleSheet.create({
   },
   followingBtn: { backgroundColor: '#334155' },
   followText: { color: '#fff', fontWeight: '700' },
+  callRow: {
+    marginHorizontal: 20,
+    marginBottom: 12,
+    flexDirection: 'row',
+    gap: 8,
+  },
+  callBtn: {
+    flex: 1,
+    backgroundColor: '#1976d2',
+    borderRadius: 10,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  videoCallBtn: { backgroundColor: '#2e7d32' },
   stat: { alignItems: 'center' },
   statNumber: { color: '#fff', fontSize: 15, fontWeight: 'bold' },
   statLabel: { color: '#888', fontSize: 10, marginTop: 2 },

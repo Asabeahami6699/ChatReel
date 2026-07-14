@@ -21,6 +21,7 @@ import {
 import { IconButton } from 'react-native-paper';
 import { useAuth } from '../../hooks/useAuth';
 import { api } from '../../lib/api';
+import { showAppToast } from '../../lib/appToast';
 import { uploadFromUri } from '../../lib/uploads';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { Ionicons, MaterialIcons, Feather } from '@expo/vector-icons';
@@ -1657,11 +1658,11 @@ export default function ChatRoomScreen() {
       if (!chatId) return;
       if (chatType === 'individual') {
         if (!user?.id) {
-          Alert.alert('Call', 'You must be signed in to place a call.');
+          showAppToast('You must be signed in to place a call', { isError: true });
           return;
         }
         if (chatId === user.id) {
-          Alert.alert('Call', 'Cannot call yourself.');
+          showAppToast('Cannot call yourself', { isError: true });
           return;
         }
       }
@@ -1671,7 +1672,14 @@ export default function ChatRoomScreen() {
           chatType === 'group'
             ? { type, group_id: chatId }
             : { type, callee_id: chatId };
-        const { call, live_kit } = await api.calls.start(body);
+        const { startCallGuarded } = await import('../../lib/startCallGuarded');
+        const { call, live_kit } = await startCallGuarded(body);
+        if (!live_kit?.token || !live_kit?.url) {
+          showAppToast('Call started but media token was missing — try again', {
+            isError: true,
+          });
+          return;
+        }
         const { navigateToOutgoingCall } = await import('../../navigation/rootNavigation');
         navigateToOutgoingCall({
           call,
@@ -1683,10 +1691,10 @@ export default function ChatRoomScreen() {
           err && typeof err === 'object' && 'message' in err
             ? (err as { message: string }).message
             : 'Could not start call';
-        Alert.alert('Call', String(message));
+        showAppToast(String(message), { isError: true });
       }
     },
-    [chatId, chatType, navigation, user?.id]
+    [chatId, chatType, user?.id]
   );
 
   const joinGroupCall = useCallback(async () => {
@@ -1705,7 +1713,7 @@ export default function ChatRoomScreen() {
         err && typeof err === 'object' && 'message' in err
           ? (err as { message: string }).message
           : 'Could not join call';
-      Alert.alert('Call', String(message));
+      showAppToast(String(message), { isError: true });
     }
   }, [activeGroupCall.call]);
 
@@ -1913,13 +1921,13 @@ export default function ChatRoomScreen() {
             icon="video"
             size={24}
             iconColor={theme.headerText}
-            onPress={() => startChatCall('video')}
+            onPress={() => void startChatCall('video')}
           />
           <IconButton
             icon="phone"
             size={24}
             iconColor={theme.headerText}
-            onPress={() => startChatCall('voice')}
+            onPress={() => void startChatCall('voice')}
           />
           <ChatMenuDropdown items={menuItems} />
         </View>

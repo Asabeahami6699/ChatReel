@@ -17,6 +17,7 @@ import { ChatListRealtimeRegistrar } from './src/components/ChatListRealtimeRegi
 import { AudioExtractToast } from './src/components/AudioExtractToast';
 import { MomentUploadToast } from './src/components/MomentUploadToast';
 import { ConfirmToastHost } from './src/components/ConfirmToastHost';
+import { AppToastHost } from './src/components/AppToastHost';
 import { PresenceSyncRegistrar } from './src/components/PresenceSyncRegistrar';
 import { ReelInboxRealtimeRegistrar } from './src/components/ReelInboxRealtimeRegistrar';
 import { useWebIconFonts } from './src/lib/loadWebIconFonts';
@@ -49,6 +50,7 @@ export default function App() {
               <AudioExtractToast />
               <MomentUploadToast />
               <ConfirmToastHost />
+              <AppToastHost />
             </RealtimeProvider>
             <StatusBar style="auto" />
           </AuthProvider>

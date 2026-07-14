@@ -35,6 +35,7 @@ export function navigateToOutgoingCall(
   params: RootStackParamList['OutgoingCall'],
   attempt = 0
 ) {
+  void import('./callSessionNav').then((m) => m.rememberCallReturnPoint());
   if (rootNavigationRef.isReady()) {
     rootNavigationRef.navigate('OutgoingCall', params);
     return;
@@ -47,6 +48,7 @@ export function navigateToOutgoingCall(
 }
 
 export function navigateToActiveCall(params: RootStackParamList['ActiveCall']) {
+  void import('./callSessionNav').then((m) => m.rememberCallReturnPoint());
   if (rootNavigationRef.isReady()) {
     rootNavigationRef.navigate('ActiveCall', params);
   } else {
@@ -55,6 +57,7 @@ export function navigateToActiveCall(params: RootStackParamList['ActiveCall']) {
 }
 
 export function replaceWithActiveCall(params: RootStackParamList['ActiveCall']) {
+  void import('./callSessionNav').then((m) => m.rememberCallReturnPoint());
   if (rootNavigationRef.isReady()) {
     rootNavigationRef.reset({
       index: 1,

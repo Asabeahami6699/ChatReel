@@ -1,12 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, Image, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Image, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCallRingtone } from '../../hooks/useCallRingtone';
-import { replaceWithActiveCall, rootNavigationRef } from '../../navigation/rootNavigation';
+import { replaceWithActiveCall } from '../../navigation/rootNavigation';
+import { leaveCallScreen } from '../../navigation/callSessionNav';
+import { showAppToast } from '../../lib/appToast';
 import { api, type CallDTO } from '../../lib/api';
-import { supabase } from '../../lib/supabase';
+import { useAuth } from '../../hooks/useAuth';
+import { fetchCallPeerInfo } from './callPeerInfo';
 
 type Params = {
   call: CallDTO;
@@ -14,25 +17,20 @@ type Params = {
   url: string;
 };
 
-const RING_TIMEOUT_SEC = 30;
+const RING_TIMEOUT_SEC = 60;
 
 function navigateBackSafely() {
-  if (rootNavigationRef.isReady() && rootNavigationRef.canGoBack()) {
-    rootNavigationRef.goBack();
-    return;
-  }
-  if (rootNavigationRef.isReady()) {
-    rootNavigationRef.navigate('Main');
-  }
+  leaveCallScreen('Calls');
 }
 
 export default function OutgoingCallScreen() {
   const route = useRoute<any>();
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
   const params = (route.params ?? {}) as Partial<Params>;
   const [call, setCall] = useState<CallDTO | null>((params.call as CallDTO) ?? null);
-  const [myAuthId, setMyAuthId] = useState<string | null>(null);
+  const myAuthId = user?.id ?? null;
   const [peerName, setPeerName] = useState<string>('Calling...');
   const [peerAvatar, setPeerAvatar] = useState<string | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
@@ -46,10 +44,6 @@ export default function OutgoingCallScreen() {
     Boolean(token) &&
     Boolean(url);
   useCallRingtone(ringActive ? 'outgoing' : null);
-
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setMyAuthId(data.user?.id ?? null));
-  }, []);
 
   useEffect(() => {
     if (!call?.id) return;
@@ -67,7 +61,15 @@ export default function OutgoingCallScreen() {
           return;
         }
         if (['declined', 'missed', 'cancelled', 'ended'].includes(next.status)) {
-          Alert.alert('Call', `Call ${next.status}.`);
+          showAppToast(
+            next.status === 'declined'
+              ? 'Call declined'
+              : next.status === 'missed'
+                ? 'No answer'
+                : next.status === 'cancelled'
+                  ? 'Call cancelled'
+                  : 'Call ended'
+          );
           navigateBackSafely();
         }
       } catch {
@@ -90,7 +92,7 @@ export default function OutgoingCallScreen() {
 
   useEffect(() => {
     if (!call?.id) return;
-    // Ring timeout: if nobody accepts in 30s, mark missed and exit.
+    // Ring timeout: if nobody accepts in 60s, mark missed and exit.
     if (elapsedSec < RING_TIMEOUT_SEC) return;
     (async () => {
       try {
@@ -98,7 +100,7 @@ export default function OutgoingCallScreen() {
         const c = latest as CallDTO;
         if (c.status === 'ringing') {
           await api.calls.noAnswer(c.id);
-          Alert.alert('Call', 'No answer.');
+          showAppToast('No answer');
           navigateBackSafely();
         }
       } catch {
@@ -111,27 +113,11 @@ export default function OutgoingCallScreen() {
     if (!call) return;
     let alive = true;
     (async () => {
-      try {
-        if (call.scope === 'group' && call.group_id) {
-          const { group } = await api.groups.get(call.group_id);
-          if (!alive) return;
-          const g = group as { name?: string; avatar_url?: string | null };
-          setPeerName(g.name?.trim() || 'Group call');
-          setPeerAvatar(g.avatar_url ?? null);
-          return;
-        }
-
-        const targetAuth =
-          call.caller_id === myAuthId ? call.callee_id : call.caller_id;
-        if (!targetAuth) return;
-        const { profile } = await api.profiles.getByUserId(targetAuth);
-        if (!alive) return;
-        const p = profile as { display_name?: string | null; email?: string | null; avatar_url?: string | null };
-        setPeerName(p.display_name?.trim() || p.email?.split('@')[0] || 'Unknown');
-        setPeerAvatar(p.avatar_url ?? null);
-      } catch {
-        /* fallback handled by existing labels */
-      }
+      // Outgoing: for direct calls the peer is always the callee — don’t wait on auth.
+      const info = await fetchCallPeerInfo(call, myAuthId);
+      if (!alive) return;
+      setPeerName(info.peerName);
+      setPeerAvatar(info.peerAvatar);
     })();
     return () => {
       alive = false;
@@ -151,7 +137,7 @@ export default function OutgoingCallScreen() {
         /* ignore */
       }
     }
-    navigateBackSafely();
+    leaveCallScreen('Calls', 'Call cancelled');
   };
 
   if (!call || !token || !url) {

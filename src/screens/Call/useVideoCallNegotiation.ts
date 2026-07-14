@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
-import { Alert } from 'react-native';
 import type { CallVideoSignal, PublishCallVideoSignal } from './callVideoSignaling';
+import { showAppToast } from '../../lib/appToast';
 
 type Options = {
   peerName: string;
@@ -50,7 +50,7 @@ export function useVideoCallNegotiation({
           break;
         case 'video_decline':
           setOutgoingRequest(false);
-          Alert.alert('Call', `${peerName} declined video.`);
+          showAppToast(`${peerName} declined video`);
           break;
         case 'video_revert':
           void disableLocalVideo();

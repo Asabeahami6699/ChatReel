@@ -1,10 +1,20 @@
-import React from 'react';
-import { ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
+import React, { useState } from 'react';
+import { Platform, ScrollView, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
+import * as DocumentPicker from 'expo-document-picker';
 import { chatThemePresets, type ChatThemeId } from '../../lib/chatThemes';
 import { useChatSettings } from '../../context/ChatSettingsContext';
+import { showErrorAlert } from '../../lib/confirmAction';
+import {
+  configurePlaybackAudio,
+  createPlaybackPlayer,
+  releasePlayer,
+  seekPlaybackPlayer,
+} from '../../lib/appAudio';
+import { RingtoneTrimModal } from '../../components/RingtoneTrimModal';
+import { RINGTONE_CLIP_SEC } from '../../lib/ringtoneTrim';
 
 function SettingRow({
   label,
@@ -32,12 +42,92 @@ function SettingRow({
   );
 }
 
+function formatSec(sec: number): string {
+  const s = Math.max(0, Math.floor(sec));
+  const m = Math.floor(s / 60);
+  return `${m}:${String(s % 60).padStart(2, '0')}`;
+}
+
 export default function ChatSettingsScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const { settings, theme, updateSettings } = useChatSettings();
+  const [trimUri, setTrimUri] = useState<string | null>(null);
+  const [trimLabel, setTrimLabel] = useState('Custom tone');
 
   const themeIds = Object.keys(chatThemePresets) as ChatThemeId[];
+  const ringtoneLabel = settings.incomingRingtoneUri
+    ? settings.incomingRingtoneLabel || 'Custom tone'
+    : 'Default (system)';
+  const hasCustom = Boolean(settings.incomingRingtoneUri);
+  const trimStart = Math.max(0, settings.incomingRingtoneStartSec || 0);
+  const trimEnd =
+    settings.incomingRingtoneEndSec != null && settings.incomingRingtoneEndSec > trimStart
+      ? settings.incomingRingtoneEndSec
+      : trimStart + RINGTONE_CLIP_SEC;
+  const trimSubtitle = hasCustom
+    ? `Favourite ${formatSec(Math.min(RINGTONE_CLIP_SEC, Math.max(0.5, trimEnd - trimStart)))} · ${formatSec(trimStart)}–${formatSec(trimEnd)}`
+    : Platform.OS === 'web'
+      ? 'Pick any audio file · trim up to 1 minute'
+      : 'Pick a song · trim up to 1 minute';
+
+  const openTrim = (uri: string, label: string) => {
+    setTrimLabel(label);
+    setTrimUri(uri);
+  };
+
+  const pickRingtone = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['audio/*', 'audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/x-m4a'],
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+      if (result.canceled || !result.assets?.[0]) return;
+      const asset = result.assets[0];
+      const label = asset.name || 'Custom tone';
+      await updateSettings({
+        incomingRingtoneUri: asset.uri,
+        incomingRingtoneLabel: label,
+        incomingRingtoneStartSec: 0,
+        incomingRingtoneEndSec: null,
+      });
+      openTrim(asset.uri, label);
+    } catch (err) {
+      showErrorAlert('Ringtone', err instanceof Error ? err.message : 'Could not pick audio file');
+    }
+  };
+
+  const previewRingtone = async () => {
+    try {
+      await configurePlaybackAudio();
+      const source =
+        settings.incomingRingtoneUri?.trim() ||
+        require('../../../assets/sounds/incoming-ring.mp3');
+      const player = createPlaybackPlayer(source);
+      if (settings.incomingRingtoneUri) {
+        await seekPlaybackPlayer(player, trimStart);
+      }
+      player.play();
+      const previewMs = Math.min(
+        2500,
+        Math.max(800, (trimEnd - trimStart) * 1000)
+      );
+      setTimeout(() => {
+        void releasePlayer(player);
+      }, previewMs);
+    } catch (err) {
+      showErrorAlert('Ringtone', err instanceof Error ? err.message : 'Could not play preview');
+    }
+  };
+
+  const clearRingtone = () =>
+    void updateSettings({
+      incomingRingtoneUri: null,
+      incomingRingtoneLabel: null,
+      incomingRingtoneStartSec: 0,
+      incomingRingtoneEndSec: null,
+    });
 
   return (
     <View style={[styles.container, { backgroundColor: theme.listBg }]}>
@@ -86,6 +176,43 @@ export default function ChatSettingsScreen() {
             textColor={theme.listPrimaryText}
             subColor={theme.listSecondaryText}
           />
+          <View style={styles.row}>
+            <View style={styles.rowText}>
+              <Text style={[styles.rowLabel, { color: theme.listPrimaryText }]}>
+                Incoming call ringtone
+              </Text>
+              <Text style={[styles.rowSub, { color: theme.listSecondaryText }]}>
+                {ringtoneLabel}
+              </Text>
+              <Text style={[styles.rowSub, { color: theme.listSecondaryText }]}>{trimSubtitle}</Text>
+            </View>
+            <View style={styles.ringtoneActions}>
+              <TouchableOpacity style={styles.miniBtn} onPress={() => void previewRingtone()}>
+                <Ionicons name="play" size={16} color={theme.listPrimaryText} />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.miniBtn} onPress={() => void pickRingtone()}>
+                <Ionicons name="musical-notes" size={16} color={theme.listPrimaryText} />
+              </TouchableOpacity>
+              {hasCustom ? (
+                <TouchableOpacity
+                  style={styles.miniBtn}
+                  onPress={() =>
+                    openTrim(
+                      settings.incomingRingtoneUri!,
+                      settings.incomingRingtoneLabel || 'Custom tone'
+                    )
+                  }
+                >
+                  <Ionicons name="cut-outline" size={16} color={theme.listPrimaryText} />
+                </TouchableOpacity>
+              ) : null}
+              {hasCustom ? (
+                <TouchableOpacity style={styles.miniBtn} onPress={clearRingtone}>
+                  <Ionicons name="refresh" size={16} color={theme.listPrimaryText} />
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          </View>
         </View>
 
         <Text style={[styles.section, { color: theme.sectionLabel }]}>Privacy</Text>
@@ -134,6 +261,24 @@ export default function ChatSettingsScreen() {
           />
         </View>
       </ScrollView>
+
+      {trimUri ? (
+        <RingtoneTrimModal
+          visible
+          uri={trimUri}
+          label={trimLabel}
+          initialStartSec={settings.incomingRingtoneStartSec || 0}
+          initialEndSec={settings.incomingRingtoneEndSec}
+          onCancel={() => setTrimUri(null)}
+          onSave={({ startSec, endSec }) => {
+            void updateSettings({
+              incomingRingtoneStartSec: startSec,
+              incomingRingtoneEndSec: endSec,
+            });
+            setTrimUri(null);
+          }}
+        />
+      ) : null}
     </View>
   );
 }
@@ -177,6 +322,15 @@ const styles = StyleSheet.create({
   rowText: { flex: 1, paddingRight: 12 },
   rowLabel: { fontSize: 15, fontWeight: '600', color: '#111' },
   rowSub: { fontSize: 12, color: '#64748b', marginTop: 2 },
+  ringtoneActions: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap', maxWidth: 160, justifyContent: 'flex-end' },
+  miniBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.06)',
+  },
   themeRow: {
     flexDirection: 'row',
     alignItems: 'center',

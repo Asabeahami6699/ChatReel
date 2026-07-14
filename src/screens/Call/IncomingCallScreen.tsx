@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo } from 'react';
 import {
-  Alert,
   Image,
   StyleSheet,
   Text,
@@ -14,6 +13,8 @@ import { useNavigation } from '@react-navigation/native';
 import { useCallRingtone } from '../../hooks/useCallRingtone';
 import { replaceWithActiveCall } from '../../navigation/rootNavigation';
 import { api, ApiError, type CallDTO } from '../../lib/api';
+import { showAppToast } from '../../lib/appToast';
+import { formatCallPeerName } from './callPeerInfo';
 
 interface Props {
   call: CallDTO;
@@ -39,19 +40,20 @@ export default function IncomingCallScreen({ call, peer, onDismiss }: Props) {
   }, []);
 
   useEffect(() => {
-    if (peer) {
+    if (peer?.display_name) {
       setCaller(peer);
       return;
     }
     let alive = true;
     (async () => {
       try {
+        // Incoming direct calls: peer is always the caller.
         const { profile } = (await api.profiles.getByUserId(call.caller_id)) as {
-          profile: { display_name: string | null; avatar_url: string | null };
+          profile: { display_name: string | null; email?: string | null; avatar_url: string | null };
         };
         if (!alive) return;
         setCaller({
-          display_name: profile?.display_name ?? null,
+          display_name: formatCallPeerName(profile),
           avatar_url: profile?.avatar_url ?? null,
         });
       } catch {
@@ -82,7 +84,7 @@ export default function IncomingCallScreen({ call, peer, onDismiss }: Props) {
     } catch (err) {
       acceptingRef.current = false;
       const message = err instanceof ApiError ? err.message : 'Could not join the call';
-      Alert.alert('Call', message);
+      showAppToast(message, { isError: true });
     }
   };
 

@@ -6,6 +6,13 @@ export type ChatAppSettings = {
   themeId: ChatThemeId;
   pushNotifications: boolean;
   messageSounds: boolean;
+  /** Custom incoming ring file URI; null/empty = bundled default ringtone. */
+  incomingRingtoneUri: string | null;
+  incomingRingtoneLabel: string | null;
+  /** Favourite clip start (seconds) within the custom ringtone file. */
+  incomingRingtoneStartSec: number;
+  /** Favourite clip end (seconds); null = start + up to 60s / file end. */
+  incomingRingtoneEndSec: number | null;
   readReceipts: boolean;
   showLastSeen: boolean;
   mediaAutoDownload: boolean;
@@ -19,6 +26,10 @@ const DEFAULT_SETTINGS: ChatAppSettings = {
   themeId: 'blue',
   pushNotifications: true,
   messageSounds: true,
+  incomingRingtoneUri: null,
+  incomingRingtoneLabel: null,
+  incomingRingtoneStartSec: 0,
+  incomingRingtoneEndSec: null,
   readReceipts: true,
   showLastSeen: true,
   mediaAutoDownload: true,

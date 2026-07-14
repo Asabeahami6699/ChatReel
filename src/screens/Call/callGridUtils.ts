@@ -15,4 +15,6 @@ export type CallTileParticipant = {
   avatarUrl: string | null;
   isLocal?: boolean;
   hasVideo?: boolean;
+  /** True when this participant's mic is off. */
+  muted?: boolean;
 };

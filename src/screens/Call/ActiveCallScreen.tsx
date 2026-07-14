@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Alert,
   Image,
   Platform,
   StatusBar,
@@ -14,18 +13,28 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api, type CallDTO } from '../../lib/api';
 import { getLiveKit, isLiveKitAvailable } from './liveKitClient';
-import { supabase } from '../../lib/supabase';
-import {
-  CALL_VIDEO_TOPIC,
-  decodeCallVideoSignal,
-  encodeCallVideoSignal,
-  type CallVideoSignal,
-} from './callVideoSignaling';
+import { CALL_EXTRAS_TOPIC, type CallExtrasSignal } from './callExtrasSignaling';
+import { CallInCallChat } from './CallInCallChat';
+import { CallReactionsBar } from './CallReactionsBar';
+import { useCallExtras } from './useCallExtras';
+import { CALL_VIDEO_TOPIC, decodeCallVideoSignal, encodeCallVideoSignal, type CallVideoSignal } from './callVideoSignaling';
 import { useVideoCallNegotiation } from './useVideoCallNegotiation';
 import { VideoRequestOverlay } from './VideoRequestOverlay';
 import { AddCallParticipantModal } from '../../components/AddCallParticipantModal';
 import { CallParticipantGrid } from './CallParticipantGrid';
 import type { CallTileParticipant } from './callGridUtils';
+import {
+  connQualityLabel,
+  flipLocalCameraFacing,
+  normalizeConnQuality,
+  setCallSpeakerOn,
+  type CallConnQuality,
+  type FacingMode,
+} from './callMediaControls';
+import { fetchCallPeerInfo } from './callPeerInfo';
+import { useAuth } from '../../hooks/useAuth';
+import { leaveCallScreen } from '../../navigation/callSessionNav';
+import { showAppToast } from '../../lib/appToast';
 
 type Params = {
   call: CallDTO;
@@ -42,36 +51,17 @@ type RoomParams = {
 };
 
 function useCallPeer(call: CallDTO | undefined, myAuthId: string | null) {
-  const [peerName, setPeerName] = useState('Unknown');
+  const [peerName, setPeerName] = useState('Contact');
   const [peerAvatar, setPeerAvatar] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!call || !myAuthId) return;
+    if (!call) return;
     let alive = true;
     (async () => {
-      try {
-        if (call.scope === 'group' && call.group_id) {
-          const { group } = await api.groups.get(call.group_id);
-          if (!alive) return;
-          const g = group as { name?: string; avatar_url?: string | null };
-          setPeerName(g.name?.trim() || 'Group call');
-          setPeerAvatar(g.avatar_url ?? null);
-          return;
-        }
-        const targetAuth = call.caller_id === myAuthId ? call.callee_id : call.caller_id;
-        if (!targetAuth) return;
-        const { profile } = await api.profiles.getByUserId(targetAuth);
-        if (!alive) return;
-        const p = profile as {
-          display_name?: string | null;
-          email?: string | null;
-          avatar_url?: string | null;
-        };
-        setPeerName(p.display_name?.trim() || p.email?.split('@')[0] || 'Unknown');
-        setPeerAvatar(p.avatar_url ?? null);
-      } catch {
-        /* keep defaults */
-      }
+      const info = await fetchCallPeerInfo(call, myAuthId);
+      if (!alive) return;
+      setPeerName(info.peerName);
+      setPeerAvatar(info.peerAvatar);
     })();
     return () => {
       alive = false;
@@ -81,16 +71,8 @@ function useCallPeer(call: CallDTO | undefined, myAuthId: string | null) {
   return { peerName, peerAvatar };
 }
 
-import { rootNavigationRef } from '../../navigation/rootNavigation';
-
-function navigateBackSafely() {
-  if (rootNavigationRef.isReady() && rootNavigationRef.canGoBack()) {
-    rootNavigationRef.goBack();
-    return;
-  }
-  if (rootNavigationRef.isReady()) {
-    rootNavigationRef.navigate('Main');
-  }
+function navigateBackSafely(toastMessage = 'Call ended') {
+  leaveCallScreen('Calls', toastMessage);
 }
 
 function normalizeToken(input: unknown): string {
@@ -112,16 +94,13 @@ export default function ActiveCallScreen() {
   const route = useRoute<any>();
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
   const params = (route.params ?? {}) as Partial<Params>;
   const call = params.call;
   const token = normalizeToken(params.token);
   const url = params.url;
-  const [myAuthId, setMyAuthId] = useState<string | null>(null);
+  const myAuthId = user?.id ?? null;
   const [latestCall, setLatestCall] = useState<CallDTO | null>(call ?? null);
-
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setMyAuthId(data.user?.id ?? null));
-  }, []);
 
   useEffect(() => {
     if (!call?.id) return;
@@ -154,11 +133,24 @@ export default function ActiveCallScreen() {
     effectiveCall &&
     ['declined', 'missed', 'cancelled', 'ended'].includes(effectiveCall.status);
 
+  // Peer (or local) ended the call — leave automatically; no Close tap required.
+  useEffect(() => {
+    if (!callTerminatedBeforeConnect) return;
+    const t = setTimeout(() => leaveCallScreen('Calls', 'Call ended'), 250);
+    return () => clearTimeout(t);
+  }, [callTerminatedBeforeConnect, effectiveCall?.status]);
+
   if (!effectiveCall || !token || !url) {
     return <FallbackError message="Missing call parameters" />;
   }
   if (callTerminatedBeforeConnect) {
-    return <FallbackError message={`Call ${effectiveCall.status}.`} />;
+    return (
+      <View style={[styles.container, { paddingTop: insets.top + 80 }]}>
+        <StatusBar barStyle="light-content" />
+        <Ionicons name="call-outline" size={48} color="#fff" />
+        <Text style={styles.errorText}>Call ended</Text>
+      </View>
+    );
   }
   if (isCallerWaitingForAccept) {
     return (
@@ -210,12 +202,20 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
   const [connectionState, setConnectionState] = useState<'connecting' | 'connected' | 'reconnecting'>(
     'connecting'
   );
+  const [connQuality, setConnQuality] = useState<CallConnQuality>('unknown');
+  const [pipSwapped, setPipSwapped] = useState(false);
+  const [facingMode, setFacingMode] = useState<FacingMode>('user');
+  const [sharingScreen, setSharingScreen] = useState(false);
   const roomRef = React.useRef<any>(null);
   const remoteVideoRef = React.useRef<any>(null);
   const localVideoRef = React.useRef<any>(null);
   const localVideoTrackRef = React.useRef<any>(null);
   const remoteVideoTrackRef = React.useRef<any>(null);
   const handleSignalRef = React.useRef<(signal: CallVideoSignal) => void>(() => undefined);
+  const extrasHandleRef = React.useRef<(bytes: Uint8Array) => void>(() => undefined);
+
+  const extras = useCallExtras('You');
+  extrasHandleRef.current = (bytes) => extras.handleExtrasPayload(bytes, false);
 
   const publishSignal = React.useCallback((signal: CallVideoSignal) => {
     const room = roomRef.current;
@@ -224,6 +224,15 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
       topic: CALL_VIDEO_TOPIC,
     });
   }, []);
+
+  const publishExtras = React.useCallback(
+    (signal: CallExtrasSignal) => {
+      const lp = roomRef.current?.localParticipant;
+      if (!lp?.publishData) return;
+      extras.publishExtras((data, opts) => lp.publishData(data, opts), signal);
+    },
+    [extras.publishExtras]
+  );
 
   const enableLocalVideo = React.useCallback(async () => {
     const room = roomRef.current;
@@ -288,9 +297,13 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
         room.on(lk.RoomEvent.DataReceived, (...args: unknown[]) => {
           const [payload, participant, , topic] = args;
           if ((participant as { isLocal?: boolean } | undefined)?.isLocal) return;
-          if (topic && topic !== CALL_VIDEO_TOPIC) return;
           const bytes =
             payload instanceof Uint8Array ? payload : new Uint8Array(payload as ArrayBuffer);
+          if (topic === CALL_EXTRAS_TOPIC) {
+            extrasHandleRef.current?.(bytes);
+            return;
+          }
+          if (topic && topic !== CALL_VIDEO_TOPIC) return;
           const signal = decodeCallVideoSignal(bytes);
           if (signal) handleSignalRef.current(signal);
         });
@@ -307,6 +320,12 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
         room.on(lk.RoomEvent.Reconnected, () => {
           if (!mounted) return;
           setConnectionState('connected');
+        });
+
+        room.on(lk.RoomEvent.ConnectionQualityChanged, (quality: unknown, participant: any) => {
+          if (!mounted) return;
+          if (participant && !participant.isLocal) return;
+          setConnQuality(normalizeConnQuality(quality));
         });
 
         room.on(lk.RoomEvent.TrackSubscribed, (track: any) => {
@@ -330,9 +349,26 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
 
         room.on(lk.RoomEvent.Disconnected, () => {
           if (!mounted) return;
-          // If user intentionally ended call, we already navigate away.
           if (callEnded) return;
-          navigateBackSafely();
+          leaveCallScreen('Calls', 'Call ended');
+        });
+
+        room.on(lk.RoomEvent.ParticipantDisconnected, () => {
+          if (!mounted || callEnded) return;
+          // Direct call: when the other party leaves LiveKit, end locally.
+          if (call.scope === 'direct') {
+            const remotes = room.remoteParticipants?.size ?? 0;
+            if (remotes === 0) {
+              void (async () => {
+                try {
+                  await api.calls.end(call.id);
+                } catch {
+                  /* ignore */
+                }
+                leaveCallScreen('Calls', 'Call ended');
+              })();
+            }
+          }
         });
 
         await room.connect(url, token);
@@ -343,14 +379,13 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
             await enableLocalVideo();
           } catch (camErr) {
             console.warn('[call] camera enable failed:', camErr);
-            Alert.alert(
-              'Camera',
-              'Could not start the camera. You are still connected — check browser camera permissions and try the video button.'
-            );
+            showAppToast('Could not start the camera — still connected. Check permissions.');
           }
         }
       } catch (err) {
-        Alert.alert('Call error', err instanceof Error ? err.message : 'Failed to connect call');
+        showAppToast(err instanceof Error ? err.message : 'Failed to connect call', {
+          isError: true,
+        });
         navigateBackSafely();
       }
     })();
@@ -374,6 +409,7 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
 
   const finishCall = async () => {
     if (callEnded) return;
+    const isGroup = call.scope === 'group';
     setCallEnded(true);
     try {
       await api.calls.end(call.id);
@@ -381,7 +417,7 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
       /* ignore */
     }
     roomRef.current?.disconnect?.();
-    navigateBackSafely();
+    leaveCallScreen('Calls', isGroup ? 'Left the call' : 'Call ended');
   };
 
   const toggleMute = async () => {
@@ -398,7 +434,56 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
     void negotiation.toggleVideo();
   };
 
+  const flipCamera = async () => {
+    const room = roomRef.current;
+    if (!room) return;
+    try {
+      const lk = await import('livekit-client');
+      const next = await flipLocalCameraFacing(
+        room.localParticipant,
+        lk.Track.Source.Camera,
+        facingMode
+      );
+      if (next) {
+        setFacingMode(next);
+        if (localVideoRef.current) {
+          const pub = room.localParticipant.getTrackPublication?.(lk.Track.Source.Camera);
+          const track = pub?.track;
+          if (track?.attach) {
+            localVideoTrackRef.current = track;
+            track.attach(localVideoRef.current);
+          }
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const toggleScreenShare = async () => {
+    const room = roomRef.current;
+    if (!room) return;
+    try {
+      const next = !sharingScreen;
+      await room.localParticipant.setScreenShareEnabled(next);
+      setSharingScreen(next);
+    } catch (err) {
+      showAppToast(err instanceof Error ? err.message : 'Could not start screen sharing', {
+        isError: true,
+      });
+    }
+  };
+
+  const qualityHint = connQualityLabel(connQuality);
   const VideoEl = 'video' as any;
+
+  const weakTipShownRef = React.useRef(false);
+  useEffect(() => {
+    if (connQuality !== 'poor' && connQuality !== 'lost') return;
+    if (weakTipShownRef.current) return;
+    weakTipShownRef.current = true;
+    showAppToast('Weak connection — audio preferred for now');
+  }, [connQuality]);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -408,11 +493,19 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
           <Text style={styles.webBetaText}>Web beta</Text>
         </View>
       </View>
-      {connectionState !== 'connected' && (
+      {(connectionState !== 'connected' || qualityHint) && (
         <View style={styles.webConnectionBanner}>
-          <Ionicons name="sync-outline" size={14} color="#fff" />
+          <Ionicons
+            name={qualityHint ? 'cellular-outline' : 'sync-outline'}
+            size={14}
+            color="#fff"
+          />
           <Text style={styles.webConnectionText}>
-            {connectionState === 'reconnecting' ? 'Reconnecting...' : 'Connecting...'}
+            {qualityHint
+              ? qualityHint
+              : connectionState === 'reconnecting'
+                ? 'Reconnecting...'
+                : 'Connecting...'}
           </Text>
         </View>
       )}
@@ -426,13 +519,46 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
         />
         <View style={styles.remoteWrap}>
           {sharedVideo ? (
-            <VideoEl
-              ref={remoteVideoRef}
-              autoPlay
-              playsInline
-              muted={false}
-              style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, width: '100%', height: '100%', objectFit: 'cover' }}
-            />
+            <>
+              <View
+                style={pipSwapped ? styles.pip : styles.fullBleed}
+                pointerEvents={pipSwapped ? 'box-none' : 'none'}
+              >
+                <VideoEl
+                  ref={remoteVideoRef}
+                  autoPlay
+                  playsInline
+                  muted={false}
+                  style={styles.mediaFill}
+                />
+                {pipSwapped ? (
+                  <TouchableOpacity
+                    style={StyleSheet.absoluteFill}
+                    onPress={() => setPipSwapped(false)}
+                  />
+                ) : null}
+              </View>
+              {videoEnabled ? (
+                <TouchableOpacity
+                  style={pipSwapped ? styles.fullBleed : styles.pip}
+                  activeOpacity={0.95}
+                  onPress={() => setPipSwapped((s) => !s)}
+                >
+                  <VideoEl
+                    ref={localVideoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    style={styles.mediaFill}
+                  />
+                  {muted && !pipSwapped ? (
+                    <View style={styles.pipMuteBadge}>
+                      <Ionicons name="mic-off" size={12} color="#fff" />
+                    </View>
+                  ) : null}
+                </TouchableOpacity>
+              ) : null}
+            </>
           ) : (
             <View style={styles.audioOnly}>
               {peerAvatar ? (
@@ -454,23 +580,17 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
               </Text>
             </View>
           )}
-
-          {sharedVideo && videoEnabled && (
-            <View style={styles.pip}>
-              <VideoEl
-                ref={localVideoRef}
-                autoPlay
-                playsInline
-                muted
-                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-              />
-            </View>
-          )}
         </View>
 
         <View style={styles.bar}>
           <Text style={styles.duration}>{formatDuration(duration)}</Text>
         </View>
+
+        <CallReactionsBar
+          myName="You"
+          publish={publishExtras}
+          incoming={extras.incomingReaction}
+        />
 
         <View style={[styles.controls, { paddingBottom: 32 + insets.bottom }]}>
           <TouchableOpacity style={[styles.ctrlBtn, muted && styles.ctrlBtnActive]} onPress={toggleMute}>
@@ -486,10 +606,37 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
               color="#fff"
             />
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.ctrlBtn, styles.endBtn]} onPress={finishCall}>
+          {sharedVideo && videoEnabled ? (
+            <TouchableOpacity style={styles.ctrlBtn} onPress={() => void flipCamera()}>
+              <Ionicons name="camera-reverse-outline" size={26} color="#fff" />
+            </TouchableOpacity>
+          ) : null}
+          <TouchableOpacity
+            style={[styles.ctrlBtn, sharingScreen && styles.ctrlBtnActive]}
+            onPress={() => void toggleScreenShare()}
+          >
+            <Ionicons name="desktop-outline" size={24} color="#fff" />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.ctrlBtn} onPress={() => extras.setChatOpen(true)}>
+            <Ionicons name="chatbubble-ellipses-outline" size={24} color="#fff" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.ctrlBtn, styles.endBtn]}
+            onPress={finishCall}
+            accessibilityLabel={call.scope === 'group' ? 'Leave call' : 'End call'}
+          >
             <Ionicons name="call" size={26} color="#fff" style={{ transform: [{ rotate: '135deg' }] }} />
           </TouchableOpacity>
         </View>
+
+        <CallInCallChat
+          visible={extras.chatOpen}
+          onClose={() => extras.setChatOpen(false)}
+          myName="You"
+          publish={publishExtras}
+          messages={extras.messages}
+          onLocalSend={extras.onLocalChat}
+        />
       </View>
     </View>
   );
@@ -518,15 +665,12 @@ function FallbackError({ message }: { message: string }) {
 function CallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
   const [muted, setMuted] = useState(false);
   const [duration, setDuration] = useState(0);
   const [callEnded, setCallEnded] = useState(false);
   const [showAddParticipant, setShowAddParticipant] = useState(false);
-  const [myAuthId, setMyAuthId] = useState<string | null>(null);
-
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setMyAuthId(data.user?.id ?? null));
-  }, []);
+  const myAuthId = user?.id ?? null;
 
   useEffect(() => {
     const start = Date.now();
@@ -565,7 +709,13 @@ function CallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
       source: unknown;
     }>;
     VideoTrack: React.ComponentType<{ trackRef: unknown; style?: unknown }>;
-    AudioSession: { startAudioSession: () => Promise<void>; stopAudioSession: () => Promise<void> };
+    AudioSession: {
+      startAudioSession: () => Promise<void>;
+      stopAudioSession: () => Promise<void>;
+      selectAudioOutput?: (id: string) => Promise<void>;
+      getAudioOutputs?: () => Promise<string[]>;
+      configureAudio?: (config: Record<string, unknown>) => Promise<void>;
+    };
     Track: { Source: { Camera: unknown; Microphone: unknown; ScreenShare: unknown } };
     useLocalParticipant: () => {
       localParticipant: {
@@ -578,14 +728,22 @@ function CallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
 
   useEffect(() => {
     if (Platform.OS !== 'web') {
-      AudioSession?.startAudioSession?.().catch(() => undefined);
+      void (async () => {
+        try {
+          await AudioSession?.startAudioSession?.();
+          // Video defaults to speaker; voice to earpiece — user can toggle.
+          await setCallSpeakerOn(AudioSession, call.call_type === 'video');
+        } catch {
+          /* ignore */
+        }
+      })();
     }
     return () => {
       if (Platform.OS !== 'web') {
         AudioSession?.stopAudioSession?.().catch(() => undefined);
       }
     };
-  }, [AudioSession]);
+  }, [AudioSession, call.call_type]);
 
   const finishCall = async (markEnded = true) => {
     if (callEnded) return;
@@ -595,7 +753,7 @@ function CallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
     } catch {
       /* ignore */
     }
-    navigateBackSafely();
+    navigateBackSafely(call.scope === 'group' && markEnded ? 'Left the call' : 'Call ended');
   };
 
   return (
@@ -615,7 +773,7 @@ function CallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
         onConnected={() => undefined}
         onDisconnected={() => finishCall(false)}
         onError={(err: Error) => {
-          Alert.alert('Call error', err.message);
+          showAppToast(err.message || 'Call error', { isError: true });
           finishCall(false);
         }}
       >
@@ -627,6 +785,7 @@ function CallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
           peerAvatar={peerAvatar}
           duration={duration}
           muted={muted}
+          AudioSession={AudioSession}
           onToggleMute={async () => {
             setMuted((m) => !m);
           }}
@@ -651,11 +810,20 @@ function RoomBody(props: {
   peerAvatar: string | null;
   duration: number;
   muted: boolean;
+  AudioSession?: {
+    selectAudioOutput?: (id: string) => Promise<void>;
+    getAudioOutputs?: () => Promise<string[]>;
+    configureAudio?: (config: Record<string, unknown>) => Promise<void>;
+  } | null;
   onToggleMute: () => Promise<void>;
   onEnd: () => void;
   onAddParticipant: () => void;
   useTracks: (kinds?: unknown[]) => Array<{
-    participant: { identity: string; isLocal: boolean };
+    participant: {
+      identity: string;
+      isLocal: boolean;
+      isMicrophoneEnabled?: boolean;
+    };
     publication?: { trackSid?: string };
     source: unknown;
   }>;
@@ -665,10 +833,20 @@ function RoomBody(props: {
     localParticipant: {
       setMicrophoneEnabled: (b: boolean) => Promise<void>;
       setCameraEnabled: (b: boolean) => Promise<void>;
+      setScreenShareEnabled?: (b: boolean) => Promise<void>;
+      getTrackPublication?: (source: unknown) =>
+        | { track?: { restartTrack?: (opts: { facingMode: FacingMode }) => Promise<void> } | null }
+        | undefined;
       publishData?: (data: Uint8Array, opts: { reliable: boolean; topic: string }) => void;
+      isMicrophoneEnabled?: boolean;
     };
   };
-  useRoomContext: () => { disconnect: () => Promise<void> };
+  useRoomContext: () => {
+    disconnect: () => Promise<void>;
+    on?: (event: string, handler: (...args: unknown[]) => void) => void;
+    off?: (event: string, handler: (...args: unknown[]) => void) => void;
+    remoteParticipants?: Map<string, { isMicrophoneEnabled?: boolean }>;
+  };
 }) {
   const { useTracks, VideoTrack, Track, useLocalParticipant, useRoomContext } = props;
   const insets = useSafeAreaInsets();
@@ -679,6 +857,17 @@ function RoomBody(props: {
   const [participantProfiles, setParticipantProfiles] = useState<
     Map<string, { display_name: string; avatar_url: string | null }>
   >(new Map());
+  const [pipSwapped, setPipSwapped] = useState(false);
+  const [facingMode, setFacingMode] = useState<FacingMode>('user');
+  const [speakerOn, setSpeakerOn] = useState(startedAsVideo);
+  const [connQuality, setConnQuality] = useState<CallConnQuality>('unknown');
+  const [sharingScreen, setSharingScreen] = useState(false);
+  const [connectionState, setConnectionState] = useState<'connecting' | 'connected' | 'reconnecting'>(
+    'connecting'
+  );
+  const extras = useCallExtras('You');
+  const extrasHandleRef = React.useRef<(bytes: Uint8Array) => void>(() => undefined);
+  extrasHandleRef.current = (bytes) => extras.handleExtrasPayload(bytes, false);
 
   useEffect(() => {
     if (!props.call.id) return;
@@ -712,6 +901,17 @@ function RoomBody(props: {
       });
     },
     [localParticipant]
+  );
+
+  const publishExtras = React.useCallback(
+    (signal: CallExtrasSignal) => {
+      if (!localParticipant.publishData) return;
+      extras.publishExtras(
+        (data, opts) => localParticipant.publishData!(data, opts),
+        signal
+      );
+    },
+    [extras.publishExtras, localParticipant]
   );
 
   const enableLocalVideo = React.useCallback(async () => {
@@ -759,23 +959,86 @@ function RoomBody(props: {
     const onData = (...args: unknown[]) => {
       const [payload, participant, , topic] = args;
       if ((participant as { isLocal?: boolean } | undefined)?.isLocal) return;
-      if (topic && topic !== CALL_VIDEO_TOPIC) return;
       let bytes: Uint8Array;
       if (payload instanceof Uint8Array) bytes = payload;
       else if (payload instanceof ArrayBuffer) bytes = new Uint8Array(payload);
       else return;
+      if (topic === CALL_EXTRAS_TOPIC) {
+        extrasHandleRef.current?.(bytes);
+        return;
+      }
+      if (topic && topic !== CALL_VIDEO_TOPIC) return;
       const signal = decodeCallVideoSignal(bytes);
       if (signal) handleSignalRef.current(signal);
     };
 
+    const onQuality = (...args: unknown[]) => {
+      const [quality, participant] = args;
+      if ((participant as { isLocal?: boolean } | undefined) && !(participant as { isLocal?: boolean }).isLocal) {
+        return;
+      }
+      setConnQuality(normalizeConnQuality(quality));
+    };
+
     roomAny.on('dataReceived', onData);
-    return () => roomAny.off?.('dataReceived', onData);
-  }, [room]);
+    roomAny.on('connectionQualityChanged', onQuality);
+    const onRemoteLeft = () => {
+      if (props.call.scope !== 'direct') return;
+      const remotes = room.remoteParticipants?.size ?? 0;
+      if (remotes === 0) {
+        void (async () => {
+          try {
+            await api.calls.end(props.call.id);
+          } catch {
+            /* ignore */
+          }
+          leaveCallScreen('Calls', 'Call ended');
+        })();
+      }
+    };
+    const onReconnecting = () => setConnectionState('reconnecting');
+    const onReconnected = () => setConnectionState('connected');
+    const onConnected = () => setConnectionState('connected');
+    roomAny.on('participantDisconnected', onRemoteLeft);
+    roomAny.on('reconnecting', onReconnecting);
+    roomAny.on('reconnected', onReconnected);
+    roomAny.on('connected', onConnected);
+    // Some LiveKit RN builds expose ConnectionStateChanged instead.
+    const onConnState = (...args: unknown[]) => {
+      const state = String(args[0] ?? '').toLowerCase();
+      if (state.includes('reconnect')) setConnectionState('reconnecting');
+      else if (state.includes('connect')) setConnectionState('connected');
+    };
+    roomAny.on('connectionStateChanged', onConnState);
+    return () => {
+      roomAny.off?.('dataReceived', onData);
+      roomAny.off?.('connectionQualityChanged', onQuality);
+      roomAny.off?.('participantDisconnected', onRemoteLeft);
+      roomAny.off?.('reconnecting', onReconnecting);
+      roomAny.off?.('reconnected', onReconnected);
+      roomAny.off?.('connected', onConnected);
+      roomAny.off?.('connectionStateChanged', onConnState);
+    };
+  }, [room, props.call.id, props.call.scope]);
+
+  // When upgrading to video mid-call, prefer speaker once.
+  const autoSpeakerRef = React.useRef(startedAsVideo);
+  useEffect(() => {
+    if (!sharedVideo || !videoEnabled) return;
+    if (autoSpeakerRef.current) return;
+    autoSpeakerRef.current = true;
+    void (async () => {
+      const ok = await setCallSpeakerOn(props.AudioSession, true);
+      if (ok) setSpeakerOn(true);
+    })();
+  }, [props.AudioSession, sharedVideo, videoEnabled]);
 
   const cameraTracks = useTracks([Track.Source.Camera]);
   const remoteTracks = cameraTracks.filter((t) => !t.participant.isLocal);
   const localVideo = cameraTracks.find((t) => t.participant.isLocal);
   const remoteVideo = remoteTracks[0];
+
+  const remoteMuted = remoteVideo?.participant?.isMicrophoneEnabled === false;
 
   const joinedCount = Math.max(participantProfiles.size, remoteTracks.length + 1);
   const isMultiParty =
@@ -792,11 +1055,13 @@ function RoomBody(props: {
     for (const [uid, prof] of participantProfiles) {
       if (uid === props.myAuthId) continue;
       const track = trackByIdentity.get(uid);
+      const remote = room.remoteParticipants?.get(uid);
       tiles.push({
         identity: uid,
         name: prof.display_name,
         avatarUrl: prof.avatar_url,
         hasVideo: sharedVideo && !!track,
+        muted: remote?.isMicrophoneEnabled === false,
       });
     }
     if (props.myAuthId && sharedVideo && videoEnabled) {
@@ -806,6 +1071,7 @@ function RoomBody(props: {
         avatarUrl: null,
         isLocal: true,
         hasVideo: !!localVideo,
+        muted: props.muted,
       });
     }
     return tiles.length > 0 ? tiles : [
@@ -814,6 +1080,7 @@ function RoomBody(props: {
         name: props.peerName,
         avatarUrl: props.peerAvatar,
         hasVideo: sharedVideo && !!remoteVideo,
+        muted: remoteMuted,
       },
     ];
   }, [
@@ -823,10 +1090,13 @@ function RoomBody(props: {
     props.myAuthId,
     props.peerName,
     props.peerAvatar,
+    props.muted,
     sharedVideo,
     videoEnabled,
     localVideo,
     remoteVideo,
+    room.remoteParticipants,
+    remoteMuted,
   ]);
 
   const toggleMute = async () => {
@@ -838,6 +1108,33 @@ function RoomBody(props: {
     void negotiation.toggleVideo();
   };
 
+  const flipCamera = async () => {
+    const next = await flipLocalCameraFacing(
+      localParticipant,
+      Track.Source.Camera,
+      facingMode
+    );
+    if (next) setFacingMode(next);
+  };
+
+  const toggleSpeaker = async () => {
+    const next = !speakerOn;
+    const ok = await setCallSpeakerOn(props.AudioSession, next);
+    if (ok) setSpeakerOn(next);
+  };
+
+  const toggleScreenShare = async () => {
+    try {
+      const next = !sharingScreen;
+      await localParticipant.setScreenShareEnabled?.(next);
+      setSharingScreen(next);
+    } catch (err) {
+      showAppToast(err instanceof Error ? err.message : 'Could not start screen sharing', {
+        isError: true,
+      });
+    }
+  };
+
   const hangup = async () => {
     try {
       await room.disconnect();
@@ -845,6 +1142,18 @@ function RoomBody(props: {
       props.onEnd();
     }
   };
+
+  const qualityHint = connQualityLabel(connQuality);
+  const mainVideo = pipSwapped ? localVideo : remoteVideo;
+  const pipVideo = pipSwapped ? remoteVideo : localVideo;
+
+  const weakTipShownRef = React.useRef(false);
+  useEffect(() => {
+    if (connQuality !== 'poor' && connQuality !== 'lost') return;
+    if (weakTipShownRef.current) return;
+    weakTipShownRef.current = true;
+    showAppToast('Weak connection — audio preferred for now');
+  }, [connQuality]);
 
   return (
     <View style={styles.roomBody}>
@@ -855,6 +1164,22 @@ function RoomBody(props: {
         onAccept={() => void negotiation.acceptIncomingVideo()}
         onDecline={negotiation.declineIncomingVideo}
       />
+      {qualityHint || connectionState !== 'connected' ? (
+        <View style={styles.nativeQualityBanner}>
+          <Ionicons
+            name={qualityHint ? 'cellular-outline' : 'sync-outline'}
+            size={14}
+            color="#fff"
+          />
+          <Text style={styles.webConnectionText}>
+            {qualityHint
+              ? qualityHint
+              : connectionState === 'reconnecting'
+                ? 'Reconnecting…'
+                : 'Connecting…'}
+          </Text>
+        </View>
+      ) : null}
       <View style={styles.remoteWrap}>
         {isMultiParty ? (
           <CallParticipantGrid
@@ -864,8 +1189,14 @@ function RoomBody(props: {
               return track ? <VideoTrack trackRef={track} style={style} /> : null;
             }}
           />
-        ) : sharedVideo && remoteVideo ? (
-          <VideoTrack trackRef={remoteVideo} style={styles.remoteVideo} />
+        ) : sharedVideo && mainVideo ? (
+          <TouchableOpacity
+            activeOpacity={1}
+            style={StyleSheet.absoluteFill}
+            onPress={() => videoEnabled && setPipSwapped((s) => !s)}
+          >
+            <VideoTrack trackRef={mainVideo} style={styles.remoteVideo} />
+          </TouchableOpacity>
         ) : (
           <View style={styles.audioOnly}>
             {props.peerAvatar ? (
@@ -881,22 +1212,43 @@ function RoomBody(props: {
             <Text style={styles.statusText}>
               {sharedVideo ? 'Connecting…' : isMultiParty ? 'Group call' : 'On call'}
             </Text>
+            {remoteMuted ? (
+              <View style={styles.peerMuteRow}>
+                <Ionicons name="mic-off" size={14} color="#ff8a80" />
+                <Text style={styles.peerMuteText}>Muted</Text>
+              </View>
+            ) : null}
             {sharedVideo && !startedAsVideo && videoEnabled && (
               <Text style={styles.revertHint}>Tap camera to switch back to voice</Text>
             )}
           </View>
         )}
 
-        {!isMultiParty && sharedVideo && localVideo && videoEnabled && (
-          <View style={styles.pip}>
-            <VideoTrack trackRef={localVideo} style={styles.pipVideo} />
-          </View>
+        {!isMultiParty && sharedVideo && pipVideo && videoEnabled && (
+          <TouchableOpacity
+            style={styles.pip}
+            activeOpacity={0.9}
+            onPress={() => setPipSwapped((s) => !s)}
+          >
+            <VideoTrack trackRef={pipVideo} style={styles.pipVideo} />
+            {(pipSwapped ? remoteMuted : props.muted) ? (
+              <View style={styles.pipMuteBadge}>
+                <Ionicons name="mic-off" size={12} color="#fff" />
+              </View>
+            ) : null}
+          </TouchableOpacity>
         )}
       </View>
 
       <View style={styles.bar}>
         <Text style={styles.duration}>{formatDuration(props.duration)}</Text>
       </View>
+
+      <CallReactionsBar
+        myName="You"
+        publish={publishExtras}
+        incoming={extras.incomingReaction}
+      />
 
       <View style={[styles.controls, { paddingBottom: 32 + insets.bottom }]}>
         <TouchableOpacity
@@ -915,10 +1267,34 @@ function RoomBody(props: {
             color="#fff"
           />
         </TouchableOpacity>
+        {sharedVideo && videoEnabled ? (
+          <TouchableOpacity style={styles.ctrlBtn} onPress={() => void flipCamera()}>
+            <Ionicons name="camera-reverse-outline" size={26} color="#fff" />
+          </TouchableOpacity>
+        ) : null}
+        <TouchableOpacity
+          style={[styles.ctrlBtn, speakerOn && styles.ctrlBtnActive]}
+          onPress={() => void toggleSpeaker()}
+        >
+          <Ionicons name={speakerOn ? 'volume-high' : 'ear-outline'} size={24} color="#fff" />
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.ctrlBtn, sharingScreen && styles.ctrlBtnActive]}
+          onPress={() => void toggleScreenShare()}
+        >
+          <Ionicons name="desktop-outline" size={24} color="#fff" />
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.ctrlBtn} onPress={() => extras.setChatOpen(true)}>
+          <Ionicons name="chatbubble-ellipses-outline" size={24} color="#fff" />
+        </TouchableOpacity>
         <TouchableOpacity style={styles.ctrlBtn} onPress={props.onAddParticipant}>
           <Ionicons name="person-add" size={24} color="#fff" />
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.ctrlBtn, styles.endBtn]} onPress={hangup}>
+        <TouchableOpacity
+          style={[styles.ctrlBtn, styles.endBtn]}
+          onPress={() => void hangup()}
+          accessibilityLabel={props.call.scope === 'group' ? 'Leave call' : 'End call'}
+        >
           <Ionicons
             name="call"
             size={26}
@@ -927,6 +1303,15 @@ function RoomBody(props: {
           />
         </TouchableOpacity>
       </View>
+
+      <CallInCallChat
+        visible={extras.chatOpen}
+        onClose={() => extras.setChatOpen(false)}
+        myName="You"
+        publish={publishExtras}
+        messages={extras.messages}
+        onLocalSend={extras.onLocalChat}
+      />
     </View>
   );
 }
@@ -957,21 +1342,67 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: '#fff',
+    zIndex: 5,
   },
   pipVideo: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
-  bar: { paddingVertical: 12, alignItems: 'center' },
-  duration: { color: '#aaa', fontSize: 14 },
+  pipMuteBadge: {
+    position: 'absolute',
+    bottom: 6,
+    left: 6,
+    backgroundColor: 'rgba(0,0,0,0.65)',
+    borderRadius: 10,
+    padding: 4,
+  },
+  fullBleed: {
+    ...StyleSheet.absoluteFill,
+    zIndex: 1,
+  },
+  mediaFill: {
+    width: '100%',
+    height: '100%',
+    objectFit: 'cover',
+  } as object,
+  nativeQualityBanner: {
+    position: 'absolute',
+    top: 10,
+    left: 12,
+    zIndex: 30,
+    backgroundColor: 'rgba(183, 28, 28, 0.85)',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  peerMuteRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 8,
+  },
+  peerMuteText: { color: '#ff8a80', fontSize: 13, fontWeight: '600' },
+  bar: {
+    paddingTop: 4,
+    paddingBottom: 8,
+    alignItems: 'center',
+    marginBottom: 52,
+    zIndex: 26,
+  },
+  duration: { color: '#fff', fontSize: 15, fontWeight: '600' },
   controls: {
     flexDirection: 'row',
     justifyContent: 'space-around',
-    paddingVertical: 32,
-    paddingHorizontal: 16,
+    flexWrap: 'wrap',
+    gap: 8,
+    paddingVertical: 24,
+    paddingHorizontal: 12,
     backgroundColor: 'rgba(0,0,0,0.6)',
   },
   ctrlBtn: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     backgroundColor: '#262626',
     justifyContent: 'center',
     alignItems: 'center',

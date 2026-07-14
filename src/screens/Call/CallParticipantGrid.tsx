@@ -1,5 +1,6 @@
 import React from 'react';
 import { Image, StyleSheet, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { callGridLayout, type CallTileParticipant } from './callGridUtils';
 
 type Props = {
@@ -37,6 +38,9 @@ export function CallParticipantGrid({ participants, renderVideo, localVideoOverl
             </View>
           )}
           <View style={styles.nameBadge}>
+            {p.muted ? (
+              <Ionicons name="mic-off" size={11} color="#ff8a80" style={styles.muteIcon} />
+            ) : null}
             <Text style={styles.nameText} numberOfLines={1}>
               {p.isLocal ? 'You' : p.name}
             </Text>
@@ -87,6 +91,10 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     borderRadius: 6,
     maxWidth: '90%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
-  nameText: { color: '#fff', fontSize: 11, fontWeight: '600' },
+  muteIcon: { marginRight: 2 },
+  nameText: { color: '#fff', fontSize: 11, fontWeight: '600', flexShrink: 1 },
 });

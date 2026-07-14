@@ -164,3 +164,41 @@ export async function isJoinedParticipant(
     .maybeSingle();
   return Boolean(data);
 }
+
+/**
+ * Find a call where this user is actively joined (not merely invited).
+ * Ignores stale ringing rows older than ~2 minutes so abandoned rings
+ * cannot permanently block placing new calls.
+ */
+export async function findUserBusyCall(userId: string): Promise<CallRow | null> {
+  const { data: parts } = await supabaseAdmin
+    .from('call_participants')
+    .select('call_id, state')
+    .eq('user_id', userId)
+    .eq('state', 'joined')
+    .limit(20);
+
+  if (!parts?.length) return null;
+
+  const callIds = parts.map((p) => p.call_id as string);
+  const { data: calls } = await supabaseAdmin
+    .from('calls')
+    .select('*')
+    .in('id', callIds)
+    .in('status', ['ringing', 'accepted'])
+    .order('created_at', { ascending: false })
+    .limit(10);
+
+  const RINGING_FRESH_MS = 120_000;
+  const ACCEPTED_FRESH_MS = 3 * 60 * 60 * 1000;
+  const now = Date.now();
+  for (const row of calls ?? []) {
+    const c = row as CallRow;
+    const created = new Date(c.created_at).getTime();
+    const age = now - created;
+    if (!Number.isFinite(age)) continue;
+    if (c.status === 'accepted' && age < ACCEPTED_FRESH_MS) return c;
+    if (c.status === 'ringing' && age < RINGING_FRESH_MS) return c;
+  }
+  return null;
+}

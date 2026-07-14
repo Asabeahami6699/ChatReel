@@ -13,6 +13,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '../../lib/api';
+import { showAppToast } from '../../lib/appToast';
 import { formatLastSeen } from './chatMessageUtils';
 import { chatTheme } from './chatTheme';
 import { useAuth } from '../../hooks/useAuth';
@@ -59,12 +60,13 @@ export default function ContactScreen() {
   const startCall = useCallback(
     async (type: 'voice' | 'video') => {
       try {
-        const { call, live_kit } = await api.calls.start({ type, callee_id: userId });
+        const { startCallGuarded } = await import('../../lib/startCallGuarded');
+        const { call, live_kit } = await startCallGuarded({ type, callee_id: userId });
         const { navigateToOutgoingCall } = await import('../../navigation/rootNavigation');
         navigateToOutgoingCall({ call, token: live_kit.token, url: live_kit.url });
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : 'Could not start call';
-        Alert.alert('Call', msg);
+        showAppToast(msg, { isError: true });
       }
     },
     [userId]
