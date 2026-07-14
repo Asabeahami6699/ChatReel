@@ -15,6 +15,11 @@ import {
 } from '../../lib/appAudio';
 import { RingtoneTrimModal } from '../../components/RingtoneTrimModal';
 import { RINGTONE_CLIP_SEC } from '../../lib/ringtoneTrim';
+import {
+  clearPersistedRingtoneBlob,
+  persistIncomingRingtoneSource,
+} from '../../lib/persistRingtone';
+import { showAppToast } from '../../lib/appToast';
 
 function SettingRow({
   label,
@@ -86,13 +91,19 @@ export default function ChatSettingsScreen() {
       if (result.canceled || !result.assets?.[0]) return;
       const asset = result.assets[0];
       const label = asset.name || 'Custom tone';
+      const durableUri = await persistIncomingRingtoneSource({
+        uri: asset.uri,
+        name: asset.name,
+        mimeType: asset.mimeType,
+      });
       await updateSettings({
-        incomingRingtoneUri: asset.uri,
+        incomingRingtoneUri: durableUri,
         incomingRingtoneLabel: label,
         incomingRingtoneStartSec: 0,
         incomingRingtoneEndSec: null,
       });
-      openTrim(asset.uri, label);
+      openTrim(durableUri, label);
+      showAppToast('Custom ringtone saved');
     } catch (err) {
       showErrorAlert('Ringtone', err instanceof Error ? err.message : 'Could not pick audio file');
     }
@@ -104,11 +115,19 @@ export default function ChatSettingsScreen() {
       const source =
         settings.incomingRingtoneUri?.trim() ||
         require('../../../assets/sounds/incoming-ring.mp3');
-      const player = createPlaybackPlayer(source);
+      const { resolvePlayableAudioSource, safePlayAudioPlayer } = await import('../../lib/appAudio');
+      const resolved =
+        typeof source === 'string' ? source : await resolvePlayableAudioSource(source as number);
+      const player = createPlaybackPlayer(resolved);
       if (settings.incomingRingtoneUri) {
         await seekPlaybackPlayer(player, trimStart);
       }
-      player.play();
+      const ok = await safePlayAudioPlayer(player);
+      if (!ok) {
+        showErrorAlert('Ringtone', 'Could not play this file. Try another MP3/M4A.');
+        void releasePlayer(player);
+        return;
+      }
       const previewMs = Math.min(
         2500,
         Math.max(800, (trimEnd - trimStart) * 1000)
@@ -121,13 +140,15 @@ export default function ChatSettingsScreen() {
     }
   };
 
-  const clearRingtone = () =>
+  const clearRingtone = () => {
+    void clearPersistedRingtoneBlob();
     void updateSettings({
       incomingRingtoneUri: null,
       incomingRingtoneLabel: null,
       incomingRingtoneStartSec: 0,
       incomingRingtoneEndSec: null,
     });
+  };
 
   return (
     <View style={[styles.container, { backgroundColor: theme.listBg }]}>

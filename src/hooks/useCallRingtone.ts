@@ -1,5 +1,4 @@
 import { useEffect, useRef } from 'react';
-import { Platform } from 'react-native';
 import {
   configurePlaybackAudio,
   createLoopingPlayer,
@@ -12,6 +11,7 @@ import {
 } from '../lib/appAudio';
 import { useChatSettings } from '../context/ChatSettingsContext';
 import { RINGTONE_CLIP_SEC } from '../lib/ringtoneTrim';
+import { loadPersistedRingtoneBlob } from '../lib/persistRingtone';
 
 const BUNDLED = {
   outgoing: require('../../assets/sounds/outgoing-ring.mp3'),
@@ -20,35 +20,40 @@ const BUNDLED = {
 
 export type CallRingtoneKind = keyof typeof BUNDLED;
 
-/** blob: URIs die on reload — never persist as incoming ringtone. */
-function isFragileUri(uri: string | null): boolean {
-  if (!uri) return false;
-  return uri.trim().toLowerCase().startsWith('blob:');
-}
-
 /**
  * Loops a ringtone while mounted. Incoming uses the user's chosen file (and
  * optional 1-minute favourite trim) when set; otherwise the bundled default.
- * Soft-fails all play() rejections (web NotSupportedError) onto the bundled tone.
  */
 export function useCallRingtone(kind: CallRingtoneKind | null) {
   const { settings, updateSettings } = useChatSettings();
   const soundRef = useRef<AudioPlayer | null>(null);
-  const customIncomingRaw = settings.incomingRingtoneUri?.trim() || null;
-  const customIncoming = isFragileUri(customIncomingRaw) ? null : customIncomingRaw;
+  const customIncoming = settings.incomingRingtoneUri?.trim() || null;
   const trimStart = Math.max(0, settings.incomingRingtoneStartSec || 0);
   const trimEnd = settings.incomingRingtoneEndSec;
 
-  // Drop stale blob/custom URIs that will crash HTMLAudioElement.
+  // Upgrade stale blob: settings → recovered data URI from side storage.
   useEffect(() => {
-    if (!customIncomingRaw || !isFragileUri(customIncomingRaw)) return;
-    void updateSettings({
-      incomingRingtoneUri: null,
-      incomingRingtoneLabel: null,
-      incomingRingtoneStartSec: 0,
-      incomingRingtoneEndSec: null,
-    });
-  }, [customIncomingRaw, updateSettings]);
+    if (!customIncoming?.toLowerCase().startsWith('blob:')) return;
+    let alive = true;
+    void (async () => {
+      const recovered = await loadPersistedRingtoneBlob();
+      if (!alive) return;
+      if (recovered?.startsWith('data:')) {
+        await updateSettings({ incomingRingtoneUri: recovered });
+        return;
+      }
+      // Dead blob with nothing to recover — clear so preview/UI stay honest.
+      await updateSettings({
+        incomingRingtoneUri: null,
+        incomingRingtoneLabel: null,
+        incomingRingtoneStartSec: 0,
+        incomingRingtoneEndSec: null,
+      });
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [customIncoming, updateSettings]);
 
   useEffect(() => {
     if (!kind) return;
@@ -110,7 +115,7 @@ export function useCallRingtone(kind: CallRingtoneKind | null) {
       try {
         await configurePlaybackAudio();
 
-        if (kind === 'incoming' && customIncoming) {
+        if (kind === 'incoming' && customIncoming && !customIncoming.toLowerCase().startsWith('blob:')) {
           let end =
             typeof trimEnd === 'number' && trimEnd > trimStart
               ? trimEnd
@@ -121,14 +126,25 @@ export function useCallRingtone(kind: CallRingtoneKind | null) {
             return;
           } catch (customErr) {
             console.warn('[useCallRingtone] custom tone failed, using default', customErr);
-            if (Platform.OS === 'web') {
-              // Clear broken persisted URI so the next ring doesn't spam errors.
-              void updateSettings({
-                incomingRingtoneUri: null,
-                incomingRingtoneLabel: null,
-                incomingRingtoneStartSec: 0,
-                incomingRingtoneEndSec: null,
-              });
+          }
+        }
+
+        // Last chance: recovered data URI while settings still had blob:.
+        if (kind === 'incoming') {
+          const recovered = await loadPersistedRingtoneBlob();
+          if (recovered?.startsWith('data:')) {
+            try {
+              const end =
+                typeof trimEnd === 'number' && trimEnd > trimStart
+                  ? Math.min(trimEnd, trimStart + RINGTONE_CLIP_SEC)
+                  : trimStart + RINGTONE_CLIP_SEC;
+              await startTrimLoop(recovered, trimStart, Math.max(trimStart + 0.5, end));
+              if (customIncoming !== recovered) {
+                void updateSettings({ incomingRingtoneUri: recovered });
+              }
+              return;
+            } catch {
+              /* fall through to bundled */
             }
           }
         }
