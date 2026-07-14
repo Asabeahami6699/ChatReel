@@ -36,8 +36,8 @@ export default function App() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <PaperProvider>
-          <ChatSettingsProvider>
           <AuthProvider>
+          <ChatSettingsProvider>
             <RealtimeProvider>
               <PushNotificationRegistrar />
               <PresenceSyncRegistrar />
@@ -53,8 +53,8 @@ export default function App() {
               <AppToastHost />
             </RealtimeProvider>
             <StatusBar style="auto" />
-          </AuthProvider>
           </ChatSettingsProvider>
+          </AuthProvider>
         </PaperProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

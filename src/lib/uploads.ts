@@ -4,7 +4,7 @@ import { api } from './api';
 import { config } from './config';
 import { ensureSupabaseSession } from './ensureSupabaseSession';
 
-export type UploadBucket = 'avatars' | 'group_avatar' | 'chat-files' | 'reels';
+export type UploadBucket = 'avatars' | 'group_avatar' | 'chat-files' | 'reels' | 'ringtones';
 
 type UploadParams = {
   bucket: UploadBucket;

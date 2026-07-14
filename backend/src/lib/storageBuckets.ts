@@ -1,6 +1,6 @@
 import { supabaseAdmin } from './supabaseAdmin';
 
-export const STORAGE_BUCKETS = ['avatars', 'group_avatar', 'chat-files', 'reels'] as const;
+export const STORAGE_BUCKETS = ['avatars', 'group_avatar', 'chat-files', 'reels', 'ringtones'] as const;
 export type StorageBucket = (typeof STORAGE_BUCKETS)[number];
 
 const ensured = new Set<StorageBucket>();
@@ -10,6 +10,7 @@ const BUCKET_SIZE_LIMIT: Record<StorageBucket, number> = {
   group_avatar: 5_242_880, // 5 MB
   'chat-files': 52_428_800, // 50 MB
   reels: 104_857_600, // 100 MB (short videos)
+  ringtones: 10_485_760, // 10 MB (trimmed clips)
 };
 
 /** Create public storage buckets if missing (service role). */

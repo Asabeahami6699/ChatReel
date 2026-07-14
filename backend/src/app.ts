@@ -22,6 +22,7 @@ import walletRoutes from './routes/wallet.routes';
 import paystackWebhookRoutes from './routes/paystack.webhook.routes';
 import chatSettingsRoutes from './routes/chat-settings.routes';
 import linkPreviewRoutes from './routes/linkpreview.routes';
+import ringtonesRoutes from './routes/ringtones.routes';
 
 export function createApp() {
   const app = express();
@@ -58,6 +59,7 @@ export function createApp() {
   app.use('/api/gifts', giftsRoutes);
   app.use('/api/wallet', walletRoutes);
   app.use('/api/chat-settings', chatSettingsRoutes);
+  app.use('/api/ringtones', ringtonesRoutes);
   app.use('/api/link-preview', linkPreviewRoutes);
 
   app.use(errorHandler);

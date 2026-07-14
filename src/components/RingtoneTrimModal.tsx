@@ -174,7 +174,7 @@ export function RingtoneTrimModal({
           <View style={styles.headerText}>
             <Text style={styles.title}>Trim ringtone</Text>
             <Text style={styles.sub} numberOfLines={1}>
-              {label} · up to 1 minute
+              {label} · save favourite 1 minute only
             </Text>
           </View>
           <TouchableOpacity
@@ -186,8 +186,8 @@ export function RingtoneTrimModal({
         </View>
 
         <Text style={styles.hint}>
-          Drag to choose your favourite {formatSec(clipLen)} section
-          {trackLen > clipLen ? ` of ${formatSec(trackLen)}` : ''}.
+          Drag to choose the 1-minute section that will be saved to your ringtone library
+          {trackLen > clipLen ? ` (from ${formatSec(trackLen)} track)` : ''}.
         </Text>
 
         <ReelSoundTrimTimeline

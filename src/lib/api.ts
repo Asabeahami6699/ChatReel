@@ -315,6 +315,16 @@ export type LiveKitTokenDTO = {
   expiresAt: string;
 };
 
+export type UserRingtoneDTO = {
+  id: string;
+  user_id: string;
+  label: string;
+  audio_url: string;
+  storage_path: string | null;
+  duration_sec: number;
+  created_at: string;
+};
+
 export class ApiError extends Error {
   status: number;
   /** True when the session is invalid and the user should sign in again. */
@@ -657,7 +667,7 @@ export const api = {
 
   uploads: {
     uploadBase64: (data: {
-      bucket: 'avatars' | 'group_avatar' | 'chat-files' | 'reels';
+      bucket: 'avatars' | 'group_avatar' | 'chat-files' | 'reels' | 'ringtones';
       path: string;
       content_base64: string;
       content_type?: string;
@@ -668,7 +678,7 @@ export const api = {
         body: data,
       }),
     sign: (data: {
-      bucket: 'avatars' | 'group_avatar' | 'chat-files' | 'reels';
+      bucket: 'avatars' | 'group_avatar' | 'chat-files' | 'reels' | 'ringtones';
       path: string;
     }) =>
       apiRequest<{ signedUrl: string; path: string; token: string }>(
@@ -948,6 +958,33 @@ export const api = {
         }>;
       }>(`/api/calls/${id}/participants`),
     get: (id: string) => apiRequest<{ call: CallDTO }>(`/api/calls/${id}`),
+  },
+
+  ringtones: {
+    list: () =>
+      apiRequest<{ ringtones: UserRingtoneDTO[]; selected_id: string | null }>(
+        '/api/ringtones'
+      ),
+    create: (data: {
+      label: string;
+      source_path: string;
+      start_sec: number;
+      end_sec: number;
+    }) =>
+      apiRequest<{ ringtone: UserRingtoneDTO; selected_id: string }>(
+        '/api/ringtones',
+        { method: 'POST', body: data }
+      ),
+    select: (ringtone_id: string | null) =>
+      apiRequest<{
+        selected_id: string | null;
+        ringtone: UserRingtoneDTO | null;
+      }>('/api/ringtones/selected', {
+        method: 'PATCH',
+        body: { ringtone_id },
+      }),
+    remove: (id: string) =>
+      apiRequest<{ ok: boolean }>(`/api/ringtones/${id}`, { method: 'DELETE' }),
   },
 
   linkPreview: {
