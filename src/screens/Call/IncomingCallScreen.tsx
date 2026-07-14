@@ -9,22 +9,40 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
 import { useCallRingtone } from '../../hooks/useCallRingtone';
-import { replaceWithActiveCall } from '../../navigation/rootNavigation';
+import { replaceWithActiveCall, rootNavigationRef } from '../../navigation/rootNavigation';
 import { api, ApiError, type CallDTO } from '../../lib/api';
 import { showAppToast } from '../../lib/appToast';
 import { formatCallPeerName } from './callPeerInfo';
+import { beginCallHoldDisconnect } from './callHoldIntent';
+import { setHeldCallSession } from './callHeldSession';
 
 interface Props {
   call: CallDTO;
   peer: { display_name: string | null; avatar_url: string | null } | null;
   onDismiss: () => void;
+  /** True when accepting will put the current call on hold. */
+  waitingWhileBusy?: boolean;
 }
 
-export default function IncomingCallScreen({ call, peer, onDismiss }: Props) {
+function isOnActiveCall(): boolean {
+  try {
+    if (!rootNavigationRef.isReady()) return false;
+    const route = rootNavigationRef.getCurrentRoute();
+    return route?.name === 'ActiveCall';
+  } catch {
+    return false;
+  }
+}
+
+export default function IncomingCallScreen({
+  call,
+  peer,
+  onDismiss,
+  waitingWhileBusy: waitingProp,
+}: Props) {
   const insets = useSafeAreaInsets();
-  const navigation = useNavigation<any>();
+  const waitingWhileBusy = waitingProp ?? isOnActiveCall();
   useCallRingtone(call.status === 'ringing' ? 'incoming' : null);
   const [caller, setCaller] = React.useState<{
     display_name: string | null;
@@ -32,8 +50,6 @@ export default function IncomingCallScreen({ call, peer, onDismiss }: Props) {
   } | null>(peer);
 
   useEffect(() => {
-    // Vibrate pattern for incoming call. iOS supports patterns via array,
-    // Android requires VIBRATE permission (already granted by Expo on most builds).
     const PATTERN = [0, 800, 600, 800, 600];
     Vibration.vibrate(PATTERN, true);
     return () => Vibration.cancel();
@@ -47,9 +63,12 @@ export default function IncomingCallScreen({ call, peer, onDismiss }: Props) {
     let alive = true;
     (async () => {
       try {
-        // Incoming direct calls: peer is always the caller.
         const { profile } = (await api.profiles.getByUserId(call.caller_id)) as {
-          profile: { display_name: string | null; email?: string | null; avatar_url: string | null };
+          profile: {
+            display_name: string | null;
+            email?: string | null;
+            avatar_url: string | null;
+          };
         };
         if (!alive) return;
         setCaller({
@@ -57,7 +76,7 @@ export default function IncomingCallScreen({ call, peer, onDismiss }: Props) {
           avatar_url: profile?.avatar_url ?? null,
         });
       } catch {
-        /* fallback to default label */
+        /* fallback */
       }
     })();
     return () => {
@@ -71,10 +90,28 @@ export default function IncomingCallScreen({ call, peer, onDismiss }: Props) {
     if (acceptingRef.current) return;
     acceptingRef.current = true;
     Vibration.cancel();
-    // Hide overlay immediately so it cannot sit on top of ActiveCall and
-    // trigger a second accept (which used to 409).
     onDismiss();
     try {
+      if (waitingWhileBusy) {
+        beginCallHoldDisconnect();
+        const { held_call, call: acceptedCall, live_kit } = await api.calls.answerWaiting(
+          call.id
+        );
+        if (held_call) {
+          setHeldCallSession({
+            call: held_call,
+            peerName: 'On hold',
+          });
+        }
+        replaceWithActiveCall({
+          call: acceptedCall,
+          token: live_kit.token,
+          url: live_kit.url,
+        });
+        showAppToast('Other call put on hold');
+        return;
+      }
+
       const { call: acceptedCall, live_kit } = await api.calls.accept(call.id);
       replaceWithActiveCall({
         call: acceptedCall,
@@ -94,7 +131,7 @@ export default function IncomingCallScreen({ call, peer, onDismiss }: Props) {
     try {
       await api.calls.decline(call.id);
     } catch {
-      /* ignore — UI already dismissed */
+      /* ignore */
     }
   };
 
@@ -111,9 +148,11 @@ export default function IncomingCallScreen({ call, peer, onDismiss }: Props) {
     >
       <View style={styles.top}>
         <Text style={styles.subtitle}>
-          {call.scope === 'group'
-            ? `Incoming ${call.call_type} group call`
-            : `Incoming ${call.call_type} call`}
+          {waitingWhileBusy
+            ? `Call waiting · ${call.call_type}`
+            : call.scope === 'group'
+              ? `Incoming ${call.call_type} group call`
+              : `Incoming ${call.call_type} call`}
         </Text>
         {caller?.avatar_url ? (
           <Image source={{ uri: caller.avatar_url }} style={styles.avatar} />
@@ -125,13 +164,16 @@ export default function IncomingCallScreen({ call, peer, onDismiss }: Props) {
           </View>
         )}
         <Text style={styles.name}>{displayName}</Text>
+        {waitingWhileBusy ? (
+          <Text style={styles.holdHint}>Answer to put your current call on hold</Text>
+        ) : null}
       </View>
 
       <View style={styles.actions}>
-        <TouchableOpacity style={[styles.btn, styles.declineBtn]} onPress={decline}>
+        <TouchableOpacity style={[styles.btn, styles.declineBtn]} onPress={() => void decline()}>
           <Ionicons name="call" size={28} color="#fff" style={{ transform: [{ rotate: '135deg' }] }} />
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.btn, styles.acceptBtn]} onPress={accept}>
+        <TouchableOpacity style={[styles.btn, styles.acceptBtn]} onPress={() => void accept()}>
           <Ionicons
             name={call.call_type === 'video' ? 'videocam' : 'call'}
             size={28}
@@ -151,6 +193,7 @@ const styles = StyleSheet.create({
   },
   top: { alignItems: 'center', gap: 16 },
   subtitle: { color: '#aac4e1', fontSize: 14 },
+  holdHint: { color: '#fbbf24', fontSize: 13, fontWeight: '600', marginTop: 4 },
   avatar: { width: 120, height: 120, borderRadius: 60, marginTop: 24 },
   avatarFallback: {
     backgroundColor: '#1976d2',

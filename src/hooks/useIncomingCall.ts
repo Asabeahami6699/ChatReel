@@ -47,7 +47,7 @@ export function useIncomingCall(): CallDTO | null {
       const isActiveInvite =
         ring.status === 'accepted' && ring.caller_id !== myAuthId;
       setIncoming(
-        validTarget && (ring.status === 'ringing' ? age < 35_000 : isActiveInvite)
+        validTarget && (ring.status === 'ringing' ? age < 60_000 : isActiveInvite)
           ? ring
           : null
       );

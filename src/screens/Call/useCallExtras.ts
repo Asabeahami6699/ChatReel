@@ -19,6 +19,9 @@ export function useCallExtras(myName: string) {
   const [chatOpen, setChatOpen] = useState(false);
   const [messages, setMessages] = useState<InCallChatMessage[]>([]);
   const [incomingReaction, setIncomingReaction] = useState<FloatingReaction | null>(null);
+  const [incomingGiftBurst, setIncomingGiftBurst] = useState<string | null>(null);
+  const [recordingRequestAt, setRecordingRequestAt] = useState<number | null>(null);
+  const [recordingActive, setRecordingActive] = useState(false);
 
   const publishExtras = useCallback(
     (publishData: PublishData | null | undefined, signal: CallExtrasSignal) => {
@@ -46,6 +49,20 @@ export function useCallExtras(myName: string) {
       }
       if (signal.type === 'reaction') {
         setIncomingReaction(reactionFromSignal(signal.kind, signal.name, signal.at));
+        return;
+      }
+      if (signal.type === 'gift') {
+        setIncomingGiftBurst(signal.emoji);
+        setTimeout(() => setIncomingGiftBurst(null), 2200);
+        return;
+      }
+      if (signal.type === 'recording_request') {
+        setRecordingRequestAt(signal.at);
+        return;
+      }
+      if (signal.type === 'recording_consent') {
+        if (signal.allowed) setRecordingActive(true);
+        return;
       }
     },
     []
@@ -55,12 +72,19 @@ export function useCallExtras(myName: string) {
     setMessages((prev) => [...prev.slice(-80), msg]);
   }, []);
 
+  const clearRecordingRequest = useCallback(() => setRecordingRequestAt(null), []);
+
   return {
     chatOpen,
     setChatOpen,
     messages,
     onLocalChat,
     incomingReaction,
+    incomingGiftBurst,
+    recordingRequestAt,
+    recordingActive,
+    setRecordingActive,
+    clearRecordingRequest,
     publishExtras,
     handleExtrasPayload,
     myName,

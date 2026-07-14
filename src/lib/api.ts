@@ -917,8 +917,18 @@ export const api = {
 
   calls: {
     config: () => apiRequest<{ enabled: boolean }>('/api/calls/config'),
-    start: (data: { type: CallType; callee_id?: string; group_id?: string }) =>
-      apiRequest<{ call: CallDTO; live_kit: LiveKitTokenDTO }>('/api/calls', {
+    start: (data: {
+      type: CallType;
+      callee_id?: string;
+      group_id?: string;
+      metadata?: { reel_id?: string; source?: string; [key: string]: unknown };
+    }) =>
+      apiRequest<{
+        call: CallDTO;
+        live_kit: LiveKitTokenDTO;
+        waiting_on_busy?: boolean;
+        busy_call_id?: string | null;
+      }>('/api/calls', {
         method: 'POST',
         body: data,
       }),
@@ -927,6 +937,30 @@ export const api = {
         `/api/calls/${id}/accept`,
         { method: 'POST' }
       ),
+    answerWaiting: (id: string) =>
+      apiRequest<{
+        held_call: CallDTO | null;
+        call: CallDTO;
+        live_kit: LiveKitTokenDTO;
+      }>(`/api/calls/${id}/answer-waiting`, { method: 'POST' }),
+    hold: (id: string) =>
+      apiRequest<{ call: CallDTO; ok: boolean }>(`/api/calls/${id}/hold`, {
+        method: 'POST',
+      }),
+    resume: (id: string) =>
+      apiRequest<{ call: CallDTO; live_kit: LiveKitTokenDTO }>(
+        `/api/calls/${id}/resume`,
+        { method: 'POST' }
+      ),
+    switchTo: (fromId: string, to_call_id: string) =>
+      apiRequest<{
+        held_call: CallDTO;
+        call: CallDTO;
+        live_kit: LiveKitTokenDTO;
+      }>(`/api/calls/${fromId}/switch`, {
+        method: 'POST',
+        body: { to_call_id },
+      }),
     decline: (id: string) =>
       apiRequest<{ success: boolean }>(`/api/calls/${id}/decline`, { method: 'POST' }),
     end: (id: string) =>
@@ -946,6 +980,16 @@ export const api = {
       apiRequest<{ invited: string[] }>(`/api/calls/${id}/invite`, {
         method: 'POST',
         body: { user_ids: userIds },
+      }),
+    mute: (id: string, user_id: string) =>
+      apiRequest<{ ok: boolean }>(`/api/calls/${id}/mute`, {
+        method: 'POST',
+        body: { user_id },
+      }),
+    remove: (id: string, user_id: string) =>
+      apiRequest<{ ok: boolean }>(`/api/calls/${id}/remove`, {
+        method: 'POST',
+        body: { user_id },
       }),
     participants: (id: string) =>
       apiRequest<{
@@ -1019,6 +1063,18 @@ export const api = {
         sender_balance_coins: number;
         duplicate: boolean;
       }>('/api/gifts/send', { method: 'POST', body: data }),
+    sendCall: (data: {
+      call_id: string;
+      recipient_user_id: string;
+      gift_id: string;
+      idempotency_key: string;
+    }) =>
+      apiRequest<{
+        gift: unknown;
+        catalog: GiftCatalogDTO | null;
+        sender_balance_coins: number;
+        duplicate: boolean;
+      }>('/api/gifts/send-call', { method: 'POST', body: data }),
     forReel: (reelId: string, limit = 20) =>
       apiRequest<{ gifts: ReelGiftDTO[] }>(`/api/gifts/reel/${reelId}?limit=${limit}`),
   },

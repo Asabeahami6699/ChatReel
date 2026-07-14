@@ -156,6 +156,63 @@ export async function sendReelGiftSecure(input: {
   return payload;
 }
 
+export type CallGiftRow = {
+  id: string;
+  call_id: string;
+  sender_profile_id: string;
+  recipient_profile_id: string;
+  gift_id: string;
+  coin_amount: number;
+  creator_coins: number;
+  platform_fee_coins: number;
+  idempotency_key: string;
+  created_at: string;
+};
+
+export async function sendCallGiftSecure(input: {
+  senderProfileId: string;
+  callId: string;
+  recipientUserId: string;
+  giftId: string;
+  idempotencyKey: string;
+}): Promise<{
+  duplicate: boolean;
+  gift: CallGiftRow;
+  catalog?: GiftCatalogRow;
+  sender_balance_coins: number;
+  recipient_balance_coins?: number;
+}> {
+  const { data, error } = await supabaseAdmin.rpc('send_call_gift', {
+    p_sender_profile_id: input.senderProfileId,
+    p_call_id: input.callId,
+    p_recipient_user_id: input.recipientUserId,
+    p_gift_id: input.giftId,
+    p_idempotency_key: input.idempotencyKey,
+  });
+
+  if (error) {
+    const msg = error.message ?? '';
+    if (msg.includes('insufficient_coins')) throw new Error('Insufficient coins');
+    if (msg.includes('cannot_gift_self')) throw new Error('You cannot gift yourself');
+    if (msg.includes('gift_not_found')) throw new Error('Gift not found');
+    if (msg.includes('call_not_found') || msg.includes('call_not_active')) {
+      throw new Error('Call is not active');
+    }
+    if (msg.includes('not_in_call')) throw new Error('Join the call before tipping');
+    if (msg.includes('recipient_not_found')) throw new Error('Recipient not found');
+    if (msg.includes('invalid_idempotency_key')) throw new Error('Invalid request');
+    throw new Error(msg || 'Could not send gift');
+  }
+
+  return data as {
+    duplicate: boolean;
+    gift: CallGiftRow;
+    catalog?: GiftCatalogRow;
+    sender_balance_coins: number;
+    recipient_balance_coins?: number;
+  };
+}
+
 export async function listWalletLedger(
   profileId: string,
   limit = 30,

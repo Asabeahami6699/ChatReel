@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   Image,
   ScrollView,
-  Alert,
   ActivityIndicator,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -14,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '../../lib/api';
 import { showAppToast } from '../../lib/appToast';
+import { confirmAction, showErrorAlert } from '../../lib/confirmAction';
 import { formatLastSeen } from './chatMessageUtils';
 import { chatTheme } from './chatTheme';
 import { useAuth } from '../../hooks/useAuth';
@@ -81,28 +81,30 @@ export default function ContactScreen() {
       await api.chatSettings.update('individual', userId, {
         muted_until: isMuted ? null : new Date(Date.now() + 365 * 86400_000).toISOString(),
       });
-      Alert.alert('Notifications', isMuted ? 'Unmuted' : 'Muted');
+      showAppToast(isMuted ? 'Notifications unmuted' : 'Notifications muted');
     } catch {
-      Alert.alert('Error', 'Could not update mute setting');
+      showErrorAlert('Notifications', 'Could not update mute setting');
     } finally {
       setMuting(false);
     }
   }, [userId]);
 
   const blockUser = useCallback(() => {
-    Alert.alert('Block user', `Block ${displayName}?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Block',
-        style: 'destructive',
-        onPress: () => {
-          void api.friendships.block(userId).then(() => {
-            Alert.alert('Blocked', 'User has been blocked');
-            navigation.goBack();
-          });
-        },
-      },
-    ]);
+    void (async () => {
+      const ok = await confirmAction(
+        `Block ${displayName}?`,
+        'They will no longer be able to call or message you.',
+        'Block'
+      );
+      if (!ok) return;
+      try {
+        await api.friendships.block(userId);
+        showAppToast(`${displayName} blocked`);
+        navigation.goBack();
+      } catch {
+        showErrorAlert('Block', 'Could not block user');
+      }
+    })();
   }, [displayName, navigation, userId]);
 
   if (loading) {

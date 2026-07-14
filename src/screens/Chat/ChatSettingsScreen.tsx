@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ScrollView,
   StyleSheet,
@@ -27,7 +27,7 @@ import { RINGTONE_CLIP_SEC } from '../../lib/ringtoneTrim';
 import { showAppToast } from '../../lib/appToast';
 import { useAuth } from '../../hooks/useAuth';
 import { api } from '../../lib/api';
-import { saveRingtoneClip } from '../../lib/ringtoneLibrary';
+import { startBackgroundRingtoneSave } from '../../components/RingtoneSaveToast';
 
 function SettingRow({
   label,
@@ -77,16 +77,12 @@ export default function ChatSettingsScreen() {
   const [trimUri, setTrimUri] = useState<string | null>(null);
   const [trimLabel, setTrimLabel] = useState('Custom tone');
   const [trimMime, setTrimMime] = useState<string | null>(null);
-  const [savingTrim, setSavingTrim] = useState(false);
-  const saveAbortRef = useRef(false);
 
   useEffect(() => {
     void refreshRingtoneLibrary();
   }, [refreshRingtoneLibrary]);
 
   const closeTrimModal = useCallback(() => {
-    saveAbortRef.current = true;
-    setSavingTrim(false);
     setTrimUri(null);
   }, []);
 
@@ -136,43 +132,27 @@ export default function ChatSettingsScreen() {
   };
 
   const onSaveTrim = useCallback(
-    async ({ startSec, endSec }: { startSec: number; endSec: number }) => {
-      if (!trimUri || !user?.id || savingTrim) return;
-      saveAbortRef.current = false;
-      setSavingTrim(true);
-      try {
-        const ringtone = await saveRingtoneClip({
-          userId: user.id,
-          localUri: trimUri,
-          label: trimLabel,
-          name: trimLabel,
-          mimeType: trimMime,
-          startSec,
-          endSec: Math.min(endSec, startSec + RINGTONE_CLIP_SEC),
-        });
-        if (saveAbortRef.current) return;
-        await updateSettings({
-          incomingRingtoneId: ringtone.id,
-          incomingRingtoneUri: ringtone.audio_url,
-          incomingRingtoneLabel: ringtone.label,
-          incomingRingtoneStartSec: 0,
-          incomingRingtoneEndSec: ringtone.duration_sec,
-        });
-        // Close immediately; refresh library in background.
-        setTrimUri(null);
-        setSavingTrim(false);
-        showAppToast('Ringtone saved to your library');
-        void refreshRingtoneLibrary();
-      } catch (err) {
-        if (saveAbortRef.current) return;
-        setSavingTrim(false);
-        showErrorAlert(
-          'Ringtone',
-          err instanceof Error ? err.message : 'Could not save trimmed ringtone'
-        );
-      }
+    ({ startSec, endSec }: { startSec: number; endSec: number }) => {
+      if (!trimUri || !user?.id) return;
+      const localUri = trimUri;
+      const label = trimLabel;
+      const mimeType = trimMime;
+      // Close like reel audio extract — trim/upload continues in background.
+      setTrimUri(null);
+      startBackgroundRingtoneSave({
+        userId: user.id,
+        localUri,
+        label,
+        name: label,
+        mimeType,
+        startSec,
+        endSec: Math.min(endSec, startSec + RINGTONE_CLIP_SEC),
+        afterSave: async (ringtone) => {
+          await selectRingtone(ringtone);
+        },
+      });
     },
-    [refreshRingtoneLibrary, savingTrim, trimLabel, trimMime, trimUri, updateSettings, user?.id]
+    [selectRingtone, trimLabel, trimMime, trimUri, user?.id]
   );
 
   const removeTone = async (id: string) => {
@@ -350,11 +330,8 @@ export default function ChatSettingsScreen() {
           label={trimLabel}
           initialStartSec={0}
           initialEndSec={null}
-          saving={savingTrim}
           onCancel={closeTrimModal}
-          onSave={(range) => {
-            void onSaveTrim(range);
-          }}
+          onSave={onSaveTrim}
         />
       ) : null}
     </View>

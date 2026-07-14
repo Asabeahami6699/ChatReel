@@ -15,6 +15,7 @@ import { ReelUploadQueueRegistrar } from './src/components/ReelUploadQueueRegist
 import { AppPrefetchRegistrar } from './src/components/AppPrefetchRegistrar';
 import { ChatListRealtimeRegistrar } from './src/components/ChatListRealtimeRegistrar';
 import { AudioExtractToast } from './src/components/AudioExtractToast';
+import { RingtoneSaveToast } from './src/components/RingtoneSaveToast';
 import { MomentUploadToast } from './src/components/MomentUploadToast';
 import { ConfirmToastHost } from './src/components/ConfirmToastHost';
 import { AppToastHost } from './src/components/AppToastHost';
@@ -48,6 +49,7 @@ export default function App() {
               <RootNavigator />
               <ReelUploadToast />
               <AudioExtractToast />
+              <RingtoneSaveToast />
               <MomentUploadToast />
               <ConfirmToastHost />
               <AppToastHost />

@@ -3,14 +3,13 @@ import { Modal } from 'react-native';
 import { useIncomingCall } from '../hooks/useIncomingCall';
 import IncomingCallScreen from '../screens/Call/IncomingCallScreen';
 import { rememberCallReturnPoint } from '../navigation/callSessionNav';
+import { rootNavigationRef } from '../navigation/rootNavigation';
 import { useAuth } from '../hooks/useAuth';
 import { fetchCallPeerInfo } from '../screens/Call/callPeerInfo';
 
 /**
- * Global ringer overlay. Rendered once at the app shell level.
- * Pops up an `IncomingCallScreen` whenever a `calls` row in 'ringing' state
- * targets the current user. Auto-dismisses if we navigate to ActiveCall, or
- * if the call leaves ringing.
+ * Global ringer overlay. Supports call waiting: when already on ActiveCall,
+ * accept puts that call on hold and joins the waiting caller.
  */
 export function IncomingCallOverlay() {
   const incoming = useIncomingCall();
@@ -20,8 +19,21 @@ export function IncomingCallOverlay() {
     display_name: string | null;
     avatar_url: string | null;
   } | null>(null);
+  const [onActiveCall, setOnActiveCall] = useState(false);
 
-  // New incoming call → clear prior dismiss so the next ring can show.
+  useEffect(() => {
+    const sync = () => {
+      try {
+        setOnActiveCall(rootNavigationRef.getCurrentRoute()?.name === 'ActiveCall');
+      } catch {
+        setOnActiveCall(false);
+      }
+    };
+    sync();
+    const t = setInterval(sync, 1200);
+    return () => clearInterval(t);
+  }, []);
+
   useEffect(() => {
     if (incoming && suppressedCallId && incoming.id !== suppressedCallId) {
       setSuppressedCallId(null);
@@ -29,23 +41,23 @@ export function IncomingCallOverlay() {
     if (!incoming) setSuppressedCallId(null);
   }, [incoming, suppressedCallId]);
 
-  const activeCall =
+  const activeIncoming =
     incoming && incoming.id !== suppressedCallId ? incoming : null;
 
   useEffect(() => {
-    if (activeCall?.status === 'ringing') {
+    if (activeIncoming?.status === 'ringing') {
       rememberCallReturnPoint();
     }
-  }, [activeCall?.id, activeCall?.status]);
+  }, [activeIncoming?.id, activeIncoming?.status]);
 
   useEffect(() => {
-    if (!activeCall) {
+    if (!activeIncoming) {
       setPeer(null);
       return;
     }
     let alive = true;
     (async () => {
-      const info = await fetchCallPeerInfo(activeCall, user?.id ?? null, {
+      const info = await fetchCallPeerInfo(activeIncoming, user?.id ?? null, {
         preferIncomingCaller: true,
       });
       if (!alive) return;
@@ -57,14 +69,14 @@ export function IncomingCallOverlay() {
     return () => {
       alive = false;
     };
-  }, [activeCall, user?.id]);
+  }, [activeIncoming, user?.id]);
 
   const visible =
-    !!activeCall &&
-    (activeCall.status === 'ringing' || activeCall.status === 'accepted');
+    !!activeIncoming &&
+    (activeIncoming.status === 'ringing' || activeIncoming.status === 'accepted');
 
   const dismiss = () => {
-    if (activeCall?.id) setSuppressedCallId(activeCall.id);
+    if (activeIncoming?.id) setSuppressedCallId(activeIncoming.id);
   };
 
   return (
@@ -75,11 +87,16 @@ export function IncomingCallOverlay() {
       statusBarTranslucent
       presentationStyle="fullScreen"
       onRequestClose={() => {
-        /* Decline is handled by IncomingCallScreen buttons only. */
+        /* Decline via IncomingCallScreen only */
       }}
     >
-      {activeCall ? (
-        <IncomingCallScreen call={activeCall} peer={peer} onDismiss={dismiss} />
+      {activeIncoming ? (
+        <IncomingCallScreen
+          call={activeIncoming}
+          peer={peer}
+          onDismiss={dismiss}
+          waitingWhileBusy={onActiveCall}
+        />
       ) : null}
     </Modal>
   );

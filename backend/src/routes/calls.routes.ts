@@ -7,13 +7,20 @@ import {
   areAuthUsersFriends,
   countActiveParticipants,
   createLiveKitToken,
+  clearOwnBusyCalls,
+  answerWaitingCall,
   findUserBusyCall,
+  holdUserOnCall,
   isGroupMember,
   isJoinedParticipant,
   makeDirectRoomName,
   makeGroupRoomName,
   MAX_CALL_PARTICIPANTS,
+  muteParticipantInRoom,
+  removeParticipantFromRoom,
   resolveDisplayName,
+  resumeUserOnCall,
+  switchHeldCall,
   type CallRow,
 } from '../services/calls.service';
 import { sendPushToUserSafe } from '../services/push.service';
@@ -42,6 +49,13 @@ const startSchema = z
     type: z.enum(['voice', 'video']).default('voice'),
     callee_id: z.string().uuid().optional(),
     group_id: z.string().uuid().optional(),
+    metadata: z
+      .object({
+        reel_id: z.string().uuid().optional(),
+        source: z.string().max(40).optional(),
+      })
+      .passthrough()
+      .optional(),
   })
   .refine((v) => Boolean(v.callee_id) !== Boolean(v.group_id), {
     message: 'Provide exactly one of callee_id or group_id',
@@ -57,13 +71,14 @@ router.post(
     const body = startSchema.parse(req.body);
     const callerId = req.userId!;
 
-    const callerBusy = await findUserBusyCall(callerId);
-    if (callerBusy) {
-      return res.status(409).json({
-        error: 'You are already on a call. End it before starting another.',
-        busy_call_id: callerBusy.id,
-      });
-    }
+    // Clear orphaned "joined" rows (reload / disconnect without hangup) so the
+    // user is never permanently stuck unable to place calls.
+    await clearOwnBusyCalls(callerId);
+
+    // Call waiting: if callee is busy, still create the ringing call so they
+    // can answer and put the other party on hold.
+    const calleeBusy = body.callee_id ? await findUserBusyCall(body.callee_id) : null;
+    const waitingOnBusy = Boolean(calleeBusy);
 
     let scope: 'direct' | 'group';
     let roomName: string;
@@ -85,13 +100,6 @@ router.post(
       if (!friends) {
         return res.status(403).json({ error: 'You can only call accepted friends' });
       }
-      const calleeBusy = await findUserBusyCall(body.callee_id);
-      if (calleeBusy) {
-        return res.status(409).json({
-          error: 'That person is busy on another call. Try again later.',
-          busy_call_id: calleeBusy.id,
-        });
-      }
       scope = 'direct';
       roomName = makeDirectRoomName(callerId, body.callee_id);
     } else {
@@ -111,6 +119,7 @@ router.post(
       callee_id: body.callee_id ?? null,
       group_id: body.group_id ?? null,
       status: 'ringing',
+      metadata: body.metadata ?? null,
     };
 
     const { data: call, error } = await supabaseAdmin
@@ -158,7 +167,9 @@ router.post(
       const title = body.type === 'video' ? '📹 Video call' : '📞 Voice call';
       const pushBody =
         scope === 'direct'
-          ? `${callerName} is calling`
+          ? waitingOnBusy
+            ? `${callerName} is calling (waiting)`
+            : `${callerName} is calling`
           : `${callerName} started a group call`;
       for (const uid of inviteeAuthIds) {
         sendPushToUserSafe(uid, {
@@ -188,6 +199,8 @@ router.post(
     return res.status(201).json({
       call,
       live_kit: liveKit,
+      waiting_on_busy: waitingOnBusy,
+      busy_call_id: calleeBusy?.id ?? null,
     });
   })
 );
@@ -246,9 +259,10 @@ router.post(
     } else if (participant.state === 'declined') {
       return res.status(403).json({ error: 'Not allowed to accept this call' });
     } else if (participant.state !== 'joined') {
+      // invited / held / missed → joined
       await supabaseAdmin
         .from('call_participants')
-        .update({ state: 'joined', joined_at: new Date().toISOString() })
+        .update({ state: 'joined', joined_at: new Date().toISOString(), held_at: null })
         .eq('id', participant.id);
     }
 
@@ -621,7 +635,7 @@ router.get(
         .from('call_participants')
         .select('id', { count: 'exact', head: true })
         .eq('call_id', call.id)
-        .eq('state', 'joined');
+        .in('state', ['joined', 'held']);
 
       if (!joinedCount || joinedCount === 0) continue;
 
@@ -647,13 +661,38 @@ router.get(
           .eq('call_id', call.id)
           .eq('user_id', userId)
           .maybeSingle();
-        if (part && ['invited', 'joined'].includes(part.state)) {
+        if (part && ['invited', 'joined', 'held'].includes(part.state)) {
           return res.json({
             call,
             my_state: part.state,
             joined_count: joinedCount,
           });
         }
+      }
+    }
+
+    // Prefer an actively joined call over held when listing “any” active.
+    const { data: heldPart } = await supabaseAdmin
+      .from('call_participants')
+      .select('call_id, state')
+      .eq('user_id', userId)
+      .eq('state', 'held')
+      .limit(1)
+      .maybeSingle();
+    if (heldPart?.call_id) {
+      const { data: heldCall } = await supabaseAdmin
+        .from('calls')
+        .select('*')
+        .eq('id', heldPart.call_id)
+        .in('status', ['ringing', 'accepted'])
+        .maybeSingle();
+      if (heldCall) {
+        return res.json({
+          call: heldCall,
+          my_state: 'held',
+          joined_count: 1,
+          held: true,
+        });
       }
     }
 
@@ -828,6 +867,170 @@ router.get(
     });
 
     return res.json({ participants });
+  })
+);
+
+/* -------------------------------------------------------------------------- */
+/*  Call waiting: hold / answer-waiting / switch / resume                     */
+/* -------------------------------------------------------------------------- */
+router.post(
+  '/:id/hold',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const id = z.string().uuid().parse(req.params.id);
+    const userId = req.userId!;
+    try {
+      const call = await holdUserOnCall(id, userId);
+      if (!call) return res.status(404).json({ error: 'Call not found' });
+      return res.json({ call, ok: true });
+    } catch (err) {
+      return res.status(400).json({
+        error: err instanceof Error ? err.message : 'Could not hold call',
+      });
+    }
+  })
+);
+
+router.post(
+  '/:id/resume',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const id = z.string().uuid().parse(req.params.id);
+    const userId = req.userId!;
+    try {
+      const { call, liveKit } = await resumeUserOnCall(id, userId);
+      return res.json({ call, live_kit: liveKit });
+    } catch (err) {
+      return res.status(400).json({
+        error: err instanceof Error ? err.message : 'Could not resume call',
+      });
+    }
+  })
+);
+
+router.post(
+  '/:id/answer-waiting',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const id = z.string().uuid().parse(req.params.id);
+    const userId = req.userId!;
+    try {
+      const result = await answerWaitingCall(id, userId);
+      return res.json(result);
+    } catch (err) {
+      return res.status(400).json({
+        error: err instanceof Error ? err.message : 'Could not answer waiting call',
+      });
+    }
+  })
+);
+
+const switchSchema = z.object({
+  to_call_id: z.string().uuid(),
+});
+
+router.post(
+  '/:id/switch',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const fromId = z.string().uuid().parse(req.params.id);
+    const body = switchSchema.parse(req.body);
+    const userId = req.userId!;
+    try {
+      const result = await switchHeldCall(fromId, body.to_call_id, userId);
+      return res.json(result);
+    } catch (err) {
+      return res.status(400).json({
+        error: err instanceof Error ? err.message : 'Could not switch calls',
+      });
+    }
+  })
+);
+
+/* -------------------------------------------------------------------------- */
+/*  POST /:id/mute — host force-mutes a participant (group / multi-party)     */
+/* -------------------------------------------------------------------------- */
+const hostModerationSchema = z.object({
+  user_id: z.string().uuid(),
+});
+
+router.post(
+  '/:id/mute',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const id = z.string().uuid().parse(req.params.id);
+    const body = hostModerationSchema.parse(req.body);
+    const hostId = req.userId!;
+
+    const { data: call, error } = await supabaseAdmin
+      .from('calls')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!call) return res.status(404).json({ error: 'Call not found' });
+    if (call.caller_id !== hostId) {
+      return res.status(403).json({ error: 'Only the call host can mute participants' });
+    }
+    if (body.user_id === hostId) {
+      return res.status(400).json({ error: 'Cannot host-mute yourself' });
+    }
+
+    const joined = await isJoinedParticipant(id, body.user_id);
+    if (!joined) return res.status(404).json({ error: 'Participant not in call' });
+
+    try {
+      await muteParticipantInRoom(call.room_name, body.user_id);
+    } catch (err) {
+      return res.status(502).json({
+        error: err instanceof Error ? err.message : 'Could not mute participant',
+      });
+    }
+
+    return res.json({ ok: true });
+  })
+);
+
+/* -------------------------------------------------------------------------- */
+/*  POST /:id/remove — host removes a participant from the LiveKit room       */
+/* -------------------------------------------------------------------------- */
+router.post(
+  '/:id/remove',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const id = z.string().uuid().parse(req.params.id);
+    const body = hostModerationSchema.parse(req.body);
+    const hostId = req.userId!;
+
+    const { data: call, error } = await supabaseAdmin
+      .from('calls')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!call) return res.status(404).json({ error: 'Call not found' });
+    if (call.caller_id !== hostId) {
+      return res.status(403).json({ error: 'Only the call host can remove participants' });
+    }
+    if (body.user_id === hostId) {
+      return res.status(400).json({ error: 'Cannot remove yourself' });
+    }
+
+    try {
+      await removeParticipantFromRoom(call.room_name, body.user_id);
+    } catch (err) {
+      return res.status(502).json({
+        error: err instanceof Error ? err.message : 'Could not remove participant',
+      });
+    }
+
+    await supabaseAdmin
+      .from('call_participants')
+      .update({ state: 'left', left_at: new Date().toISOString() })
+      .eq('call_id', id)
+      .eq('user_id', body.user_id);
+
+    return res.json({ ok: true });
   })
 );
 

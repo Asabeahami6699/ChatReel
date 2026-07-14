@@ -14,8 +14,10 @@ import {
   listGiftCatalog,
   listReelGiftsForReel,
   listWalletLedger,
+  sendCallGiftSecure,
   sendReelGiftSecure,
 } from '../services/gifts.service';
+import { isJoinedParticipant } from '../services/calls.service';
 import { getAcceptedFriendIds } from '../services/reels.service';
 import { sendPushToUserSafe, getAuthUserIdByProfileId } from '../services/push.service';
 
@@ -23,6 +25,13 @@ const router = Router();
 
 const sendGiftSchema = z.object({
   reel_id: z.string().uuid(),
+  gift_id: z.string().uuid(),
+  idempotency_key: z.string().min(8).max(128),
+});
+
+const sendCallGiftSchema = z.object({
+  call_id: z.string().uuid(),
+  recipient_user_id: z.string().uuid(),
   gift_id: z.string().uuid(),
   idempotency_key: z.string().min(8).max(128),
 });
@@ -113,6 +122,62 @@ router.post(
             },
           });
         }
+      }
+
+      return res.status(result.duplicate ? 200 : 201).json({
+        gift: result.gift,
+        catalog: result.catalog ?? null,
+        sender_balance_coins: result.sender_balance_coins,
+        duplicate: result.duplicate,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not send gift';
+      if (message.includes('Insufficient')) return res.status(402).json({ error: message });
+      if (message.includes('cannot gift')) return res.status(400).json({ error: message });
+      return res.status(400).json({ error: message });
+    }
+  })
+);
+
+/* -------------------------------------------------------------------------- */
+/*  POST /gifts/send-call — tip a participant during an active call           */
+/* -------------------------------------------------------------------------- */
+router.post(
+  '/send-call',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const profileId = await getProfileIdByUserId(req.userId!);
+    if (!profileId) return res.status(404).json({ error: 'Profile not found' });
+
+    const body = sendCallGiftSchema.parse(req.body);
+    if (!isValidIdempotencyKey(body.idempotency_key)) {
+      return res.status(400).json({ error: 'Invalid idempotency key' });
+    }
+    if (!checkSendRate(profileId)) {
+      return res.status(429).json({ error: 'Too many gifts sent. Try again in a minute.' });
+    }
+
+    const joined = await isJoinedParticipant(body.call_id, req.userId!);
+    if (!joined) return res.status(403).json({ error: 'Join the call before tipping' });
+
+    try {
+      const result = await sendCallGiftSecure({
+        senderProfileId: profileId,
+        callId: body.call_id,
+        recipientUserId: body.recipient_user_id,
+        giftId: body.gift_id,
+        idempotencyKey: body.idempotency_key,
+      });
+
+      if (!result.duplicate && result.catalog && body.recipient_user_id !== req.userId) {
+        void sendPushToUserSafe(body.recipient_user_id, {
+          title: 'Tip during your call',
+          body: `Someone sent ${result.catalog.emoji} ${result.catalog.name}`,
+          data: {
+            type: 'call_gift',
+            call_id: body.call_id,
+          },
+        });
       }
 
       return res.status(result.duplicate ? 200 : 201).json({

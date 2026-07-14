@@ -49,7 +49,7 @@ export function ConfirmToastHost() {
             { bottom: Platform.OS === 'web' ? 24 : Math.max(insets.bottom, 12) + 16 },
           ]}
         >
-          <Text style={styles.message} numberOfLines={3}>
+          <Text style={styles.message} numberOfLines={4}>
             {pending?.message}
           </Text>
           <View style={styles.actions}>

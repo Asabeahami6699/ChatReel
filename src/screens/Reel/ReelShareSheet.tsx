@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import {
-  Alert,
   Image,
   Linking,
   Platform,
@@ -23,6 +22,11 @@ import {
   captionChoiceToApi,
   type CaptionChoiceResult,
 } from '../../components/CaptionChoiceModal';
+import { showAppToast } from '../../lib/appToast';
+import { showErrorAlert } from '../../lib/confirmAction';
+import { startCallGuarded } from '../../lib/startCallGuarded';
+import { navigateToOutgoingCall } from '../../navigation/rootNavigation';
+import { useAuth } from '../../hooks/useAuth';
 
 interface Props {
   reel: ReelDTO;
@@ -40,16 +44,46 @@ function buildShareUrl(reelId: string): string {
 }
 
 export default function ReelShareSheet({ reel, onClose }: Props) {
+  const { user } = useAuth();
   const [copied, setCopied] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [postingMoment, setPostingMoment] = useState(false);
   const [captionModalOpen, setCaptionModalOpen] = useState(false);
+  const [calling, setCalling] = useState(false);
   const link = buildShareUrl(reel.id);
   const thumb = getReelGridThumbnail(reel);
   const shareMessage = reel.caption
     ? `${reel.caption}\n${link}`
     : `Check out this reel ${link}`;
+  const authorAuthId = (reel.author as { user_id?: string } | null)?.user_id ?? null;
+  const canCallAbout =
+    !!authorAuthId && !!user?.id && authorAuthId !== user.id;
+
+  const onCallAboutReel = async () => {
+    if (!authorAuthId || calling) return;
+    setCalling(true);
+    try {
+      const { call, live_kit } = await startCallGuarded({
+        type: 'voice',
+        callee_id: authorAuthId,
+        metadata: { reel_id: reel.id, source: 'reel' },
+      });
+      onClose();
+      navigateToOutgoingCall({
+        call,
+        token: live_kit.token,
+        url: live_kit.url,
+      });
+    } catch (err) {
+      showErrorAlert(
+        'Call',
+        err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Could not start call'
+      );
+    } finally {
+      setCalling(false);
+    }
+  };
 
   const onSystemShare = async () => {
     try {
@@ -59,7 +93,7 @@ export default function ReelShareSheet({ reel, onClose }: Props) {
       });
       onClose();
     } catch {
-      Alert.alert('Share', 'Failed to open share sheet');
+      showErrorAlert('Share', 'Failed to open share sheet');
     }
   };
 
@@ -69,14 +103,14 @@ export default function ReelShareSheet({ reel, onClose }: Props) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
-      Alert.alert('Copy', 'Failed to copy link');
+      showErrorAlert('Copy', 'Failed to copy link');
     }
   };
 
   const openExternal = (url: string, label: string) => async () => {
     const canOpen = await Linking.canOpenURL(url).catch(() => false);
     if (!canOpen) {
-      Alert.alert(label, `${label} is not installed.`);
+      showErrorAlert(label, `${label} is not installed.`);
       return;
     }
     Linking.openURL(url);
@@ -90,7 +124,7 @@ export default function ReelShareSheet({ reel, onClose }: Props) {
       await downloadReelVideo(reel);
       onClose();
     } catch {
-      Alert.alert('Download', 'Could not download this video.');
+      showErrorAlert('Download', 'Could not download this video.');
     } finally {
       setDownloading(false);
     }
@@ -112,11 +146,11 @@ export default function ReelShareSheet({ reel, onClose }: Props) {
         reel.id,
         caption !== undefined ? { caption } : {}
       );
-      Alert.alert('Posted', 'Added to your moment. Friends can view it from Explore.');
+      showAppToast('Added to your moment');
       onClose();
     } catch (e) {
       const message = e instanceof ApiError ? e.message : 'Could not add to moment';
-      Alert.alert('Moment', message);
+      showErrorAlert('Moment', message);
     } finally {
       setPostingMoment(false);
     }
@@ -181,6 +215,19 @@ export default function ReelShareSheet({ reel, onClose }: Props) {
           </View>
           <Text style={styles.label}>Send to chat</Text>
         </TouchableOpacity>
+
+        {canCallAbout ? (
+          <TouchableOpacity
+            style={styles.shareButton}
+            onPress={() => void onCallAboutReel()}
+            disabled={calling}
+          >
+            <View style={[styles.iconCircle, { backgroundColor: '#059669' }]}>
+              <Ionicons name={calling ? 'hourglass-outline' : 'call-outline'} size={28} color="#fff" />
+            </View>
+            <Text style={styles.label}>{calling ? 'Calling…' : 'Call about'}</Text>
+          </TouchableOpacity>
+        ) : null}
 
         <TouchableOpacity
           style={styles.shareButton}

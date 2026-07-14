@@ -31,10 +31,24 @@ import {
   type CallConnQuality,
   type FacingMode,
 } from './callMediaControls';
-import { fetchCallPeerInfo } from './callPeerInfo';
+import { fetchCallPeerInfo, resolveCallPeerAuthId } from './callPeerInfo';
 import { useAuth } from '../../hooks/useAuth';
 import { leaveCallScreen } from '../../navigation/callSessionNav';
 import { showAppToast } from '../../lib/appToast';
+import { confirmAction, showErrorAlert } from '../../lib/confirmAction';
+import { confirmToast } from '../../lib/confirmToast';
+import { MiniCallBubble } from './MiniCallBubble';
+import { applyCallMinimizedChrome } from './callMinimizeChrome';
+import { CallGiftSheet } from './CallGiftSheet';
+import { beginCallHoldDisconnect, consumeCallHoldDisconnect } from './callHoldIntent';
+import {
+  clearHeldCallSession,
+  getHeldCallSession,
+  setHeldCallSession,
+  subscribeHeldCallSession,
+  type HeldCallSession,
+} from './callHeldSession';
+import { replaceWithActiveCall } from '../../navigation/rootNavigation';
 
 type Params = {
   call: CallDTO;
@@ -194,6 +208,7 @@ export default function ActiveCallScreen() {
 function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
   const startedAsVideo = call.call_type === 'video';
   const [muted, setMuted] = useState(false);
   const [duration, setDuration] = useState(0);
@@ -206,6 +221,10 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
   const [pipSwapped, setPipSwapped] = useState(false);
   const [facingMode, setFacingMode] = useState<FacingMode>('user');
   const [sharingScreen, setSharingScreen] = useState(false);
+  const [minimized, setMinimized] = useState(false);
+  const [giftOpen, setGiftOpen] = useState(false);
+  const [giftBalance, setGiftBalance] = useState(0);
+  const [heldSession, setHeldSession] = useState<HeldCallSession | null>(getHeldCallSession);
   const roomRef = React.useRef<any>(null);
   const remoteVideoRef = React.useRef<any>(null);
   const localVideoRef = React.useRef<any>(null);
@@ -213,9 +232,33 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
   const remoteVideoTrackRef = React.useRef<any>(null);
   const handleSignalRef = React.useRef<(signal: CallVideoSignal) => void>(() => undefined);
   const extrasHandleRef = React.useRef<(bytes: Uint8Array) => void>(() => undefined);
+  const peerAuthId = resolveCallPeerAuthId(call, user?.id ?? null);
 
   const extras = useCallExtras('You');
   extrasHandleRef.current = (bytes) => extras.handleExtrasPayload(bytes, false);
+
+  useEffect(() => subscribeHeldCallSession(setHeldSession), []);
+
+  const switchToHeld = async () => {
+    const held = getHeldCallSession();
+    if (!held) return;
+    beginCallHoldDisconnect();
+    try {
+      const { held_call, call: next, live_kit } = await api.calls.switchTo(call.id, held.call.id);
+      setHeldCallSession({ call: held_call, peerName });
+      replaceWithActiveCall({
+        call: next,
+        token: live_kit.token,
+        url: live_kit.url,
+      });
+      showAppToast('Switched call');
+    } catch (err) {
+      showErrorAlert(
+        'Switch',
+        err instanceof Error ? err.message : 'Could not switch calls'
+      );
+    }
+  };
 
   const publishSignal = React.useCallback((signal: CallVideoSignal) => {
     const room = roomRef.current;
@@ -291,6 +334,11 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
         const room = new lk.Room({
           adaptiveStream: true,
           dynacast: true,
+          audioCaptureDefaults: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
         });
         roomRef.current = room;
 
@@ -350,17 +398,32 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
         room.on(lk.RoomEvent.Disconnected, () => {
           if (!mounted) return;
           if (callEnded) return;
-          leaveCallScreen('Calls', 'Call ended');
+          if (consumeCallHoldDisconnect()) return;
+          void (async () => {
+            try {
+              await api.calls.end(call.id);
+            } catch {
+              /* ignore */
+            }
+            leaveCallScreen('Calls', 'Call ended');
+          })();
         });
 
         room.on(lk.RoomEvent.ParticipantDisconnected, () => {
           if (!mounted || callEnded) return;
-          // Direct call: when the other party leaves LiveKit, end locally.
+          // Direct call: when the other party leaves LiveKit, end locally —
+          // unless they're merely on hold (call waiting).
           if (call.scope === 'direct') {
             const remotes = room.remoteParticipants?.size ?? 0;
             if (remotes === 0) {
               void (async () => {
                 try {
+                  const { participants } = await api.calls.participants(call.id);
+                  const other = participants.find((p) => p.user_id !== (user?.id ?? ''));
+                  if (other?.state === 'held') {
+                    showAppToast('Other person put you on hold');
+                    return;
+                  }
                   await api.calls.end(call.id);
                 } catch {
                   /* ignore */
@@ -409,14 +472,33 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
 
   const finishCall = async () => {
     if (callEnded) return;
+    if (consumeCallHoldDisconnect()) return;
     const isGroup = call.scope === 'group';
     setCallEnded(true);
+    const held = getHeldCallSession();
     try {
       await api.calls.end(call.id);
     } catch {
       /* ignore */
     }
     roomRef.current?.disconnect?.();
+    if (held) {
+      clearHeldCallSession();
+      try {
+        const { call: next, live_kit } = await api.calls.resume(held.call.id);
+        replaceWithActiveCall({
+          call: next,
+          token: live_kit.token,
+          url: live_kit.url,
+        });
+        showAppToast('Back to held call');
+        return;
+      } catch {
+        clearHeldCallSession();
+      }
+    } else {
+      clearHeldCallSession();
+    }
     leaveCallScreen('Calls', isGroup ? 'Left the call' : 'Call ended');
   };
 
@@ -477,22 +559,191 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
   const qualityHint = connQualityLabel(connQuality);
   const VideoEl = 'video' as any;
 
+  const setCallMinimized = (value: boolean) => {
+    setMinimized(value);
+    applyCallMinimizedChrome(navigation, value);
+    if (value && sharedVideo && videoEnabled) {
+      // Soft low-data while browsing: drop local camera in the bubble.
+      void negotiation.toggleVideo();
+    }
+  };
+
+  useEffect(() => {
+    if (minimized) return;
+    try {
+      if (remoteVideoTrackRef.current && remoteVideoRef.current) {
+        remoteVideoTrackRef.current.attach(remoteVideoRef.current);
+      }
+      if (localVideoTrackRef.current && localVideoRef.current) {
+        localVideoTrackRef.current.attach(localVideoRef.current);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [minimized]);
+
   const weakTipShownRef = React.useRef(false);
+  const autoAudioOnlyRef = React.useRef(false);
   useEffect(() => {
     if (connQuality !== 'poor' && connQuality !== 'lost') return;
-    if (weakTipShownRef.current) return;
-    weakTipShownRef.current = true;
-    showAppToast('Weak connection — audio preferred for now');
-  }, [connQuality]);
+    if (!weakTipShownRef.current) {
+      weakTipShownRef.current = true;
+      showAppToast('Weak connection — audio preferred for now');
+    }
+    if (autoAudioOnlyRef.current) return;
+    if (!sharedVideo || !videoEnabled) return;
+    autoAudioOnlyRef.current = true;
+    void negotiation.toggleVideo();
+    showAppToast('Switched to audio-only due to weak connection');
+  }, [connQuality, negotiation, sharedVideo, videoEnabled]);
+
+  const blockPeer = async () => {
+    if (!peerAuthId) return;
+    const ok = await confirmAction(`Block ${peerName}?`, 'They will no longer be able to call or message you.', 'Block');
+    if (!ok) return;
+    try {
+      await api.friendships.block(peerAuthId);
+      showAppToast(`${peerName} blocked`);
+      await finishCall();
+    } catch (err) {
+      showAppToast(err instanceof Error ? err.message : 'Could not block user', { isError: true });
+    }
+  };
+
+  const openCallMenu = () => {
+    if (!peerAuthId || call.scope !== 'direct') return;
+    void blockPeer();
+  };
+
+  const reelContextId =
+    typeof (call.metadata as { reel_id?: unknown } | null)?.reel_id === 'string'
+      ? (call.metadata as { reel_id: string }).reel_id
+      : null;
+
+  useEffect(() => {
+    if (!extras.recordingRequestAt) return;
+    let alive = true;
+    void (async () => {
+      const ok = await confirmToast({
+        message: 'Host wants to record this call. Allow recording?',
+        confirmLabel: 'Allow',
+        cancelLabel: 'Decline',
+        destructive: false,
+      });
+      if (!alive) return;
+      publishExtras({ type: 'recording_consent', allowed: ok, at: Date.now() });
+      extras.clearRecordingRequest();
+      showAppToast(ok ? 'You allowed recording' : 'You declined recording');
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [extras.recordingRequestAt]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const requestRecording = async () => {
+    const ok = await confirmToast({
+      message: 'Ask everyone to consent before recording this call?',
+      confirmLabel: 'Ask',
+      cancelLabel: 'Cancel',
+      destructive: false,
+    });
+    if (!ok) return;
+    publishExtras({ type: 'recording_request', at: Date.now() });
+    extras.setRecordingActive(true);
+    showAppToast('Recording consent requested');
+  };
+
+  const openTipSheet = async () => {
+    if (!peerAuthId) return;
+    try {
+      const bal = await api.wallet.balance();
+      setGiftBalance(bal.balance_coins ?? 0);
+    } catch {
+      setGiftBalance(0);
+    }
+    setGiftOpen(true);
+  };
+
+  if (minimized) {
+    return (
+      <View style={styles.minimizedRoot} pointerEvents="box-none">
+        <MiniCallBubble
+          peerName={peerName}
+          peerAvatar={peerAvatar}
+          durationLabel={formatDuration(duration)}
+          muted={muted}
+          onExpand={() => setCallMinimized(false)}
+          onToggleMute={() => void toggleMute()}
+          onEnd={() => void finishCall()}
+        />
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <StatusBar barStyle="light-content" />
-      <View style={styles.webBadgeWrap}>
-        <View style={styles.webBetaBadge}>
-          <Text style={styles.webBetaText}>Web beta</Text>
+      <View style={styles.topChrome}>
+        <TouchableOpacity
+          style={styles.chromeBtn}
+          onPress={() => setCallMinimized(true)}
+          accessibilityLabel="Minimize call"
+        >
+          <Ionicons name="chevron-down" size={22} color="#fff" />
+        </TouchableOpacity>
+        <View style={styles.webBadgeWrapInline}>
+          <View style={styles.webBetaBadge}>
+            <Text style={styles.webBetaText}>Web beta</Text>
+          </View>
         </View>
+        <TouchableOpacity
+          style={styles.chromeBtn}
+          onPress={() => void requestRecording()}
+          accessibilityLabel="Request recording consent"
+        >
+          <Ionicons
+            name={extras.recordingActive ? 'radio-button-on' : 'recording-outline'}
+            size={20}
+            color={extras.recordingActive ? '#ef4444' : '#fff'}
+          />
+        </TouchableOpacity>
+        {call.scope === 'direct' && peerAuthId ? (
+          <TouchableOpacity
+            style={styles.chromeBtn}
+            onPress={openCallMenu}
+            accessibilityLabel="Call options"
+          >
+            <Ionicons name="ellipsis-vertical" size={20} color="#fff" />
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.chromeBtn} />
+        )}
       </View>
+      {heldSession ? (
+        <TouchableOpacity style={styles.heldBanner} onPress={() => void switchToHeld()}>
+          <Ionicons name="swap-horizontal" size={16} color="#fff" />
+          <Text style={styles.heldBannerText} numberOfLines={1}>
+            {heldSession.peerName ?? 'Call'} on hold — tap to switch
+          </Text>
+        </TouchableOpacity>
+      ) : null}
+      {reelContextId ? (
+        <View style={styles.reelContextChip}>
+          <Ionicons name="film-outline" size={14} color="#fff" />
+          <Text style={styles.reelContextText}>About a reel</Text>
+        </View>
+      ) : null}
+      {extras.recordingActive ? (
+        <View style={styles.recordingBanner}>
+          <Ionicons name="radio-button-on" size={12} color="#fff" />
+          <Text style={styles.recordingText}>Recording consent active</Text>
+        </View>
+      ) : null}
+      {extras.incomingGiftBurst ? (
+        <View style={styles.giftBurst} pointerEvents="none">
+          <Text style={styles.giftBurstEmoji}>{extras.incomingGiftBurst}</Text>
+        </View>
+      ) : null}
       {(connectionState !== 'connected' || qualityHint) && (
         <View style={styles.webConnectionBanner}>
           <Ionicons
@@ -620,6 +871,11 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
           <TouchableOpacity style={styles.ctrlBtn} onPress={() => extras.setChatOpen(true)}>
             <Ionicons name="chatbubble-ellipses-outline" size={24} color="#fff" />
           </TouchableOpacity>
+          {peerAuthId ? (
+            <TouchableOpacity style={styles.ctrlBtn} onPress={() => void openTipSheet()}>
+              <Ionicons name="gift-outline" size={24} color="#fff" />
+            </TouchableOpacity>
+          ) : null}
           <TouchableOpacity
             style={[styles.ctrlBtn, styles.endBtn]}
             onPress={finishCall}
@@ -637,6 +893,25 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
           messages={extras.messages}
           onLocalSend={extras.onLocalChat}
         />
+        {peerAuthId ? (
+          <CallGiftSheet
+            visible={giftOpen}
+            callId={call.id}
+            recipientUserId={peerAuthId}
+            recipientName={peerName}
+            balanceCoins={giftBalance}
+            onClose={() => setGiftOpen(false)}
+            onSent={({ gift, balanceCoins }) => {
+              setGiftBalance(balanceCoins);
+              publishExtras({ type: 'gift', emoji: gift.emoji, at: Date.now() });
+              showAppToast(`Sent ${gift.emoji} ${gift.name}`);
+            }}
+            onBuyCoins={() => {
+              setGiftOpen(false);
+              showAppToast('Buy coins from Creator Wallet in Reels');
+            }}
+          />
+        ) : null}
       </View>
     </View>
   );
@@ -670,7 +945,9 @@ function CallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
   const [duration, setDuration] = useState(0);
   const [callEnded, setCallEnded] = useState(false);
   const [showAddParticipant, setShowAddParticipant] = useState(false);
+  const [minimized, setMinimized] = useState(false);
   const myAuthId = user?.id ?? null;
+  const peerAuthId = resolveCallPeerAuthId(call, myAuthId);
 
   useEffect(() => {
     const start = Date.now();
@@ -747,18 +1024,68 @@ function CallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
 
   const finishCall = async (markEnded = true) => {
     if (callEnded) return;
+    if (consumeCallHoldDisconnect()) {
+      return;
+    }
     setCallEnded(true);
+    const held = getHeldCallSession();
     try {
-      if (markEnded) await api.calls.end(call.id);
+      await api.calls.end(call.id);
     } catch {
       /* ignore */
     }
-    navigateBackSafely(call.scope === 'group' && markEnded ? 'Left the call' : 'Call ended');
+    if (held) {
+      clearHeldCallSession();
+      try {
+        const { call: next, live_kit } = await api.calls.resume(held.call.id);
+        replaceWithActiveCall({
+          call: next,
+          token: live_kit.token,
+          url: live_kit.url,
+        });
+        showAppToast('Back to held call');
+        return;
+      } catch {
+        clearHeldCallSession();
+      }
+    } else {
+      clearHeldCallSession();
+    }
+    if (!markEnded) {
+      navigateBackSafely('Call ended');
+      return;
+    }
+    navigateBackSafely(call.scope === 'group' ? 'Left the call' : 'Call ended');
+  };
+
+  const setCallMinimized = (value: boolean) => {
+    setMinimized(value);
+    applyCallMinimizedChrome(navigation, value);
+  };
+
+  const blockPeer = async () => {
+    if (!peerAuthId) return;
+    const ok = await confirmAction(
+      `Block ${peerName}?`,
+      'They will no longer be able to call or message you.',
+      'Block'
+    );
+    if (!ok) return;
+    try {
+      await api.friendships.block(peerAuthId);
+      showAppToast(`${peerName} blocked`);
+      await finishCall(true);
+    } catch (err) {
+      showAppToast(err instanceof Error ? err.message : 'Could not block user', { isError: true });
+    }
   };
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
-      <StatusBar barStyle="light-content" backgroundColor="#000" />
+    <View
+      style={minimized ? styles.minimizedRoot : [styles.container, { paddingTop: insets.top }]}
+      pointerEvents={minimized ? 'box-none' : 'auto'}
+    >
+      {!minimized ? <StatusBar barStyle="light-content" backgroundColor="#000" /> : null}
       <AddCallParticipantModal
         visible={showAddParticipant}
         call={call}
@@ -780,17 +1107,22 @@ function CallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
         <RoomBody
           call={call}
           myAuthId={myAuthId}
+          peerAuthId={peerAuthId}
           callType={call.call_type}
           peerName={peerName}
           peerAvatar={peerAvatar}
           duration={duration}
           muted={muted}
+          minimized={minimized}
           AudioSession={AudioSession}
           onToggleMute={async () => {
             setMuted((m) => !m);
           }}
           onEnd={() => finishCall(true)}
           onAddParticipant={() => setShowAddParticipant(true)}
+          onMinimize={() => setCallMinimized(true)}
+          onExpand={() => setCallMinimized(false)}
+          onBlockPeer={() => void blockPeer()}
           useTracks={useTracks}
           VideoTrack={VideoTrack}
           Track={Track}
@@ -805,11 +1137,13 @@ function CallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
 function RoomBody(props: {
   call: CallDTO;
   myAuthId: string | null;
+  peerAuthId: string | null;
   callType: 'voice' | 'video';
   peerName: string;
   peerAvatar: string | null;
   duration: number;
   muted: boolean;
+  minimized: boolean;
   AudioSession?: {
     selectAudioOutput?: (id: string) => Promise<void>;
     getAudioOutputs?: () => Promise<string[]>;
@@ -818,6 +1152,9 @@ function RoomBody(props: {
   onToggleMute: () => Promise<void>;
   onEnd: () => void;
   onAddParticipant: () => void;
+  onMinimize: () => void;
+  onExpand: () => void;
+  onBlockPeer: () => void;
   useTracks: (kinds?: unknown[]) => Array<{
     participant: {
       identity: string;
@@ -865,9 +1202,41 @@ function RoomBody(props: {
   const [connectionState, setConnectionState] = useState<'connecting' | 'connected' | 'reconnecting'>(
     'connecting'
   );
+  const [giftOpen, setGiftOpen] = useState(false);
+  const [giftBalance, setGiftBalance] = useState(0);
+  const [heldSession, setHeldSession] = useState<HeldCallSession | null>(getHeldCallSession);
   const extras = useCallExtras('You');
   const extrasHandleRef = React.useRef<(bytes: Uint8Array) => void>(() => undefined);
   extrasHandleRef.current = (bytes) => extras.handleExtrasPayload(bytes, false);
+
+  useEffect(() => subscribeHeldCallSession(setHeldSession), []);
+
+  const switchToHeld = async () => {
+    const held = getHeldCallSession();
+    if (!held) return;
+    beginCallHoldDisconnect();
+    try {
+      const { held_call, call: next, live_kit } = await api.calls.switchTo(
+        props.call.id,
+        held.call.id
+      );
+      setHeldCallSession({
+        call: held_call,
+        peerName: props.peerName,
+      });
+      replaceWithActiveCall({
+        call: next,
+        token: live_kit.token,
+        url: live_kit.url,
+      });
+      showAppToast('Switched call');
+    } catch (err) {
+      showErrorAlert(
+        'Switch',
+        err instanceof Error ? err.message : 'Could not switch calls'
+      );
+    }
+  };
 
   useEffect(() => {
     if (!props.call.id) return;
@@ -988,6 +1357,12 @@ function RoomBody(props: {
       if (remotes === 0) {
         void (async () => {
           try {
+            const { participants } = await api.calls.participants(props.call.id);
+            const other = participants.find((p) => p.user_id !== props.myAuthId);
+            if (other?.state === 'held') {
+              showAppToast('Other person put you on hold');
+              return;
+            }
             await api.calls.end(props.call.id);
           } catch {
             /* ignore */
@@ -1148,15 +1523,191 @@ function RoomBody(props: {
   const pipVideo = pipSwapped ? remoteVideo : localVideo;
 
   const weakTipShownRef = React.useRef(false);
+  const autoAudioOnlyRef = React.useRef(false);
   useEffect(() => {
     if (connQuality !== 'poor' && connQuality !== 'lost') return;
-    if (weakTipShownRef.current) return;
-    weakTipShownRef.current = true;
-    showAppToast('Weak connection — audio preferred for now');
-  }, [connQuality]);
+    if (!weakTipShownRef.current) {
+      weakTipShownRef.current = true;
+      showAppToast('Weak connection — audio preferred for now');
+    }
+    if (autoAudioOnlyRef.current) return;
+    if (!sharedVideo || !videoEnabled) return;
+    autoAudioOnlyRef.current = true;
+    void negotiation.toggleVideo();
+    showAppToast('Switched to audio-only due to weak connection');
+  }, [connQuality, negotiation, sharedVideo, videoEnabled]);
+
+  useEffect(() => {
+    if (!props.minimized) return;
+    if (!sharedVideo || !videoEnabled) return;
+    void negotiation.toggleVideo();
+  }, [props.minimized]); // eslint-disable-line react-hooks/exhaustive-deps -- once when minimizing
+
+  const openCallMenu = () => {
+    if (!props.peerAuthId || props.call.scope !== 'direct') return;
+    props.onBlockPeer();
+  };
+
+  const isHost = props.call.caller_id === props.myAuthId;
+  const tipRecipientId =
+    props.peerAuthId && props.peerAuthId !== props.myAuthId
+      ? props.peerAuthId
+      : props.call.caller_id !== props.myAuthId
+        ? props.call.caller_id
+        : null;
+  const reelContextId =
+    typeof (props.call.metadata as { reel_id?: unknown } | null)?.reel_id === 'string'
+      ? ((props.call.metadata as { reel_id: string }).reel_id)
+      : null;
+
+  const hostMute = async (identity: string) => {
+    const name = participantProfiles.get(identity)?.display_name ?? 'participant';
+    const ok = await confirmAction(`Mute ${name}?`, 'They will be force-muted for this call.', 'Mute');
+    if (!ok) return;
+    try {
+      await api.calls.mute(props.call.id, identity);
+      showAppToast(`${name} muted`);
+    } catch (err) {
+      showErrorAlert('Mute', err instanceof Error ? err.message : 'Could not mute');
+    }
+  };
+
+  const hostRemove = async (identity: string) => {
+    const name = participantProfiles.get(identity)?.display_name ?? 'participant';
+    const ok = await confirmAction(
+      `Remove ${name}?`,
+      'They will be disconnected from this call.',
+      'Remove'
+    );
+    if (!ok) return;
+    try {
+      await api.calls.remove(props.call.id, identity);
+      showAppToast(`${name} removed`);
+    } catch (err) {
+      showErrorAlert('Remove', err instanceof Error ? err.message : 'Could not remove');
+    }
+  };
+
+  useEffect(() => {
+    if (!extras.recordingRequestAt) return;
+    let alive = true;
+    void (async () => {
+      const ok = await confirmToast({
+        message: 'Host wants to record this call. Allow recording?',
+        confirmLabel: 'Allow',
+        cancelLabel: 'Decline',
+        destructive: false,
+      });
+      if (!alive) return;
+      publishExtras({ type: 'recording_consent', allowed: ok, at: Date.now() });
+      extras.clearRecordingRequest();
+      showAppToast(ok ? 'You allowed recording' : 'You declined recording');
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [extras.recordingRequestAt]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const requestRecording = async () => {
+    const ok = await confirmToast({
+      message: 'Ask everyone to consent before recording this call?',
+      confirmLabel: 'Ask',
+      cancelLabel: 'Cancel',
+      destructive: false,
+    });
+    if (!ok) return;
+    publishExtras({ type: 'recording_request', at: Date.now() });
+    extras.setRecordingActive(true);
+    showAppToast('Recording consent requested');
+  };
+
+  const openTipSheet = async () => {
+    if (!tipRecipientId) {
+      showAppToast('No tip recipient on this call');
+      return;
+    }
+    try {
+      const bal = await api.wallet.balance();
+      setGiftBalance(bal.balance_coins ?? 0);
+    } catch {
+      setGiftBalance(0);
+    }
+    setGiftOpen(true);
+  };
+
+  if (props.minimized) {
+    return (
+      <MiniCallBubble
+        peerName={props.peerName}
+        peerAvatar={props.peerAvatar}
+        durationLabel={formatDuration(props.duration)}
+        muted={props.muted}
+        onExpand={props.onExpand}
+        onToggleMute={() => void toggleMute()}
+        onEnd={() => void hangup()}
+      />
+    );
+  }
 
   return (
     <View style={styles.roomBody}>
+      <View style={styles.topChrome}>
+        <TouchableOpacity
+          style={styles.chromeBtn}
+          onPress={props.onMinimize}
+          accessibilityLabel="Minimize call"
+        >
+          <Ionicons name="chevron-down" size={22} color="#fff" />
+        </TouchableOpacity>
+        <View style={{ flex: 1 }} />
+        {isHost || tipRecipientId ? (
+          <TouchableOpacity
+            style={styles.chromeBtn}
+            onPress={() => void requestRecording()}
+            accessibilityLabel="Request recording consent"
+          >
+            <Ionicons
+              name={extras.recordingActive ? 'radio-button-on' : 'recording-outline'}
+              size={20}
+              color={extras.recordingActive ? '#ef4444' : '#fff'}
+            />
+          </TouchableOpacity>
+        ) : null}
+        {props.call.scope === 'direct' && props.peerAuthId ? (
+          <TouchableOpacity
+            style={styles.chromeBtn}
+            onPress={openCallMenu}
+            accessibilityLabel="Call options"
+          >
+            <Ionicons name="ellipsis-vertical" size={20} color="#fff" />
+          </TouchableOpacity>
+        ) : null}
+      </View>
+      {heldSession ? (
+        <TouchableOpacity style={styles.heldBanner} onPress={() => void switchToHeld()}>
+          <Ionicons name="swap-horizontal" size={16} color="#fff" />
+          <Text style={styles.heldBannerText} numberOfLines={1}>
+            {heldSession.peerName ?? 'Call'} on hold — tap to switch
+          </Text>
+        </TouchableOpacity>
+      ) : null}
+      {reelContextId ? (
+        <View style={styles.reelContextChip}>
+          <Ionicons name="film-outline" size={14} color="#fff" />
+          <Text style={styles.reelContextText}>About a reel</Text>
+        </View>
+      ) : null}
+      {extras.recordingActive ? (
+        <View style={styles.recordingBanner}>
+          <Ionicons name="radio-button-on" size={12} color="#fff" />
+          <Text style={styles.recordingText}>Recording consent active</Text>
+        </View>
+      ) : null}
+      {extras.incomingGiftBurst ? (
+        <View style={styles.giftBurst} pointerEvents="none">
+          <Text style={styles.giftBurstEmoji}>{extras.incomingGiftBurst}</Text>
+        </View>
+      ) : null}
       <VideoRequestOverlay
         peerName={props.peerName}
         incomingVisible={incomingRequest}
@@ -1184,6 +1735,9 @@ function RoomBody(props: {
         {isMultiParty ? (
           <CallParticipantGrid
             participants={gridParticipants}
+            isHost={isHost}
+            onHostMute={(id) => void hostMute(id)}
+            onHostRemove={(id) => void hostRemove(id)}
             renderVideo={(p, style) => {
               const track = cameraTracks.find((t) => t.participant.identity === p.identity);
               return track ? <VideoTrack trackRef={track} style={style} /> : null;
@@ -1272,6 +1826,19 @@ function RoomBody(props: {
             <Ionicons name="camera-reverse-outline" size={26} color="#fff" />
           </TouchableOpacity>
         ) : null}
+        {sharedVideo && videoEnabled ? (
+          <TouchableOpacity
+            style={styles.ctrlBtn}
+            onPress={() => {
+              void import('./callBackgroundBlur').then((m) =>
+                m.toggleCallBackgroundBlur(true)
+              );
+            }}
+            accessibilityLabel="Background blur"
+          >
+            <Ionicons name="water-outline" size={24} color="#fff" />
+          </TouchableOpacity>
+        ) : null}
         <TouchableOpacity
           style={[styles.ctrlBtn, speakerOn && styles.ctrlBtnActive]}
           onPress={() => void toggleSpeaker()}
@@ -1287,6 +1854,11 @@ function RoomBody(props: {
         <TouchableOpacity style={styles.ctrlBtn} onPress={() => extras.setChatOpen(true)}>
           <Ionicons name="chatbubble-ellipses-outline" size={24} color="#fff" />
         </TouchableOpacity>
+        {tipRecipientId ? (
+          <TouchableOpacity style={styles.ctrlBtn} onPress={() => void openTipSheet()}>
+            <Ionicons name="gift-outline" size={24} color="#fff" />
+          </TouchableOpacity>
+        ) : null}
         <TouchableOpacity style={styles.ctrlBtn} onPress={props.onAddParticipant}>
           <Ionicons name="person-add" size={24} color="#fff" />
         </TouchableOpacity>
@@ -1312,12 +1884,56 @@ function RoomBody(props: {
         messages={extras.messages}
         onLocalSend={extras.onLocalChat}
       />
+      {tipRecipientId ? (
+        <CallGiftSheet
+          visible={giftOpen}
+          callId={props.call.id}
+          recipientUserId={tipRecipientId}
+          recipientName={
+            tipRecipientId === props.peerAuthId
+              ? props.peerName
+              : participantProfiles.get(tipRecipientId)?.display_name ?? 'Host'
+          }
+          balanceCoins={giftBalance}
+          onClose={() => setGiftOpen(false)}
+          onSent={({ gift, balanceCoins }) => {
+            setGiftBalance(balanceCoins);
+            publishExtras({ type: 'gift', emoji: gift.emoji, at: Date.now() });
+            showAppToast(`Sent ${gift.emoji} ${gift.name}`);
+          }}
+          onBuyCoins={() => {
+            setGiftOpen(false);
+            showAppToast('Buy coins from Creator Wallet in Reels');
+          }}
+        />
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
+  minimizedRoot: {
+    flex: 1,
+    backgroundColor: 'transparent',
+  },
+  topChrome: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 10,
+    paddingTop: 4,
+    zIndex: 40,
+  },
+  chromeBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  webBadgeWrapInline: { alignItems: 'center' },
   roomBody: { flex: 1, justifyContent: 'space-between' },
   remoteWrap: { flex: 1, position: 'relative', backgroundColor: '#0a0a0a' },
   remoteVideo: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
@@ -1364,7 +1980,7 @@ const styles = StyleSheet.create({
   } as object,
   nativeQualityBanner: {
     position: 'absolute',
-    top: 10,
+    top: 56,
     left: 12,
     zIndex: 30,
     backgroundColor: 'rgba(183, 28, 28, 0.85)',
@@ -1410,12 +2026,6 @@ const styles = StyleSheet.create({
   ctrlBtnActive: { backgroundColor: '#1976d2' },
   endBtn: { backgroundColor: '#ef4444' },
   errorText: { color: '#fff', textAlign: 'center', paddingHorizontal: 32, marginTop: 16 },
-  webBadgeWrap: {
-    position: 'absolute',
-    top: 8,
-    right: 12,
-    zIndex: 20,
-  },
   webBetaBadge: {
     backgroundColor: 'rgba(14,165,233,0.85)',
     borderRadius: 12,
@@ -1430,7 +2040,7 @@ const styles = StyleSheet.create({
   },
   webConnectionBanner: {
     position: 'absolute',
-    top: 10,
+    top: 56,
     left: 12,
     zIndex: 20,
     backgroundColor: 'rgba(0,0,0,0.55)',
@@ -1442,4 +2052,54 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   webConnectionText: { color: '#fff', fontSize: 12, fontWeight: '600' },
+  reelContextChip: {
+    position: 'absolute',
+    top: 56,
+    right: 12,
+    zIndex: 35,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(37,99,235,0.85)',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  reelContextText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  heldBanner: {
+    position: 'absolute',
+    top: 56,
+    left: 12,
+    right: 12,
+    zIndex: 36,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(245,158,11,0.95)',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  heldBannerText: { color: '#111', fontSize: 13, fontWeight: '800', flex: 1 },
+  recordingBanner: {
+    position: 'absolute',
+    top: 56,
+    left: 12,
+    zIndex: 35,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(220,38,38,0.9)',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  recordingText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  giftBurst: {
+    ...StyleSheet.absoluteFill,
+    zIndex: 50,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  giftBurstEmoji: { fontSize: 72 },
 });

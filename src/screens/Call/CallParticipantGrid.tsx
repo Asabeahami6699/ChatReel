@@ -1,5 +1,5 @@
 import React from 'react';
-import { Image, StyleSheet, Text, View } from 'react-native';
+import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { callGridLayout, type CallTileParticipant } from './callGridUtils';
 
@@ -7,9 +7,20 @@ type Props = {
   participants: CallTileParticipant[];
   renderVideo?: (p: CallTileParticipant, style: object) => React.ReactNode;
   localVideoOverlay?: React.ReactNode;
+  /** Host can mute / remove remote tiles. */
+  isHost?: boolean;
+  onHostMute?: (identity: string) => void;
+  onHostRemove?: (identity: string) => void;
 };
 
-export function CallParticipantGrid({ participants, renderVideo, localVideoOverlay }: Props) {
+export function CallParticipantGrid({
+  participants,
+  renderVideo,
+  localVideoOverlay,
+  isHost,
+  onHostMute,
+  onHostRemove,
+}: Props) {
   const { cols, rows } = callGridLayout(participants.length);
   const tileWidthPct = 100 / cols;
   const tileHeightPct = 100 / rows;
@@ -45,6 +56,24 @@ export function CallParticipantGrid({ participants, renderVideo, localVideoOverl
               {p.isLocal ? 'You' : p.name}
             </Text>
           </View>
+          {isHost && !p.isLocal ? (
+            <View style={styles.hostActions}>
+              <TouchableOpacity
+                style={styles.hostBtn}
+                onPress={() => onHostMute?.(p.identity)}
+                accessibilityLabel={`Mute ${p.name}`}
+              >
+                <Ionicons name="mic-off" size={14} color="#fff" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.hostBtn, styles.hostRemove]}
+                onPress={() => onHostRemove?.(p.identity)}
+                accessibilityLabel={`Remove ${p.name}`}
+              >
+                <Ionicons name="person-remove" size={14} color="#fff" />
+              </TouchableOpacity>
+            </View>
+          ) : null}
         </View>
       ))}
       {localVideoOverlay}
@@ -97,4 +126,20 @@ const styles = StyleSheet.create({
   },
   muteIcon: { marginRight: 2 },
   nameText: { color: '#fff', fontSize: 11, fontWeight: '600', flexShrink: 1 },
+  hostActions: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    flexDirection: 'row',
+    gap: 6,
+  },
+  hostBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(0,0,0,0.65)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  hostRemove: { backgroundColor: 'rgba(220,38,38,0.85)' },
 });

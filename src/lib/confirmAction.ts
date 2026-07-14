@@ -1,29 +1,25 @@
-import { Alert, Platform } from 'react-native';
+import { confirmToast } from './confirmToast';
+import { showAppToast } from './appToast';
 
-/** Cross-platform confirm dialog (Alert is unreliable on web). */
+/**
+ * On-screen confirm toast (Cancel / Confirm). Prefer this over Alert.alert / window.confirm.
+ */
 export function confirmAction(
   title: string,
   message: string,
   destructiveLabel = 'Delete'
 ): Promise<boolean> {
-  if (Platform.OS === 'web') {
-    const text = message ? `${title}\n\n${message}` : title;
-    return Promise.resolve(globalThis.confirm?.(text) ?? true);
-  }
-
-  return new Promise((resolve) => {
-    Alert.alert(title, message, [
-      { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
-      { text: destructiveLabel, style: 'destructive', onPress: () => resolve(true) },
-    ]);
+  const text = message?.trim() ? `${title}\n${message}` : title;
+  return confirmToast({
+    message: text,
+    confirmLabel: destructiveLabel,
+    cancelLabel: 'Cancel',
+    destructive: true,
   });
 }
 
-/** Cross-platform error alert. */
+/** On-screen error toast (replaces Alert.alert for errors). */
 export function showErrorAlert(title: string, message: string): void {
-  if (Platform.OS === 'web') {
-    globalThis.alert?.(`${title}\n\n${message}`);
-    return;
-  }
-  Alert.alert(title, message);
+  const text = message?.trim() ? `${title}: ${message}` : title;
+  showAppToast(text, { isError: true, durationMs: 4500 });
 }
