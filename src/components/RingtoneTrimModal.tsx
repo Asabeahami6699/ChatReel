@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Modal,
   Platform,
   StyleSheet,
@@ -13,6 +14,7 @@ import {
   configurePlaybackAudio,
   createPlaybackPlayer,
   releasePlayer,
+  safePlayAudioPlayer,
   seekPlaybackPlayer,
   type AudioPlayer,
 } from '../lib/appAudio';
@@ -28,6 +30,7 @@ type Props = {
   label: string;
   initialStartSec?: number;
   initialEndSec?: number | null;
+  saving?: boolean;
   onCancel: () => void;
   onSave: (range: { startSec: number; endSec: number }) => void;
 };
@@ -48,6 +51,7 @@ export function RingtoneTrimModal({
   label,
   initialStartSec = 0,
   initialEndSec = null,
+  saving = false,
   onCancel,
   onSave,
 }: Props) {
@@ -70,7 +74,6 @@ export function RingtoneTrimModal({
         await configurePlaybackAudio();
         const player = createPlaybackPlayer(uri);
         playerRef.current = player;
-        // Wait briefly for metadata then read duration.
         await new Promise((r) => setTimeout(r, Platform.OS === 'web' ? 200 : 350));
         if (!alive) return;
         let duration = Number(player.duration) || 0;
@@ -82,7 +85,6 @@ export function RingtoneTrimModal({
             ? initialEndSec
             : initialStartSec + clip;
         const windowed = soundClipWindow(duration, clip, initialStartSec);
-        // Prefer saved end if it fits; else sliding 60s window.
         const start =
           initEnd - initialStartSec <= clip + 0.05
             ? Math.max(0, Math.min(initialStartSec, Math.max(0, duration - clip)))
@@ -126,7 +128,22 @@ export function RingtoneTrimModal({
   startSecRef.current = startSec;
   endSecRef.current = endSec;
 
+  const stopPreview = () => {
+    try {
+      playerRef.current?.pause();
+    } catch {
+      /* ignore */
+    }
+    setPlaying(false);
+  };
+
+  const handleClose = () => {
+    stopPreview();
+    onCancel();
+  };
+
   const applyStart = (sec: number) => {
+    if (saving) return;
     const next = soundClipWindow(trackLen, clipLen, sec);
     setStartSec(next.start);
     setEndSec(next.end);
@@ -136,6 +153,7 @@ export function RingtoneTrimModal({
   };
 
   const applyEnd = (sec: number) => {
+    if (saving) return;
     const next = soundClipWindow(trackLen, clipLen, sec - clipLen);
     setStartSec(next.start);
     setEndSec(next.end);
@@ -145,6 +163,7 @@ export function RingtoneTrimModal({
   };
 
   const togglePreview = async () => {
+    if (saving) return;
     const p = playerRef.current;
     if (!p) return;
     try {
@@ -155,8 +174,8 @@ export function RingtoneTrimModal({
       }
       await seekPlaybackPlayer(p, startSec);
       setPreviewSec(startSec);
-      p.play();
-      setPlaying(true);
+      const ok = await safePlayAudioPlayer(p);
+      setPlaying(ok);
     } catch {
       setPlaying(false);
     }
@@ -165,23 +184,36 @@ export function RingtoneTrimModal({
   if (!visible) return null;
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onCancel}>
+    <Modal visible={visible} animationType="slide" onRequestClose={handleClose}>
       <View style={[styles.wrap, { paddingTop: insets.top + 8, paddingBottom: insets.bottom + 12 }]}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={onCancel} hitSlop={12}>
-            <Ionicons name="close" size={24} color="#111" />
+          <TouchableOpacity
+            onPress={handleClose}
+            hitSlop={16}
+            accessibilityLabel="Close"
+            style={styles.closeBtn}
+          >
+            <Ionicons name="close" size={26} color="#111" />
           </TouchableOpacity>
           <View style={styles.headerText}>
             <Text style={styles.title}>Trim ringtone</Text>
             <Text style={styles.sub} numberOfLines={1}>
-              {label} · save favourite 1 minute only
+              {saving ? 'Uploading 1-minute clip…' : `${label} · save favourite 1 minute only`}
             </Text>
           </View>
           <TouchableOpacity
-            style={styles.saveBtn}
-            onPress={() => onSave({ startSec, endSec })}
+            style={[styles.saveBtn, saving && styles.saveBtnDisabled]}
+            disabled={saving}
+            onPress={() => {
+              stopPreview();
+              onSave({ startSec, endSec });
+            }}
           >
-            <Text style={styles.saveText}>Save</Text>
+            {saving ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Text style={styles.saveText}>Save</Text>
+            )}
           </TouchableOpacity>
         </View>
 
@@ -190,33 +222,39 @@ export function RingtoneTrimModal({
           {trackLen > clipLen ? ` (from ${formatSec(trackLen)} track)` : ''}.
         </Text>
 
-        <ReelSoundTrimTimeline
-          duration={Math.max(trackLen, clipLen)}
-          startSec={startSec}
-          endSec={endSec}
-          previewSec={Math.max(startSec, Math.min(previewSec, endSec))}
-          onStartChange={applyStart}
-          onEndChange={applyEnd}
-          onPreviewChange={(sec) => {
-            setPreviewSec(sec);
-            const p = playerRef.current;
-            if (p) void seekPlaybackPlayer(p, sec);
-          }}
-          onPreviewStart={() => {
-            playerRef.current?.pause();
-            setPlaying(false);
-          }}
-          onPreviewComplete={(sec) => {
-            setPreviewSec(sec);
-            const p = playerRef.current;
-            if (p) void seekPlaybackPlayer(p, sec);
-          }}
-        />
+        <View pointerEvents={saving ? 'none' : 'auto'} style={saving ? styles.dimmed : undefined}>
+          <ReelSoundTrimTimeline
+            duration={Math.max(trackLen, clipLen)}
+            startSec={startSec}
+            endSec={endSec}
+            previewSec={Math.max(startSec, Math.min(previewSec, endSec))}
+            onStartChange={applyStart}
+            onEndChange={applyEnd}
+            onPreviewChange={(sec) => {
+              setPreviewSec(sec);
+              const p = playerRef.current;
+              if (p) void seekPlaybackPlayer(p, sec);
+            }}
+            onPreviewStart={() => {
+              playerRef.current?.pause();
+              setPlaying(false);
+            }}
+            onPreviewComplete={(sec) => {
+              setPreviewSec(sec);
+              const p = playerRef.current;
+              if (p) void seekPlaybackPlayer(p, sec);
+            }}
+          />
 
-        <TouchableOpacity style={styles.playBtn} onPress={() => void togglePreview()}>
-          <Ionicons name={playing ? 'pause' : 'play'} size={22} color="#fff" />
-          <Text style={styles.playText}>{playing ? 'Pause' : 'Preview clip'}</Text>
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.playBtn}
+            onPress={() => void togglePreview()}
+            disabled={saving}
+          >
+            <Ionicons name={playing ? 'pause' : 'play'} size={22} color="#fff" />
+            <Text style={styles.playText}>{playing ? 'Pause' : 'Preview clip'}</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     </Modal>
   );
@@ -225,17 +263,29 @@ export function RingtoneTrimModal({
 const styles = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: '#f8fafc', paddingHorizontal: 16 },
   header: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 16 },
+  closeBtn: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 20,
+  },
   headerText: { flex: 1 },
   title: { fontSize: 18, fontWeight: '700', color: '#0f172a' },
   sub: { fontSize: 12, color: '#64748b', marginTop: 2 },
   saveBtn: {
+    minWidth: 64,
+    height: 36,
     backgroundColor: '#2563eb',
     paddingHorizontal: 14,
-    paddingVertical: 8,
     borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
+  saveBtnDisabled: { opacity: 0.75 },
   saveText: { color: '#fff', fontWeight: '700', fontSize: 14 },
   hint: { color: '#475569', fontSize: 13, marginBottom: 16, lineHeight: 18 },
+  dimmed: { opacity: 0.55 },
   playBtn: {
     marginTop: 24,
     alignSelf: 'center',

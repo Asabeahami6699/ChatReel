@@ -1,6 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   ScrollView,
   StyleSheet,
   Switch,
@@ -79,10 +78,17 @@ export default function ChatSettingsScreen() {
   const [trimLabel, setTrimLabel] = useState('Custom tone');
   const [trimMime, setTrimMime] = useState<string | null>(null);
   const [savingTrim, setSavingTrim] = useState(false);
+  const saveAbortRef = useRef(false);
 
   useEffect(() => {
     void refreshRingtoneLibrary();
   }, [refreshRingtoneLibrary]);
+
+  const closeTrimModal = useCallback(() => {
+    saveAbortRef.current = true;
+    setSavingTrim(false);
+    setTrimUri(null);
+  }, []);
 
   const themeIds = Object.keys(chatThemePresets) as ChatThemeId[];
   const selectedId = settings.incomingRingtoneId;
@@ -131,7 +137,8 @@ export default function ChatSettingsScreen() {
 
   const onSaveTrim = useCallback(
     async ({ startSec, endSec }: { startSec: number; endSec: number }) => {
-      if (!trimUri || !user?.id) return;
+      if (!trimUri || !user?.id || savingTrim) return;
+      saveAbortRef.current = false;
       setSavingTrim(true);
       try {
         const ringtone = await saveRingtoneClip({
@@ -143,6 +150,7 @@ export default function ChatSettingsScreen() {
           startSec,
           endSec: Math.min(endSec, startSec + RINGTONE_CLIP_SEC),
         });
+        if (saveAbortRef.current) return;
         await updateSettings({
           incomingRingtoneId: ringtone.id,
           incomingRingtoneUri: ringtone.audio_url,
@@ -150,19 +158,21 @@ export default function ChatSettingsScreen() {
           incomingRingtoneStartSec: 0,
           incomingRingtoneEndSec: ringtone.duration_sec,
         });
-        await refreshRingtoneLibrary();
+        // Close immediately; refresh library in background.
         setTrimUri(null);
+        setSavingTrim(false);
         showAppToast('Ringtone saved to your library');
+        void refreshRingtoneLibrary();
       } catch (err) {
+        if (saveAbortRef.current) return;
+        setSavingTrim(false);
         showErrorAlert(
           'Ringtone',
           err instanceof Error ? err.message : 'Could not save trimmed ringtone'
         );
-      } finally {
-        setSavingTrim(false);
       }
     },
-    [refreshRingtoneLibrary, trimLabel, trimMime, trimUri, updateSettings, user?.id]
+    [refreshRingtoneLibrary, savingTrim, trimLabel, trimMime, trimUri, updateSettings, user?.id]
   );
 
   const removeTone = async (id: string) => {
@@ -340,18 +350,12 @@ export default function ChatSettingsScreen() {
           label={trimLabel}
           initialStartSec={0}
           initialEndSec={null}
-          onCancel={() => !savingTrim && setTrimUri(null)}
+          saving={savingTrim}
+          onCancel={closeTrimModal}
           onSave={(range) => {
-            if (savingTrim) return;
             void onSaveTrim(range);
           }}
         />
-      ) : null}
-      {savingTrim ? (
-        <View style={styles.savingOverlay}>
-          <ActivityIndicator size="large" color="#fff" />
-          <Text style={styles.savingText}>Saving 1-minute clip…</Text>
-        </View>
       ) : null}
     </View>
   );
@@ -445,13 +449,4 @@ const styles = StyleSheet.create({
   },
   themeSwatch: { width: 28, height: 28, borderRadius: 14, marginRight: 12 },
   themeLabel: { flex: 1, fontSize: 15, fontWeight: '600', color: '#111' },
-  savingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 50,
-    gap: 12,
-  },
-  savingText: { color: '#fff', fontWeight: '600', fontSize: 15 },
 });
