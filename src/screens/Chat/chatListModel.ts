@@ -35,6 +35,10 @@ export type ChatListMessage = {
   expires_at?: string | null;
   view_once?: boolean;
   viewed_at?: string | null;
+  plaintext?: boolean;
+  iv?: string;
+  ephemeral_public_key?: string;
+  decrypted?: string;
 };
 
 export type ChatRow =

@@ -178,6 +178,17 @@ function sigmoid(x: number): number {
   return 1 / (1 + Math.exp(-x));
 }
 
+/** Fisher–Yates shuffle — used so For You is random, not first-come-first-serve. */
+function shuffleInPlace<T>(items: T[]): T[] {
+  for (let i = items.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = items[i]!;
+    items[i] = items[j]!;
+    items[j] = tmp;
+  }
+  return items;
+}
+
 function computeFreshness(createdAt: string, now: Date): number {
   const ageHours = Math.max(0, (now.getTime() - new Date(createdAt).getTime()) / 3_600_000);
   return Math.exp(-ageHours / 36);
@@ -562,10 +573,10 @@ export async function fetchCandidateReels(params: FetchCandidatesParams): Promis
     }
   }
 
-  return visible.slice(0, targetCount);
+  return shuffleInPlace(visible).slice(0, targetCount);
 }
 
-/** Latest approved reels for injecting at the top of the first feed page. */
+/** Recent approved reels mixed into the first feed page (shuffled, not chronological). */
 export async function fetchFreshReelsForFeed(params: {
   profileId: string;
   friendIds: string[];
@@ -585,7 +596,7 @@ export async function fetchFreshReelsForFeed(params: {
     .or(visibility)
     .gte('created_at', since)
     .order('created_at', { ascending: false })
-    .limit(limit * 2);
+    .limit(Math.max(limit * 4, 24));
 
   if (error) throw new Error(error.message);
 
@@ -596,7 +607,7 @@ export async function fetchFreshReelsForFeed(params: {
     new Set(params.friendIds),
     params.viewerAuthUserId
   );
-  return visible.slice(0, limit);
+  return shuffleInPlace([...visible]).slice(0, limit);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -625,6 +636,11 @@ export function scoreCandidates(
       return { reel, finalScore: score, bucket, metrics };
     });
 
+  // Score still guides quality, but a large random jitter prevents FCFS / chronological lock-in.
+  for (const item of scored) {
+    item.finalScore += Math.random() * 1.35;
+  }
+  shuffleInPlace(scored);
   scored.sort((a, b) => b.finalScore - a.finalScore);
   return scored;
 }
@@ -647,14 +663,18 @@ export function applyDiversityRules(
   for (const item of scored) buckets[item.bucket].push(item);
 
   if (isColdStart) {
-    const mixed = [...buckets.trending, ...buckets.exploration, ...buckets.personalized];
-    mixed.sort((a, b) => b.finalScore - a.finalScore);
+    const mixed = shuffleInPlace([
+      ...buckets.trending,
+      ...buckets.exploration,
+      ...buckets.personalized,
+    ]);
     return pickWithCreatorCap(mixed, limit);
   }
 
   const result: ScoredReel[] = [];
   const take = (pool: ScoredReel[], n: number) => {
-    for (const item of pool) {
+    const shuffled = shuffleInPlace([...pool]);
+    for (const item of shuffled) {
       if (result.length >= limit || n <= 0) break;
       if (result.some((r) => r.reel.id === item.reel.id)) continue;
       result.push(item);
@@ -670,7 +690,7 @@ export function applyDiversityRules(
   const remainder = scored.filter((s) => !result.some((r) => r.reel.id === s.reel.id));
   take(remainder, remP + remT + remE);
 
-  return pickWithCreatorCap(result, limit);
+  return pickWithCreatorCap(shuffleInPlace(result), limit);
 }
 
 function pickWithCreatorCap(pool: ScoredReel[], limit: number): ScoredReel[] {

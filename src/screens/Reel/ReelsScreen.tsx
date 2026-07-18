@@ -63,6 +63,8 @@ import { useReelProfileStore } from '../../stores/reelProfileStore';
 import { ReelWebFeed, type ReelWebFeedHandle } from './ReelWebFeed';
 import { ReelNativeFeed, type ReelNativeFeedHandle } from './ReelNativeFeed';
 import { ReelFloatingChrome } from './ReelFloatingChrome';
+import { useAuth } from '../../hooks/useAuth';
+import { promptSignIn } from '../../lib/requireSignedIn';
 
 const WINDOW_HEIGHT = SCREEN_HEIGHT;
 const PROGRESS_UI_MS = 280;
@@ -79,6 +81,9 @@ export default function ReelsScreen() {
   const isMainAppTabFocused = useReelsMainTabFocused();
   const isFocused = isReelTabFocused && isMainAppTabFocused;
   const { feedMode, setFeedMode } = useReelFeedMode();
+  const { isGuest, isAuthenticated, exitGuest } = useAuth();
+  const isGuestRef = useRef(isGuest);
+  isGuestRef.current = isGuest;
   const [viewportHeight, setViewportHeight] = useState(0);
   const bottomNavOffset = reelTabBarOffset(insets.bottom, usePhoneFrame);
   // Tab bar is position:absolute, so onLayout is full screen — subtract bar
@@ -90,7 +95,8 @@ export default function ReelsScreen() {
       : (viewportHeight || windowHeight) - bottomNavOffset
   );
 
-  const feedSource = feedMode === 'forYou' ? 'feed' : 'following';
+  const feedSource = isGuest ? 'public' : feedMode === 'forYou' ? 'feed' : 'following';
+  const feedInsertAfterRef = useRef(0);
 
   const {
     reels,
@@ -102,13 +108,30 @@ export default function ReelsScreen() {
     refresh,
     loadMore,
     reload,
+    softInjectNewReels,
     applyLocalLikeChange,
     applyLocalCommentChange,
     removeReelLocally,
-  } = useReelsFeed(feedSource);
+  } = useReelsFeed(feedSource, {
+    active: isFocused,
+    insertAfterIndexRef: feedInsertAfterRef,
+  });
   const { tasks: uploadTasks, activeCount, activeProgress, summary } = useReelUploadQueue();
   const myProfileId = useCurrentProfileId();
   const [showUploadPanel, setShowUploadPanel] = useState(false);
+  const seenDoneUploadsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    let injected = false;
+    for (const task of uploadTasks) {
+      if (task.status !== 'done' || seenDoneUploadsRef.current.has(task.id)) continue;
+      seenDoneUploadsRef.current.add(task.id);
+      injected = true;
+    }
+    if (injected && isFocused) {
+      void softInjectNewReels();
+    }
+  }, [uploadTasks, isFocused, softInjectNewReels]);
 
   const webFeedRef = useRef<ReelWebFeedHandle>(null);
   const nativeFeedRef = useRef<ReelNativeFeedHandle>(null);
@@ -150,6 +173,7 @@ export default function ReelsScreen() {
   // Keep a ref in sync for viewability callbacks so we can clamp/choose the next index.
   useEffect(() => {
     currentIndexRef.current = currentIndex;
+    feedInsertAfterRef.current = currentIndex;
   }, [currentIndex]);
 
   const [openComments, setOpenComments] = useState<ReelDTO | null>(null);
@@ -159,7 +183,7 @@ export default function ReelsScreen() {
   const [giftBurst, setGiftBurst] = useState<GiftBurstPayload | null>(null);
   const [buyCoinsOpen, setBuyCoinsOpen] = useState(false);
 
-  const { wallet, setBalanceCoins } = useWallet(isFocused);
+  const { wallet, setBalanceCoins } = useWallet(isFocused && isAuthenticated);
 
   const gateActive = useReelPlaybackGateActive();
   const sheetOpen = Boolean(openComments || openShare || openProfile || giftReel || buyCoinsOpen);
@@ -353,7 +377,7 @@ export default function ReelsScreen() {
   );
 
   const refreshFollowedAuthors = useCallback(async () => {
-    if (!myProfileId) return;
+    if (isGuest || !myProfileId) return;
     try {
       const { friendships } = (await api.friendships.list('accepted')) as {
         friendships: Array<{ user_id?: string; friend_id?: string }>;
@@ -367,8 +391,19 @@ export default function ReelsScreen() {
     } catch {
       /* ignore */
     }
-  }, [myProfileId]);
+  }, [isGuest, myProfileId]);
 
+  const requireAuth = useCallback(
+    (message?: string) => {
+      if (isAuthenticated) return true;
+      promptSignIn({
+        message: message ?? 'Sign in to interact with reels.',
+        onLogin: () => exitGuest(),
+      });
+      return false;
+    },
+    [isAuthenticated, exitGuest]
+  );
 
   const resetFeedScroll = useCallback(() => {
     setCurrentIndex(0);
@@ -397,10 +432,14 @@ export default function ReelsScreen() {
 
   const switchFeedMode = useCallback(
     (mode: 'forYou' | 'following') => {
+      if (isGuest && mode === 'following') {
+        requireAuth('Sign in to see reels from people you follow.');
+        return;
+      }
       if (mode === feedMode) return;
       setFeedMode(mode);
     },
-    [feedMode, setFeedMode]
+    [feedMode, setFeedMode, isGuest, requireAuth]
   );
 
   const heartScale = useRef(new Animated.Value(0)).current;
@@ -442,6 +481,7 @@ export default function ReelsScreen() {
 
   const toggleLike = useCallback(
     async (reel: ReelDTO, viaDoubleTap = false) => {
+      if (!requireAuth('Sign in to like this reel.')) return;
       const next = !reel.liked_by_me;
       // Optimistic
       applyLocalLikeChange(reel.id, next);
@@ -455,7 +495,7 @@ export default function ReelsScreen() {
         Alert.alert('Reels', message);
       }
     },
-    [applyLocalLikeChange, animateHeart]
+    [applyLocalLikeChange, animateHeart, requireAuth]
   );
 
   const playActiveReel = useCallback(
@@ -507,14 +547,27 @@ export default function ReelsScreen() {
   );
 
   const onOpenComments = useCallback(
-    (reel: ReelDTO) => openSheet(setOpenComments, reel),
-    [openSheet]
+    (reel: ReelDTO) => {
+      if (!requireAuth('Sign in to comment on reels.')) return;
+      openSheet(setOpenComments, reel);
+    },
+    [openSheet, requireAuth]
   );
-  const onOpenShare = useCallback((reel: ReelDTO) => openSheet(setOpenShare, reel), [openSheet]);
-  const onOpenGift = useCallback((reel: ReelDTO) => {
-    void pausePlayers();
-    setGiftReel(reel);
-  }, [pausePlayers]);
+  const onOpenShare = useCallback(
+    (reel: ReelDTO) => {
+      if (!requireAuth('Sign in to share reels with friends.')) return;
+      openSheet(setOpenShare, reel);
+    },
+    [openSheet, requireAuth]
+  );
+  const onOpenGift = useCallback(
+    (reel: ReelDTO) => {
+      if (!requireAuth('Sign in to send gifts.')) return;
+      void pausePlayers();
+      setGiftReel(reel);
+    },
+    [pausePlayers, requireAuth]
+  );
   const handleGiftSent = useCallback(
     (payload: { gift: { emoji: string; name: string }; balanceCoins: number }) => {
       setBalanceCoins(payload.balanceCoins);
@@ -527,29 +580,45 @@ export default function ReelsScreen() {
     [setBalanceCoins]
   );
   const onOpenProfile = useCallback(
-    (reel: ReelDTO) => openSheet(setOpenProfile, reel),
-    [openSheet]
+    (reel: ReelDTO) => {
+      if (!requireAuth('Sign in to view creator profiles.')) return;
+      openSheet(setOpenProfile, reel);
+    },
+    [openSheet, requireAuth]
   );
   const onNavigateSound = useCallback(
-    (soundId: string) => navigation.navigate('ReelSound', { soundId }),
-    [navigation]
+    (soundId: string) => {
+      if (!requireAuth('Sign in to browse sounds.')) return;
+      navigation.navigate('ReelSound', { soundId });
+    },
+    [navigation, requireAuth]
   );
 
   const onUseReelAudio = useCallback(
     (reel: ReelDTO) => {
+      if (!requireAuth('Sign in to use this sound.')) return;
       if (reel.sound?.id) {
         navigation.navigate('ReelSound', { soundId: reel.sound.id });
         return;
       }
       navigation.navigate('ReelSound', { fromReelId: reel.id });
     },
-    [navigation]
+    [navigation, requireAuth]
   );
 
   const goToChats = useCallback(() => {
+    if (isGuest) {
+      const guestMainTabs = navigation.getParent?.()?.getParent?.();
+      if (guestMainTabs?.navigate) {
+        guestMainTabs.navigate('Chats');
+      } else {
+        requireAuth('Sign in to open your chats.');
+      }
+      return;
+    }
     void pauseAllVideos();
     navigateMainTab('Chats');
-  }, [pauseAllVideos]);
+  }, [isGuest, navigation, requireAuth, pauseAllVideos]);
 
   const handlePullRefresh = useCallback(async () => {
     if (currentIndex !== 0) {
@@ -639,10 +708,10 @@ export default function ReelsScreen() {
 
   // Prefetch gift catalog + inbox while watching reels — never blocks first paint.
   useEffect(() => {
-    if (!isFocused) return;
+    if (!isFocused || isGuest) return;
     void scheduleGiftCatalogPrefetch(0);
     void scheduleReelInboxPrefetch(0);
-  }, [isFocused]);
+  }, [isFocused, isGuest]);
 
   useEffect(() => {
     if (!isFocused || reels.length === 0) return;
@@ -678,14 +747,14 @@ export default function ReelsScreen() {
   const currentAuthorId = reels[currentIndex]?.author_id;
   const nextAuthorId = reels[currentIndex + 1]?.author_id;
   useEffect(() => {
-    if (!isFocused) return;
+    if (!isFocused || isGuest) return;
     const ids = new Set<string>();
     if (currentAuthorId) ids.add(currentAuthorId);
     if (nextAuthorId) ids.add(nextAuthorId);
     for (const id of ids) {
       void ensureProfileLoaded(id, 24);
     }
-  }, [isFocused, currentAuthorId, nextAuthorId, ensureProfileLoaded]);
+  }, [isFocused, isGuest, currentAuthorId, nextAuthorId, ensureProfileLoaded]);
 
   const activateReelAtIndexRef = useRef<(index: number) => void>(() => {});
   const goToReelIndexRef = useRef<(index: number, animated?: boolean) => void>(() => {});
@@ -721,7 +790,9 @@ export default function ReelsScreen() {
     if (!viewedReelIds.current.has(reel.id)) {
       viewedReelIds.current.add(reel.id);
       markReelWatched(reel.id);
-      api.reels.view(reel.id).catch(() => undefined);
+      if (!isGuestRef.current) {
+        api.reels.view(reel.id).catch(() => undefined);
+      }
     }
     void prefetchAroundRef.current(list, clamped);
   }, []);
@@ -848,6 +919,7 @@ export default function ReelsScreen() {
 
   const quickFollow = useCallback(
     async (reel: ReelDTO) => {
+      if (!requireAuth('Sign in to follow creators.')) return;
       const authorId = reel.author_id;
       if (!authorId) return;
       if (followedAuthorIds.has(authorId) || followBusyAuthorIds.has(authorId)) return;
@@ -870,7 +942,7 @@ export default function ReelsScreen() {
         });
       }
     },
-    [followBusyAuthorIds, followedAuthorIds]
+    [followBusyAuthorIds, followedAuthorIds, requireAuth]
   );
 
   const renderReel = useCallback(
@@ -1001,7 +1073,7 @@ export default function ReelsScreen() {
           <TouchableOpacity
             style={styles.topIconBtn}
             onPress={goToChats}
-            accessibilityLabel="Back to chats"
+            accessibilityLabel={isGuest ? 'Back to sign in' : 'Back to chats'}
             hitSlop={8}
           >
             <Ionicons name="arrow-back" size={22} color="#fff" />
@@ -1010,21 +1082,33 @@ export default function ReelsScreen() {
           <View style={styles.feedPillsCenter} pointerEvents="box-none">
             <View style={styles.feedPills}>
               <TouchableOpacity
-                style={feedMode === 'forYou' ? styles.feedPillActive : styles.feedPill}
+                style={feedMode === 'forYou' || isGuest ? styles.feedPillActive : styles.feedPill}
                 onPress={() => switchFeedMode('forYou')}
               >
-                <Text style={feedMode === 'forYou' ? styles.feedPillActiveText : styles.feedPillText}>
+                <Text
+                  style={
+                    feedMode === 'forYou' || isGuest
+                      ? styles.feedPillActiveText
+                      : styles.feedPillText
+                  }
+                >
                   For You
                 </Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={feedMode === 'following' ? styles.feedPillActive : styles.feedPill}
-                onPress={() => switchFeedMode('following')}
-              >
-                <Text style={feedMode === 'following' ? styles.feedPillActiveText : styles.feedPillText}>
-                  Following
-                </Text>
-              </TouchableOpacity>
+              {!isGuest ? (
+                <TouchableOpacity
+                  style={feedMode === 'following' ? styles.feedPillActive : styles.feedPill}
+                  onPress={() => switchFeedMode('following')}
+                >
+                  <Text
+                    style={
+                      feedMode === 'following' ? styles.feedPillActiveText : styles.feedPillText
+                    }
+                  >
+                    Following
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
           </View>
 
@@ -1109,6 +1193,7 @@ export default function ReelsScreen() {
               <TouchableOpacity
                 style={styles.retryButton}
                 onPress={() => {
+                  if (!requireAuth('Sign in to post your first reel.')) return;
                   openPostReelCompose();
                   navigation.navigate('PostReel' as never);
                 }}
@@ -1250,9 +1335,12 @@ export default function ReelsScreen() {
             {openComments && (
               <ReelCommentSheet
                 reelId={openComments.id}
+                reelAuthorId={openComments.author_id}
                 onClose={closeSheets}
                 onCommentAdded={() => applyLocalCommentChange(openComments.id, 1)}
-                onCommentRemoved={() => applyLocalCommentChange(openComments.id, -1)}
+                onCommentRemoved={(removedCount) =>
+                  applyLocalCommentChange(openComments.id, -removedCount)
+                }
               />
             )}
           </View>

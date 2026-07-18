@@ -27,6 +27,7 @@ import { WebMainPanel, WebReelsSidebarPlaceholder } from './WebMainPanel';
 import PostReelScreen from '../screens/Reel/PostReelScreen';
 import ReelPreviewScreen from '../screens/Reel/ReelPreviewScreen';
 import NewGroupScreen from '../screens/Group/NewGroupScreen';
+import GroupsListScreen from '../screens/Group/GroupsListScreen';
 import ChatSettingsScreen from '../screens/Chat/ChatSettingsScreen';
 import QRCodeScreen from '../screens/QR/QRCodeScreen';
 import QRScannerScreen from '../screens/QR/QRScannerScreen';
@@ -37,6 +38,8 @@ import InviteScreen from '../screens/Group/InviteScreen';
 import GroupInfoScreen from '../screens/Group/GroupInfoScreen';
 import JoinGroupScreen from '../screens/Group/JoinGroupScreen';
 import { IncomingCallOverlay } from '../components/IncomingCallOverlay';
+import { FloatingCallOverlay } from '../components/FloatingCallOverlay';
+import { ActiveCallLayer } from '../components/ActiveCallLayer';
 import { useChatSettings } from '../context/ChatSettingsContext';
 import { ReelsMainTabFocusContext } from '../context/ReelsMainTabFocusContext';
 import { blurActiveElementOnWeb } from '../lib/webFocus';
@@ -67,7 +70,7 @@ type ChatStackProps = {
 /* ------------------------------------------------------------------
  *  Unified Chat Stack (mobile + web sidebar)
  * ------------------------------------------------------------------ */
-const ChatStack = ({ setSelectedChat }: ChatStackProps) => {
+export const ChatStack = ({ setSelectedChat }: ChatStackProps) => {
   return (
   <Stack.Navigator screenOptions={{ headerShown: false }}>
     <Stack.Screen name="ChatList">
@@ -85,6 +88,9 @@ const ChatStack = ({ setSelectedChat }: ChatStackProps) => {
     <Stack.Screen name="FriendRequests" component={FriendRequestsScreen} />
     <Stack.Screen name="FriendsList">
       {(props) => <FriendsListScreen {...props} setSelectedChat={setSelectedChat} />}
+    </Stack.Screen>
+    <Stack.Screen name="GroupsList">
+      {(props) => <GroupsListScreen {...props} setSelectedChat={setSelectedChat} />}
     </Stack.Screen>
     <Stack.Screen name="GroupInfo" component={GroupInfoScreen} />
     <Stack.Screen
@@ -178,8 +184,9 @@ const MainTabNavigator = () => {
         component={ChatStack}
         options={({ navigation }) => {
           const tabState = navigation.getState();
-          const currentTab = tabState.routes[tabState.index]?.name;
-          const chatsRoute = tabState.routes.find((r) => r.name === 'Chats');
+          const currentTab =
+            tabState?.routes?.[tabState.index ?? 0]?.name;
+          const chatsRoute = tabState?.routes?.find((r) => r.name === 'Chats');
           const stackScreen = getFocusedRouteName(
             chatsRoute?.state as Parameters<typeof getFocusedRouteName>[0]
           );
@@ -381,9 +388,11 @@ export const AppNavigator = () => {
       <StatusBar barStyle="dark-content" backgroundColor="#fff" />
       <View style={styles.appShell}>
         <Stack.Navigator
+          detachInactiveScreens={false}
           screenOptions={{
             headerShown: false,
             contentStyle: { backgroundColor: '#fff' },
+            freezeOnBlur: false,
           }}
         >
           <Stack.Screen name="Main" component={MainShell} />
@@ -430,10 +439,13 @@ export const AppNavigator = () => {
               headerShown: false,
               presentation: 'fullScreenModal',
               contentStyle: { backgroundColor: '#000' },
+              freezeOnBlur: false,
             }}
           />
         </Stack.Navigator>
         <View style={styles.incomingCallHost} pointerEvents="box-none">
+          <ActiveCallLayer />
+          <FloatingCallOverlay />
           <IncomingCallOverlay />
         </View>
       </View>

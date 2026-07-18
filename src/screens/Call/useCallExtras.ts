@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   CALL_EXTRAS_TOPIC,
   decodeCallExtrasSignal,
@@ -7,6 +7,7 @@ import {
 } from './callExtrasSignaling';
 import { appendRemoteChat, type InCallChatMessage } from './CallInCallChat';
 import { reactionFromSignal } from './CallReactionsBar';
+import { showAppToast } from '../../lib/appToast';
 
 type FloatingReaction = ReturnType<typeof reactionFromSignal>;
 
@@ -18,10 +19,16 @@ type PublishData = (
 export function useCallExtras(myName: string) {
   const [chatOpen, setChatOpen] = useState(false);
   const [messages, setMessages] = useState<InCallChatMessage[]>([]);
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
   const [incomingReaction, setIncomingReaction] = useState<FloatingReaction | null>(null);
   const [incomingGiftBurst, setIncomingGiftBurst] = useState<string | null>(null);
   const [recordingRequestAt, setRecordingRequestAt] = useState<number | null>(null);
   const [recordingActive, setRecordingActive] = useState(false);
+  const chatOpenRef = useRef(false);
+
+  useEffect(() => {
+    chatOpenRef.current = chatOpen;
+  }, [chatOpen]);
 
   const publishExtras = useCallback(
     (publishData: PublishData | null | undefined, signal: CallExtrasSignal) => {
@@ -38,38 +45,50 @@ export function useCallExtras(myName: string) {
     []
   );
 
-  const handleExtrasPayload = useCallback(
-    (payload: Uint8Array, isLocal: boolean) => {
-      if (isLocal) return;
-      const signal = decodeCallExtrasSignal(payload);
-      if (!signal) return;
-      if (signal.type === 'chat') {
-        setMessages((prev) => [...prev.slice(-80), appendRemoteChat(signal, false)]);
-        return;
+  const handleExtrasPayload = useCallback((payload: Uint8Array, isLocal: boolean) => {
+    if (isLocal) return;
+    const signal = decodeCallExtrasSignal(payload);
+    if (!signal) return;
+    if (signal.type === 'chat') {
+      const msg = appendRemoteChat(signal, false);
+      setMessages((prev) => [...prev.slice(-80), msg]);
+      if (!chatOpenRef.current) {
+        setUnreadChatCount((n) => Math.min(99, n + 1));
+        const who = msg.name || 'Someone';
+        showAppToast(`${who}: ${msg.text}`);
       }
-      if (signal.type === 'reaction') {
-        setIncomingReaction(reactionFromSignal(signal.kind, signal.name, signal.at));
-        return;
-      }
-      if (signal.type === 'gift') {
-        setIncomingGiftBurst(signal.emoji);
-        setTimeout(() => setIncomingGiftBurst(null), 2200);
-        return;
-      }
-      if (signal.type === 'recording_request') {
-        setRecordingRequestAt(signal.at);
-        return;
-      }
-      if (signal.type === 'recording_consent') {
-        if (signal.allowed) setRecordingActive(true);
-        return;
-      }
-    },
-    []
-  );
+      return;
+    }
+    if (signal.type === 'reaction') {
+      setIncomingReaction(reactionFromSignal(signal.kind, signal.name, signal.at));
+      return;
+    }
+    if (signal.type === 'gift') {
+      setIncomingGiftBurst(signal.emoji);
+      setTimeout(() => setIncomingGiftBurst(null), 2200);
+      return;
+    }
+    if (signal.type === 'recording_request') {
+      setRecordingRequestAt(signal.at);
+      return;
+    }
+    if (signal.type === 'recording_consent') {
+      if (signal.allowed) setRecordingActive(true);
+      return;
+    }
+  }, []);
 
   const onLocalChat = useCallback((msg: InCallChatMessage) => {
     setMessages((prev) => [...prev.slice(-80), msg]);
+  }, []);
+
+  const openChat = useCallback(() => {
+    setChatOpen(true);
+    setUnreadChatCount(0);
+  }, []);
+
+  const closeChat = useCallback(() => {
+    setChatOpen(false);
   }, []);
 
   const clearRecordingRequest = useCallback(() => setRecordingRequestAt(null), []);
@@ -77,8 +96,11 @@ export function useCallExtras(myName: string) {
   return {
     chatOpen,
     setChatOpen,
+    openChat,
+    closeChat,
     messages,
     onLocalChat,
+    unreadChatCount,
     incomingReaction,
     incomingGiftBurst,
     recordingRequestAt,

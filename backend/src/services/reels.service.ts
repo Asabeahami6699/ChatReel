@@ -247,6 +247,136 @@ export async function enrichReels(
   );
 }
 
+/** Public DTO: strip emails, auth user ids, moderation internals, and group refs. */
+export type PublicEnrichedReel = Omit<EnrichedReel, 'author' | 'moderation_reason' | 'moderation_score' | 'group_id'> & {
+  author: {
+    id: string;
+    user_id: string;
+    display_name: string | null;
+    email: string | null;
+    avatar_url: string | null;
+  } | null;
+  group_id: null;
+  moderation_reason: null;
+  moderation_score: null;
+  liked_by_me: false;
+};
+
+function toPublicAuthor(
+  author: AuthorProfile | null
+): PublicEnrichedReel['author'] {
+  if (!author) return null;
+  return {
+    id: author.id,
+    user_id: '',
+    display_name: author.display_name,
+    email: null,
+    avatar_url: author.avatar_url,
+  };
+}
+
+/**
+ * Enrich approved public reels for anonymous browse — no viewer likes, no PII.
+ */
+export async function enrichPublicReels(reels: ReelRow[]): Promise<PublicEnrichedReel[]> {
+  if (reels.length === 0) return [];
+
+  const reelIds = reels.map((r) => r.id);
+  const authorIds = Array.from(new Set(reels.map((r) => r.author_id)));
+  const soundIds = Array.from(
+    new Set(reels.map((r) => r.sound_id).filter((id): id is string => Boolean(id)))
+  );
+
+  const [authorsRes, soundsRes] = await Promise.all([
+    supabaseAdmin
+      .from('profiles')
+      .select('id, user_id, display_name, email, avatar_url')
+      .in('id', authorIds),
+    soundIds.length
+      ? supabaseAdmin
+          .from('reel_sounds')
+          .select('id, title, artist, audio_url, preview_url, duration_sec, cover_url, usage_count')
+          .in('id', soundIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+
+  if (authorsRes.error) throw new Error(authorsRes.error.message);
+  if (soundsRes.error) throw new Error(soundsRes.error.message);
+
+  const authorById = new Map<string, AuthorProfile>();
+  for (const a of (authorsRes.data ?? []) as AuthorProfile[]) {
+    authorById.set(a.id, a);
+  }
+
+  const soundById = new Map<string, ReelSoundSummary>();
+  for (const s of (soundsRes.data ?? []) as ReelSoundSummary[]) {
+    soundById.set(s.id, s);
+  }
+
+  const { data: mediaRows, error: mediaErr } = await supabaseAdmin
+    .from('reel_media')
+    .select('*')
+    .in('reel_id', reelIds)
+    .order('position', { ascending: true });
+
+  if (mediaErr) throw new Error(mediaErr.message);
+
+  const mediaByReel = new Map<string, ReelMediaRow[]>();
+  for (const row of (mediaRows ?? []) as ReelMediaRow[]) {
+    const list = mediaByReel.get(row.reel_id) ?? [];
+    list.push(withCdnMediaRow(row));
+    mediaByReel.set(row.reel_id, list);
+  }
+
+  return reels.map((r) =>
+    withCdnReelUrls({
+      ...r,
+      group_id: null,
+      transcode_status: r.transcode_status ?? 'pending',
+      hls_url: r.hls_url ?? null,
+      moderation_status: 'approved' as ModerationStatus,
+      moderation_reason: null,
+      moderation_score: null,
+      author: toPublicAuthor(authorById.get(r.author_id) ?? null),
+      liked_by_me: false as const,
+      media: mediaByReel.get(r.id),
+      sound: r.sound_id ? soundById.get(r.sound_id) ?? null : null,
+    })
+  );
+}
+
+function isPubliclyPublished(reel: Pick<ReelRow, 'scheduled_publish_at'>): boolean {
+  if (!reel.scheduled_publish_at) return true;
+  return new Date(reel.scheduled_publish_at).getTime() <= Date.now();
+}
+
+/** Fetch approved public reels for guest browse (cursor = created_at). */
+export async function fetchPublicFeedReels(opts: {
+  cursor?: string;
+  limit: number;
+}): Promise<{ reels: ReelRow[]; nextCursor: string | null }> {
+  const fetchLimit = opts.limit + 1;
+  let query = supabaseAdmin
+    .from('reels')
+    .select('*')
+    .eq('visibility', 'public')
+    .eq('moderation_status', 'approved')
+    .order('created_at', { ascending: false })
+    .limit(fetchLimit);
+
+  if (opts.cursor) {
+    query = query.lt('created_at', opts.cursor);
+  }
+
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+
+  const rows = ((data ?? []) as ReelRow[]).filter(isPubliclyPublished);
+  const page = rows.slice(0, opts.limit);
+  const nextCursor = rows.length > opts.limit ? page[page.length - 1]?.created_at ?? null : null;
+  return { reels: page, nextCursor };
+}
+
 /**
  * Server-side visibility filter applied via Postgres OR.
  * Used in feed query so we don't pull private reels we'd then drop.

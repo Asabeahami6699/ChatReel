@@ -8,6 +8,12 @@ export type IndividualChat = {
   last_message?: string;
   last_message_at?: string;
   unread_count?: number;
+  last_message_type?: string;
+  last_message_plaintext?: boolean | null;
+  last_message_iv?: string | null;
+  last_message_ephemeral_public_key?: string | null;
+  last_message_sender_id?: string | null;
+  last_message_receiver_id?: string | null;
 };
 
 export async function getIndividualChats(authUserId: string): Promise<IndividualChat[]> {
@@ -96,6 +102,12 @@ export async function getIndividualChats(authUserId: string): Promise<Individual
       last_message: latest?.content,
       last_message_at: latest?.created_at,
       unread_count: unreadByFriend.get(friend.user_id) ?? 0,
+      last_message_type: latest?.message_type ?? undefined,
+      last_message_plaintext: latest?.plaintext ?? null,
+      last_message_iv: latest?.iv ?? null,
+      last_message_ephemeral_public_key: latest?.ephemeral_public_key ?? null,
+      last_message_sender_id: latest?.sender_id ?? null,
+      last_message_receiver_id: latest?.receiver_id ?? null,
     };
   });
 
@@ -124,6 +136,10 @@ export type GroupChat = {
   updated_at?: string | null;
   last_message_sender?: string | null;
   last_message_sender_display_name?: string;
+  last_message_type?: string | null;
+  last_message_plaintext?: boolean | null;
+  last_message_iv?: string | null;
+  last_message_ephemeral_public_key?: string | null;
 };
 
 const normalizeDisplayName = (profile: { display_name?: string | null; email?: string | null }) => {
@@ -182,7 +198,9 @@ export async function getGroupChats(authUserId: string): Promise<GroupChat[]> {
 
   const msgRes = await supabaseAdmin
     .from('messages')
-    .select('id, sender_id, group_id, content, is_read, created_at')
+    .select(
+      'id, sender_id, group_id, content, is_read, created_at, message_type, plaintext, iv, ephemeral_public_key'
+    )
     .in('group_id', groupIds)
     .order('created_at', { ascending: false });
 
@@ -265,6 +283,10 @@ export async function getGroupChats(authUserId: string): Promise<GroupChat[]> {
       last_message_at: latest?.created_at ?? null,
       last_message_sender: latest?.sender_id ?? null,
       last_message_sender_display_name,
+      last_message_type: latest?.message_type ?? null,
+      last_message_plaintext: latest?.plaintext ?? null,
+      last_message_iv: latest?.iv ?? null,
+      last_message_ephemeral_public_key: latest?.ephemeral_public_key ?? null,
       unread_count: unreadCounts.get(g.id as string) ?? 0,
     };
   });

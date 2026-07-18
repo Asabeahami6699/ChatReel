@@ -1,4 +1,3 @@
-// D:\chatApp\chatApp\src\screens\RegisterScreen.tsx
 import React, { useState, useEffect, useRef } from 'react'
 import {
   Alert,
@@ -14,6 +13,7 @@ import { useWindowDimensions } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
 import QRCode from 'react-native-qrcode-svg'
 import AuthForm from '../../components/AuthForm'
+import PhoneAuthForm from '../../components/PhoneAuthForm'
 import { useAuth } from '../../hooks/useAuth'
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack'
 import type { AuthStackParamList } from '../../navigation/AuthNavigator'
@@ -23,8 +23,9 @@ type RegisterNavProp = NativeStackNavigationProp<AuthStackParamList, 'Register'>
 
 export default function RegisterScreen() {
   const navigation = useNavigation<RegisterNavProp>()
-  const { signUp, loading } = useAuth()
+  const { signUp, sendPhoneOtp, verifyPhoneOtp, loading, enterGuest } = useAuth()
 
+  const [method, setMethod] = useState<'phone' | 'email'>('phone')
   const [displayName, setDisplayName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -33,7 +34,6 @@ export default function RegisterScreen() {
   const { width } = useWindowDimensions()
   const isDesktop = width > 700
 
-  // QR states (same pattern as Login)
   const [qrRef, setQrRef] = useState('')
   const [timeLeft, setTimeLeft] = useState(30)
   const spinRef = useRef(new Animated.Value(0)).current
@@ -44,19 +44,16 @@ export default function RegisterScreen() {
 
   const generateRef = async () => {
     const ref = `register_${Date.now()}`
-    // TODO: Save to DB in production
     setQrRef(ref)
     setTimeLeft(30)
   }
 
-  // Auto-refresh QR
   useEffect(() => {
     generateRef()
     const id = setInterval(generateRef, 30000)
     return () => clearInterval(id)
   }, [])
 
-  // Countdown timer
   useEffect(() => {
     const id = setInterval(() => {
       setTimeLeft((t) => (t > 0 ? t - 1 : 0))
@@ -64,7 +61,6 @@ export default function RegisterScreen() {
     return () => clearInterval(id)
   }, [])
 
-  // Animation
   useEffect(() => {
     Animated.loop(
       Animated.timing(spinRef, {
@@ -76,7 +72,7 @@ export default function RegisterScreen() {
     ).start()
   }, [spinRef])
 
-  const handleRegister = async () => {
+  const handleEmailRegister = async () => {
     if (!displayName || !email || !password || !confirmPassword) {
       Alert.alert('Please fill in all fields')
       return
@@ -96,24 +92,74 @@ export default function RegisterScreen() {
       return
     }
 
-    if (data?.session) {
-      Alert.alert('Success', 'Account created. You are signed in.')
-    } else {
-      Alert.alert(
-        'Confirm your email',
-        'We sent a confirmation link to your inbox. Open it, then return here to log in.\n\nFor local dev you can disable email confirmation in Supabase → Authentication → Providers → Email.'
-      )
-    }
+    if (data?.session) return
+
+    Alert.alert(
+      'Account created',
+      'Sign-in session was not returned. Tap Login and sign in with the same email and password.',
+      [{ text: 'Go to Login', onPress: () => navigation.navigate('Login') }]
+    )
   }
 
   const handleLogin = () => {
     navigation.navigate('Login')
   }
 
+  const handleExplore = () => {
+    enterGuest()
+  }
+
+  const phoneForm = (
+    <PhoneAuthForm
+      mode="register"
+      loading={loading}
+      footerText="Already have an account?"
+      footerActionText="Login"
+      onFooterAction={handleLogin}
+      tertiaryActionText="Use email instead"
+      onTertiaryAction={() => setMethod('email')}
+      secondaryActionText="Explore without an account"
+      onSecondaryAction={handleExplore}
+      noGradient={isDesktop}
+      onSendCode={async ({ phone, displayName: name }) => {
+        const res = await sendPhoneOtp(phone, 'register', name)
+        if (res.error) return { error: res.error.message }
+        return { phone: res.data!.phone, phone_masked: res.data!.phone_masked }
+      }}
+      onVerifyCode={async ({ phone, token, displayName: name }) => {
+        const res = await verifyPhoneOtp(phone, token, { display_name: name })
+        if (res.error) return { error: res.error.message }
+      }}
+    />
+  )
+
+  const emailForm = (
+    <AuthForm
+      title="Create Account"
+      displayName={displayName}
+      setDisplayName={setDisplayName}
+      email={email}
+      setEmail={setEmail}
+      password={password}
+      setPassword={setPassword}
+      confirmPassword={confirmPassword}
+      setConfirmPassword={setConfirmPassword}
+      onSubmit={handleEmailRegister}
+      loading={loading}
+      footerText="Already have an account?"
+      footerActionText="Login"
+      onFooterAction={handleLogin}
+      secondaryActionText="Use phone instead"
+      onSecondaryAction={() => setMethod('phone')}
+      noGradient={isDesktop}
+    />
+  )
+
+  const form = method === 'phone' ? phoneForm : emailForm
+
   if (isDesktop) {
     return (
       <View style={styles.desktopWrapper}>
-        {/* QR Section on Left */}
         <View style={styles.qrContainer}>
           <View style={styles.qrHeader}>
             <Text style={styles.qrTitle}>Link with Mobile</Text>
@@ -149,49 +195,12 @@ export default function RegisterScreen() {
           </View>
         </View>
 
-        {/* AuthForm on Right */}
-        <View style={styles.formContainerDesktop}>
-          <AuthForm
-            title="Create Account"
-            displayName={displayName}
-            setDisplayName={setDisplayName}
-            email={email}
-            setEmail={setEmail}
-            password={password}
-            setPassword={setPassword}
-            confirmPassword={confirmPassword}
-            setConfirmPassword={setConfirmPassword}
-            onSubmit={handleRegister}
-            loading={loading}
-            footerText="Already have an account?"
-            footerActionText="Login"
-            onFooterAction={handleLogin}
-            noGradient={true}
-          />
-        </View>
+        <View style={styles.formContainerDesktop}>{form}</View>
       </View>
     )
   }
 
-  // Mobile: Just the AuthForm
-  return (
-    <AuthForm
-      title="Create Account"
-      displayName={displayName}
-      setDisplayName={setDisplayName}
-      email={email}
-      setEmail={setEmail}
-      password={password}
-      setPassword={setPassword}
-      confirmPassword={confirmPassword}
-      setConfirmPassword={setConfirmPassword}
-      onSubmit={handleRegister}
-      loading={loading}
-      footerText="Already have an account?"
-      footerActionText="Login"
-      onFooterAction={handleLogin}
-    />
-  )
+  return form
 }
 
 const styles = StyleSheet.create({

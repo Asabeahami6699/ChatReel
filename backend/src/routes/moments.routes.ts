@@ -23,6 +23,7 @@ import {
   type ReelRow,
 } from '../services/reels.service';
 import { getReelPlaybackUrl } from '../lib/reelUrls';
+import { cleanupMomentMedia } from '../services/momentStorage.service';
 
 const router = Router();
 
@@ -503,7 +504,7 @@ router.delete(
 
     const { data: moment } = await supabaseAdmin
       .from('moments')
-      .select('author_id')
+      .select('author_id, media_url, thumbnail_url')
       .eq('id', momentId)
       .maybeSingle();
 
@@ -514,6 +515,12 @@ router.delete(
 
     const { error } = await supabaseAdmin.from('moments').delete().eq('id', momentId);
     if (error) return res.status(500).json({ error: error.message });
+
+    // best-effort media cleanup (never fails the request)
+    await cleanupMomentMedia([
+      moment.media_url as string | null,
+      moment.thumbnail_url as string | null,
+    ]);
 
     return res.json({ success: true });
   })

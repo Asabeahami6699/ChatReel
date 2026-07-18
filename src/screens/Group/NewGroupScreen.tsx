@@ -12,19 +12,21 @@ import {
   ScrollView,
   FlatList,
   Modal,
-  Linking,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Portal, Snackbar } from 'react-native-paper';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { OfflineAvatar } from '../../components/OfflineAvatar';
 import { api } from '../../lib/api';
 import { uploadFromUri } from '../../lib/uploads';
+import GroupInviteShareSheet from './GroupInviteShareSheet';
 import { useAuth } from '../../hooks/useAuth';
 import { useCurrentProfileId } from '../../hooks/useCurrentProfileId';
 import { useFriendshipsRealtime } from '../../hooks/useFriendshipsRealtime';
 import { notifyRealtimeTopic } from '../../lib/realtimeHub';
+import { buildGroupInviteLink, INVITE_SCHEME } from '../../lib/groupInviteLinks';
 
 export type Friend = {
   id: string;
@@ -84,14 +86,17 @@ const useAcceptedFriends = () => {
 const NewGroupScreen = ({ navigation }: Props) => {
   const { friends, loading: friendsLoading } = useAcceptedFriends();
   const { user } = useAuth();
+  const insets = useSafeAreaInsets();
 
   const [groupName, setGroupName] = useState('');
   const [avatarUri, setAvatarUri] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
-  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [showInviteShare, setShowInviteShare] = useState(false);
   const [inviteLink, setInviteLink] = useState('');
+  const [createdGroupName, setCreatedGroupName] = useState('');
+  const [createdGroupAvatarUrl, setCreatedGroupAvatarUrl] = useState<string | null>(null);
   const [successToast, setSuccessToast] = useState<string | null>(null);
 
   const filteredFriends = useMemo(() => {
@@ -145,7 +150,7 @@ const NewGroupScreen = ({ navigation }: Props) => {
     const isSel = selectedIds.includes(item.id);
     return (
       <TouchableOpacity style={[styles.chip, isSel && styles.chipSel]} onPress={() => toggleSelect(item.id)}>
-        <Image source={{ uri: item.avatar_url || 'https://via.placeholder.com/36' }} style={styles.chipAvatar} />
+        <OfflineAvatar uri={item.avatar_url} name={item.name} size={36} style={styles.chipAvatar} />
         <View style={styles.chipInfo}>
           <Text style={[styles.chipName, isSel && styles.chipNameSel]}>{item.name}</Text>
           {item.email && <Text style={[styles.chipEmail, isSel && styles.chipEmailSel]}>{item.email}</Text>}
@@ -176,21 +181,24 @@ const NewGroupScreen = ({ navigation }: Props) => {
       notifyRealtimeTopic('groupMembers');
 
       const groupId = group.id as string;
+      let avatarUrl = '';
 
       if (avatarUri) {
-        const avatarUrl = await uploadAvatarAndGetUrl(avatarUri, groupId);
+        avatarUrl = await uploadAvatarAndGetUrl(avatarUri, groupId);
         if (avatarUrl) {
           await api.groups.update(groupId, { avatar_url: avatarUrl });
         }
       }
 
       const link = invite
-        ? `chatapp://invite/${(invite as Record<string, unknown>).token}`
-        : `chatapp://group/${groupId}`;
+        ? buildGroupInviteLink(String((invite as Record<string, unknown>).token))
+        : `${INVITE_SCHEME}://group/${groupId}`;
 
+      setCreatedGroupName(groupName.trim());
+      setCreatedGroupAvatarUrl(avatarUrl || avatarUri || null);
       setInviteLink(link);
       setSuccessToast(`Group "${groupName.trim()}" created!`);
-      setShowInviteModal(true);
+      setShowInviteShare(true);
       
       console.log('🎉 GROUP CREATION COMPLETED SUCCESSFULLY!');
       console.log('Invite Link:', link);
@@ -211,17 +219,9 @@ const NewGroupScreen = ({ navigation }: Props) => {
     }
   };
 
-  const copyLink = () => {
-    Alert.alert('Copied', 'Invite link copied to clipboard!');
-  };
-
-  const shareLink = async () => {
-    try {
-      await Linking.openURL(inviteLink);
-    } catch (error) {
-      console.error('Failed to open link:', error);
-      Alert.alert('Error', 'Could not open the invite link');
-    }
+  const closeInviteShare = () => {
+    setShowInviteShare(false);
+    navigation.goBack();
   };
 
   return (
@@ -304,61 +304,27 @@ const NewGroupScreen = ({ navigation }: Props) => {
         </TouchableOpacity>
       </View>
 
-      <Modal 
-        visible={showInviteModal} 
-        transparent 
-        animationType="fade"
-        onRequestClose={() => {
-          setShowInviteModal(false);
-          navigation.goBack();
-        }}
+      <Modal
+        visible={showInviteShare}
+        animationType="slide"
+        transparent
+        onRequestClose={closeInviteShare}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Ionicons name="checkmark-circle" size={60} color="#4CAF50" style={styles.successIcon} />
-            <Text style={styles.modalTitle}>Group Created!</Text>
-            <Text style={styles.modalDesc}>
-              Your group "{groupName}" has been created successfully.
-              Share this link to invite others:
-            </Text>
-            
-            <TouchableOpacity 
-              style={styles.linkBox} 
-              onPress={shareLink}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.linkText} numberOfLines={2}>
-                {inviteLink}
-              </Text>
-            </TouchableOpacity>
-            
-            <View style={styles.modalActions}>
-              <TouchableOpacity 
-                style={[styles.modalBtn, styles.copyBtn]} 
-                onPress={copyLink}
-              >
-                <Ionicons name="copy-outline" size={20} color="#0066cc" />
-                <Text style={styles.modalBtnText}>Copy Link</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={[styles.modalBtn, styles.shareBtn]} 
-                onPress={shareLink}
-              >
-                <Ionicons name="share-outline" size={20} color="#0066cc" />
-                <Text style={styles.modalBtnText}>Share</Text>
-              </TouchableOpacity>
-            </View>
-            
-            <TouchableOpacity 
-              style={styles.doneBtn} 
-              onPress={() => {
-                setShowInviteModal(false);
-                navigation.goBack();
-              }}
-            >
-              <Text style={styles.doneBtnText}>Done</Text>
-            </TouchableOpacity>
+        <View style={styles.shareBackdrop}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={closeInviteShare}
+          />
+          <View style={[styles.shareSheet, { paddingBottom: insets.bottom }]}>
+            {showInviteShare && (
+              <GroupInviteShareSheet
+                groupName={createdGroupName || groupName}
+                inviteLink={inviteLink}
+                avatarUrl={createdGroupAvatarUrl}
+                onClose={closeInviteShare}
+              />
+            )}
           </View>
         </View>
       </Modal>
@@ -572,96 +538,17 @@ const styles = StyleSheet.create({
     fontWeight: '700', 
     fontSize: 16 
   },
-  modalOverlay: { 
-    flex: 1, 
-    backgroundColor: 'rgba(0,0,0,0.5)', 
-    justifyContent: 'center', 
-    alignItems: 'center', 
-    padding: 20 
+  shareBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
   },
-  modalContent: { 
-    width: '100%', 
-    backgroundColor: '#fff', 
-    borderRadius: 16, 
-    padding: 24, 
-    alignItems: 'center',
-    elevation: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-  },
-  successIcon: {
-    marginBottom: 16,
-  },
-  modalTitle: { 
-    fontSize: 24, 
-    fontWeight: '700', 
-    color: '#0066cc', 
-    marginBottom: 12,
-    textAlign: 'center'
-  },
-  modalDesc: { 
-    fontSize: 15, 
-    color: '#555', 
-    textAlign: 'center', 
-    marginBottom: 20,
-    lineHeight: 22
-  },
-  linkBox: { 
-    borderWidth: 1, 
-    borderColor: '#0066cc', 
-    borderRadius: 8, 
-    padding: 12, 
-    width: '100%', 
-    marginBottom: 20,
-    backgroundColor: '#f0f8ff'
-  },
-  linkText: { 
-    color: '#0066cc', 
-    textAlign: 'center',
-    fontSize: 14,
-    fontWeight: '500'
-  },
-  modalActions: { 
-    flexDirection: 'row', 
-    marginBottom: 24,
-    gap: 12
-  },
-  modalBtn: { 
-    flexDirection: 'row', 
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#0066cc',
-    backgroundColor: '#fff'
-  },
-  copyBtn: {
-    backgroundColor: '#f0f8ff'
-  },
-  shareBtn: {
-    backgroundColor: '#e6f2ff'
-  },
-  modalBtnText: { 
-    color: '#0066cc', 
-    marginLeft: 6, 
-    fontWeight: '600',
-    fontSize: 14
-  },
-  doneBtn: { 
-    backgroundColor: '#0066cc', 
-    paddingHorizontal: 32, 
-    paddingVertical: 12, 
-    borderRadius: 8,
-    width: '100%',
-    alignItems: 'center'
-  },
-  doneBtnText: { 
-    color: '#fff', 
-    fontWeight: '700',
-    fontSize: 16
+  shareSheet: {
+    height: '78%',
+    backgroundColor: '#111',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    overflow: 'hidden',
   },
 });
 

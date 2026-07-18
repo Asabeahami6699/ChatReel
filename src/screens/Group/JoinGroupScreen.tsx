@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
+import { OfflineAvatar } from '../../components/OfflineAvatar';
 import { api } from '../../lib/api';
 import { useAuth } from '../../hooks/useAuth';
 
@@ -101,8 +102,10 @@ export default function JoinGroupScreen() {
 
           {groupInfo && (
             <View style={styles.groupCard}>
-              <Image
-                source={{ uri: groupInfo.avatar_url || 'https://via.placeholder.com/60' }}
+              <OfflineAvatar
+                uri={groupInfo.avatar_url}
+                name={groupInfo.name}
+                size={60}
                 style={styles.groupAvatar}
               />
               <View style={styles.groupInfo}>

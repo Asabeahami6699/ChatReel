@@ -22,6 +22,7 @@ import { navigateToChat } from '../../navigation/navigateToChat';
 import { useCurrentProfileId } from '../../hooks/useCurrentProfileId';
 import { useCallsFeed } from '../../hooks/useCallsFeed';
 import { CallFriendPickerSheet } from '../../components/CallFriendPickerSheet';
+import { promptSignIn } from '../../lib/requireSignedIn';
 
 type Tab = 'all' | 'missed';
 type CallSection = { title: string; data: CallHistoryItemDTO[] };
@@ -117,7 +118,7 @@ function groupCalls(calls: CallHistoryItemDTO[]): CallSection[] {
 
 export default function CallsScreen() {
   const insets = useSafeAreaInsets();
-  const { user } = useAuth();
+  const { user, isGuest, exitGuest } = useAuth();
   const myProfileId = useCurrentProfileId();
   const {
     calls,
@@ -132,6 +133,19 @@ export default function CallsScreen() {
   const [tab, setTab] = useState<Tab>('all');
   const myAuthId = user?.id ?? null;
   const [pickerOpen, setPickerOpen] = useState(false);
+
+  const requireAuth = useCallback(
+    (message?: string) => {
+      if (!isGuest) return true;
+      promptSignIn({
+        title: 'Sign in required',
+        message: message ?? 'Sign in to use calls, or continue exploring as a guest.',
+        onLogin: exitGuest,
+      });
+      return false;
+    },
+    [isGuest, exitGuest]
+  );
 
   const missedCount = useMemo(() => calls.filter(isMissedFor).length, [calls]);
 
@@ -151,6 +165,7 @@ export default function CallsScreen() {
 
   const startCallToUser = useCallback(
     async (userId: string, type: 'voice' | 'video') => {
+      if (!requireAuth('Sign in to place a call.')) return;
       if (callsEnabled === false) {
         showAppToast('Calls are not enabled on this server yet', { isError: true });
         return;
@@ -166,11 +181,12 @@ export default function CallsScreen() {
         });
       }
     },
-    [callsEnabled]
+    [callsEnabled, requireAuth]
   );
 
   const startCall = useCallback(
     async (target: CallHistoryItemDTO, type: 'voice' | 'video') => {
+      if (!requireAuth('Sign in to place a call.')) return;
       if (target.scope === 'direct') {
         const otherUserId = peerUserId(target, myAuthId);
         if (!otherUserId) {
@@ -198,11 +214,12 @@ export default function CallsScreen() {
         }
       }
     },
-    [callsEnabled, myAuthId, startCallToUser]
+    [callsEnabled, myAuthId, startCallToUser, requireAuth]
   );
 
   const openChatFor = useCallback(
     (item: CallHistoryItemDTO) => {
+      if (!requireAuth('Sign in to open chats from calls.')) return;
       const uid = peerUserId(item, myAuthId);
       if (!uid || item.scope !== 'direct') return;
       navigateToChat({
@@ -212,7 +229,7 @@ export default function CallsScreen() {
         avatarUrl: item.peer?.avatar_url ?? undefined,
       });
     },
-    [myAuthId]
+    [myAuthId, requireAuth]
   );
 
   const renderCallItem = (item: CallHistoryItemDTO) => {
@@ -438,7 +455,10 @@ export default function CallsScreen() {
       <FAB
         icon="account-multiple"
         style={[styles.fab, { bottom: insets.bottom + 20 }]}
-        onPress={() => setPickerOpen(true)}
+        onPress={() => {
+          if (!requireAuth('Sign in to call your friends.')) return;
+          setPickerOpen(true);
+        }}
         color="#fff"
       />
 

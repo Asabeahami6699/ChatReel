@@ -48,9 +48,20 @@ export async function startCallGuarded(data: {
     }
   }
 
-  const result = await api.calls.start(data);
-  if (result.waiting_on_busy) {
-    showAppToast("Ringing — they'll see call waiting and can put their other call on hold");
+  try {
+    const result = await api.calls.start(data);
+    if (result.waiting_on_busy) {
+      showAppToast("Ringing — they'll see call waiting and can put their other call on hold");
+    }
+    return result;
+  } catch (err) {
+    if (err instanceof ApiError) {
+      if (err.status === 429 || /CALL_CONCURRENCY|Too many active calls/i.test(err.message)) {
+        showAppToast('Too many active calls — end one first');
+      } else if (err.status === 503 || /LIVEKIT_CAPACITY|capacity/i.test(err.message)) {
+        showAppToast('Calling is at capacity — try again shortly');
+      }
+    }
+    throw err;
   }
-  return result;
 }

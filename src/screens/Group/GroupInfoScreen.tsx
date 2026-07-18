@@ -14,7 +14,6 @@ import {
   TextInput,
   Switch,
   Share,
-  Clipboard,
   Platform,
   RefreshControl,
 } from 'react-native';
@@ -25,11 +24,14 @@ import { Ionicons, MaterialIcons, Feather } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
 import { supabase } from '../../lib/supabase';
+import { OfflineAvatar } from '../../components/OfflineAvatar';
 import { api } from '../../lib/api';
+import { setStringAsync as copyToClipboard } from '../../lib/clipboard';
 import { uploadFromUri } from '../../lib/uploads';
 import { useAuth } from '../../hooks/useAuth';
 import { useRealtimeTopic } from '../../hooks/useRealtimeTopic';
 import { notifyRealtimeTopic } from '../../lib/realtimeHub';
+import { buildGroupInviteLink } from '../../lib/groupInviteLinks';
 import * as ImagePicker from 'expo-image-picker';
 
 // Storage keys
@@ -661,8 +663,7 @@ useEffect(() => {
       await saveToStorage(GROUP_INVITES_STORAGE_KEY, updatedInvites);
       notifyRealtimeTopic('groupInvites');
 
-      const inviteLink = `yourapp://join-group?token=${data.token}`;
-      const webInviteLink = `https://yourapp.com/join/${data.token}`;
+      const inviteLink = buildGroupInviteLink(String(data.token));
       
       setShowInviteOptions(false);
       
@@ -672,7 +673,7 @@ useEffect(() => {
         [
           {
             text: 'Share Link',
-            onPress: () => shareInviteLink(inviteLink, webInviteLink)
+            onPress: () => shareInviteLink(inviteLink)
           },
           {
             text: 'Copy Link',
@@ -692,10 +693,11 @@ useEffect(() => {
     }
   };
 
-  const shareInviteLink = async (deepLink: string, webLink: string) => {
+  const shareInviteLink = async (deepLink: string) => {
     try {
       await Share.share({
-        message: `Join my group "${groupInfo?.name}" on our app!\n\nUse this link: ${deepLink}\n\nOr visit: ${webLink}`,
+        message: `Join my group "${groupInfo?.name}"\n${deepLink}`,
+        url: Platform.OS === 'ios' ? deepLink : undefined,
         title: `Join ${groupInfo?.name}`,
       });
     } catch (error) {
@@ -704,7 +706,7 @@ useEffect(() => {
   };
 
   const copyInviteLink = async (link: string) => {
-    await Clipboard.setString(link);
+    await copyToClipboard(link);
     Alert.alert('Success', 'Invite link copied to clipboard!');
   };
 
@@ -1066,8 +1068,10 @@ useEffect(() => {
         }}
       >
         <View style={styles.memberInfo}>
-          <Image
-            source={{ uri: item.profiles?.avatar_url || 'https://via.placeholder.com/40' }}
+          <OfflineAvatar
+            uri={item.profiles?.avatar_url}
+            name={displayName}
+            size={40}
             style={styles.memberAvatar}
           />
           <View style={styles.memberDetails}>
@@ -1217,8 +1221,10 @@ useEffect(() => {
         {/* Group Header Section */}
         <View style={styles.groupHeader}>
           <View style={styles.avatarContainer}>
-            <Image
-              source={{ uri: groupInfo?.avatar_url || 'https://via.placeholder.com/60' }}
+            <OfflineAvatar
+              uri={groupInfo?.avatar_url}
+              name={groupInfo?.name}
+              size={60}
               style={styles.groupAvatar}
             />
             {isAdmin && (
@@ -1662,7 +1668,7 @@ useEffect(() => {
               style={styles.actionButton}
               onPress={() => {
                 if (selectedInvite) {
-                  const inviteLink = `yourapp://join-group?token=${selectedInvite.token}`;
+                  const inviteLink = buildGroupInviteLink(String(selectedInvite.token));
                   copyInviteLink(inviteLink);
                 }
                 setShowInviteActions(false);
@@ -1676,8 +1682,8 @@ useEffect(() => {
               style={styles.actionButton}
               onPress={() => {
                 if (selectedInvite) {
-                  const inviteLink = `yourapp://join-group?token=${selectedInvite.token}`;
-                  shareInviteLink(inviteLink, inviteLink);
+                  const inviteLink = buildGroupInviteLink(String(selectedInvite.token));
+                  shareInviteLink(inviteLink);
                 }
                 setShowInviteActions(false);
               }}

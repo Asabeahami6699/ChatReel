@@ -1,9 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Image, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useRoute } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCallRingtone } from '../../hooks/useCallRingtone';
+import { useCallRowSync } from '../../hooks/useCallRowSync';
 import { replaceWithActiveCall } from '../../navigation/rootNavigation';
 import { leaveCallScreen } from '../../navigation/callSessionNav';
 import { showAppToast } from '../../lib/appToast';
@@ -25,7 +26,6 @@ function navigateBackSafely() {
 
 export default function OutgoingCallScreen() {
   const route = useRoute<any>();
-  const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const params = (route.params ?? {}) as Partial<Params>;
@@ -45,45 +45,32 @@ export default function OutgoingCallScreen() {
     Boolean(url);
   useCallRingtone(ringActive ? 'outgoing' : null);
 
-  useEffect(() => {
-    if (!call?.id) return;
-    let mounted = true;
-
-    const poll = async () => {
-      try {
-        const { call: latest } = await api.calls.get(call.id);
-        if (!mounted) return;
-        const next = latest as CallDTO;
-        setCall(next);
-
-        if (next.status === 'accepted') {
-          replaceWithActiveCall({ call: next, token, url });
-          return;
-        }
-        if (['declined', 'missed', 'cancelled', 'ended'].includes(next.status)) {
-          showAppToast(
-            next.status === 'declined'
-              ? 'Call declined'
-              : next.status === 'missed'
-                ? 'No answer'
-                : next.status === 'cancelled'
-                  ? 'Call cancelled'
-                  : 'Call ended'
-          );
-          navigateBackSafely();
-        }
-      } catch {
-        /* transient, keep polling */
+  const onCallSync = useCallback(
+    (next: CallDTO) => {
+      setCall(next);
+      if (next.status === 'accepted') {
+        replaceWithActiveCall({ call: next, token, url });
+        return;
       }
-    };
+      if (['declined', 'missed', 'cancelled', 'ended'].includes(next.status)) {
+        showAppToast(
+          next.status === 'declined'
+            ? 'Call declined'
+            : next.status === 'missed'
+              ? 'No answer'
+              : next.status === 'cancelled'
+                ? 'Call cancelled'
+                : 'Call ended'
+        );
+        navigateBackSafely();
+      }
+    },
+    [token, url]
+  );
 
-    void poll();
-    const t = setInterval(() => void poll(), 1500);
-    return () => {
-      mounted = false;
-      clearInterval(t);
-    };
-  }, [call?.id, navigation, token, url]);
+  useCallRowSync(call?.id, onCallSync, true, {
+    fastPollMs: call?.status === 'ringing' ? 1000 : null,
+  });
 
   useEffect(() => {
     const t = setInterval(() => setElapsedSec((s) => s + 1), 1000);

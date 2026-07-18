@@ -7,9 +7,15 @@ import {
   normalizeBase64,
   STORAGE_BUCKETS,
 } from '../lib/storageBuckets';
+import { applyMediaCdnUrl } from '../lib/mediaUrls';
 import { asyncHandler, AuthedRequest, requireAuth } from '../middleware/auth';
 
 const router = Router();
+
+function publicUrlFor(path: string, bucket: string) {
+  const { data } = supabaseAdmin.storage.from(bucket).getPublicUrl(path);
+  return applyMediaCdnUrl(data.publicUrl) ?? data.publicUrl;
+}
 
 router.post(
   '/binary',
@@ -43,8 +49,7 @@ router.post(
       return res.status(500).json({ error: error.message });
     }
 
-    const { data } = supabaseAdmin.storage.from(bucket).getPublicUrl(path);
-    return res.json({ publicUrl: data.publicUrl, path });
+    return res.json({ publicUrl: publicUrlFor(path, bucket), path });
   })
 );
 
@@ -85,8 +90,10 @@ router.post(
       return res.status(500).json({ error: error.message });
     }
 
-    const { data } = supabaseAdmin.storage.from(body.bucket).getPublicUrl(body.path);
-    return res.json({ publicUrl: data.publicUrl, path: body.path });
+    return res.json({
+      publicUrl: publicUrlFor(body.path, body.bucket),
+      path: body.path,
+    });
   })
 );
 
@@ -119,8 +126,7 @@ router.get(
     const bucket = z.enum(STORAGE_BUCKETS).parse(req.query.bucket);
     const path = z.string().parse(req.query.path);
 
-    const { data } = supabaseAdmin.storage.from(bucket).getPublicUrl(path);
-    return res.json({ publicUrl: data.publicUrl });
+    return res.json({ publicUrl: publicUrlFor(path, bucket) });
   })
 );
 

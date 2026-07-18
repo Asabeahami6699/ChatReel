@@ -41,7 +41,7 @@ type ReelCommentsStore = {
     content: string,
     parentId?: string
   ) => Promise<{ comment: ReelCommentDTO | null; error: string | null }>;
-  remove: (reelId: string, commentId: string) => Promise<void>;
+  remove: (reelId: string, commentId: string) => Promise<number>;
   toggleLike: (reelId: string, commentId: string) => Promise<void>;
   setDraft: (reelId: string, draft: string) => void;
   setReplyTo: (reelId: string, commentId: string | null) => void;
@@ -139,13 +139,36 @@ export const useReelCommentsStore = create<ReelCommentsStore>((set, get) => ({
   remove: async (reelId, commentId) => {
     const slice = get().getSlice(reelId);
     const prev = slice.comments;
+    const target = prev.find((comment) => comment.id === commentId);
+    const removedIds = new Set<string>([commentId]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const comment of prev) {
+        if (comment.parent_id && removedIds.has(comment.parent_id) && !removedIds.has(comment.id)) {
+          removedIds.add(comment.id);
+          changed = true;
+        }
+      }
+    }
+    const loadedRemovedCount = prev.reduce(
+      (count, comment) => count + (removedIds.has(comment.id) ? 1 : 0),
+      0
+    );
+    const removedCount = Math.max(
+      loadedRemovedCount,
+      target ? 1 + Math.max(0, target.reply_count ?? 0) : 1
+    );
     get().patchSlice(reelId, {
-      comments: prev.filter((c) => c.id !== commentId),
+      comments: prev.filter((comment) => !removedIds.has(comment.id)),
+      replyToId: removedIds.has(slice.replyToId ?? '') ? null : slice.replyToId,
     });
     try {
       await api.reels.deleteComment(commentId);
-    } catch {
-      get().patchSlice(reelId, { comments: prev });
+      return removedCount;
+    } catch (error) {
+      get().patchSlice(reelId, { comments: prev, replyToId: slice.replyToId });
+      throw error;
     }
   },
 

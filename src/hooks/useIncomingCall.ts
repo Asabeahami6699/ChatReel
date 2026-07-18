@@ -1,61 +1,91 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, Platform } from 'react-native';
 import { api, type CallDTO } from '../lib/api';
+import {
+  clearPendingIncomingCallId,
+  peekPendingIncomingCallId,
+  subscribeIncomingCallResync,
+} from '../lib/callIncomingBridge';
 import { useAuth } from './useAuth';
 import { useRealtimeTopic } from './useRealtimeTopic';
 
-/** Poll interval when healthy — incoming calls rarely need sub-second checks. */
-const POLL_MS = 5_000;
-const MIN_GAP_MS = 2_500;
+/** Rare fallback — Realtime + push tap / focus are the primary paths. */
+const FALLBACK_POLL_MS = 45_000;
+const MIN_GAP_MS = 400;
 const MAX_BACKOFF_MS = 60_000;
+
+function isValidIncoming(ring: CallDTO, myAuthId: string): boolean {
+  const age = Date.now() - new Date(ring.created_at).getTime();
+  const validDirect =
+    ring.scope === 'direct' &&
+    ring.callee_id === myAuthId &&
+    ring.caller_id !== myAuthId;
+  const validGroup = ring.scope === 'group' && ring.caller_id !== myAuthId;
+  const validTarget = validDirect || validGroup;
+  const isActiveInvite =
+    ring.status === 'accepted' && ring.caller_id !== myAuthId;
+  return (
+    validTarget && (ring.status === 'ringing' ? age < 60_000 : isActiveInvite)
+  );
+}
 
 /**
  * Returns the currently-ringing incoming call addressed to me, if any.
- * Polls `/api/calls/incoming` with backoff and pauses when the tab is hidden.
+ * Realtime-first; HTTP only for fetch/catch-up and a rare fallback poll.
  */
 export function useIncomingCall(): CallDTO | null {
   const { user } = useAuth();
   const myAuthId = user?.id ?? null;
   const [incoming, setIncoming] = useState<CallDTO | null>(null);
-  const backoffRef = useRef(POLL_MS);
+  const backoffRef = useRef(FALLBACK_POLL_MS);
   const lastPollAtRef = useRef(0);
 
-  const fetchIncoming = useCallback(async (): Promise<boolean> => {
+  const applyCall = useCallback(
+    (ring: CallDTO | null) => {
+      if (!myAuthId || !ring) {
+        setIncoming(null);
+        return;
+      }
+      setIncoming(isValidIncoming(ring, myAuthId) ? ring : null);
+    },
+    [myAuthId]
+  );
+
+  const fetchIncoming = useCallback(async (force = false): Promise<boolean> => {
     if (!myAuthId) {
       setIncoming(null);
       return true;
     }
 
     const now = Date.now();
-    if (now - lastPollAtRef.current < MIN_GAP_MS) return true;
+    if (!force && now - lastPollAtRef.current < MIN_GAP_MS) return true;
     lastPollAtRef.current = now;
 
     try {
-      const { call: ring } = await api.calls.incoming();
-      if (!ring) {
-        setIncoming(null);
-        return true;
+      const pendingId = peekPendingIncomingCallId();
+      if (pendingId) {
+        try {
+          const { call } = await api.calls.get(pendingId);
+          const c = call as CallDTO;
+          if (isValidIncoming(c, myAuthId)) {
+            clearPendingIncomingCallId(pendingId);
+            setIncoming(c);
+            return true;
+          }
+          // Stale / ended invite — drop so we don't retry forever.
+          clearPendingIncomingCallId(pendingId);
+        } catch {
+          /* keep pending for next attempt; fall through to /incoming */
+        }
       }
-      const age = Date.now() - new Date(ring.created_at).getTime();
-      const validDirect =
-        ring.scope === 'direct' &&
-        ring.callee_id === myAuthId &&
-        ring.caller_id !== myAuthId;
-      const validGroup = ring.scope === 'group' && ring.caller_id !== myAuthId;
-      const validTarget = validDirect || validGroup;
-      // Ringing calls: short window. Mid-call invites on accepted calls: always show.
-      const isActiveInvite =
-        ring.status === 'accepted' && ring.caller_id !== myAuthId;
-      setIncoming(
-        validTarget && (ring.status === 'ringing' ? age < 60_000 : isActiveInvite)
-          ? ring
-          : null
-      );
+
+      const { call: ring } = await api.calls.incoming();
+      applyCall(ring ?? null);
       return true;
     } catch {
       return false;
     }
-  }, [myAuthId]);
+  }, [myAuthId, applyCall]);
 
   useEffect(() => {
     if (!myAuthId) return;
@@ -77,14 +107,14 @@ export function useIncomingCall(): CallDTO | null {
       const inactive = AppState.currentState !== 'active';
 
       if (hiddenOnWeb || inactive) {
-        schedule(10_000);
+        schedule(FALLBACK_POLL_MS);
         return;
       }
 
       const ok = await fetchIncoming();
       if (ok) {
-        backoffRef.current = POLL_MS;
-        schedule(POLL_MS);
+        backoffRef.current = FALLBACK_POLL_MS;
+        schedule(FALLBACK_POLL_MS);
       } else {
         backoffRef.current = Math.min(backoffRef.current * 2, MAX_BACKOFF_MS);
         schedule(backoffRef.current);
@@ -96,21 +126,28 @@ export function useIncomingCall(): CallDTO | null {
     const onAppState = (state: string) => {
       if (state === 'active' && !cancelled) {
         clearTimeout(timer);
-        backoffRef.current = POLL_MS;
+        backoffRef.current = FALLBACK_POLL_MS;
+        lastPollAtRef.current = 0;
         void tick();
       }
     };
     const sub = AppState.addEventListener('change', onAppState);
+    const unsubBridge = subscribeIncomingCallResync(() => {
+      lastPollAtRef.current = 0;
+      void fetchIncoming(true);
+    });
 
     return () => {
       cancelled = true;
       clearTimeout(timer);
       sub.remove();
+      unsubBridge();
     };
   }, [myAuthId, fetchIncoming]);
 
   const onRealtimeCalls = useCallback(() => {
-    void fetchIncoming();
+    lastPollAtRef.current = 0;
+    void fetchIncoming(true);
   }, [fetchIncoming]);
 
   useRealtimeTopic('calls', onRealtimeCalls);

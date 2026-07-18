@@ -16,28 +16,7 @@ import {
 } from './reelFeedRowUtils';
 import { ReelEndScreen } from './ReelEndScreen';
 import { ReelVideoTapLayer } from './ReelVideoTapLayer';
-
-function ActionIcon({
-  name,
-  size = 28,
-  color = '#fff',
-}: {
-  name: keyof typeof Ionicons.glyphMap;
-  size?: number;
-  color?: string;
-}) {
-  return (
-    <View style={[styles.actionIcon3d, { width: size + 6, height: size + 6 }]}>
-      <Ionicons
-        name={name}
-        size={size}
-        color="rgba(0,0,0,0.55)"
-        style={styles.actionIconDepth}
-      />
-      <Ionicons name={name} size={size} color={color} style={styles.actionIconGlyph} />
-    </View>
-  );
-}
+import { ReelActionIcon } from './ReelActionIcon';
 
 export type ReelFeedRowProps = {
   item: ReelDTO;
@@ -239,7 +218,7 @@ function ReelFeedRowComponent({
           </TouchableOpacity>
         </View>
         <TouchableOpacity style={styles.actionButton} onPress={() => onToggleLike(item)}>
-          <ActionIcon
+          <ReelActionIcon
             name="heart"
             size={36}
             color={isLiked ? REEL_ACCENT : '#fff'}
@@ -249,23 +228,23 @@ function ReelFeedRowComponent({
           </Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.actionButton} onPress={() => onOpenComments(item)}>
-          <ActionIcon name="chatbubble-ellipses" size={34} />
+          <ReelActionIcon name="chatbubble-ellipses" size={34} />
           <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>
             {formatReelCount(item.comment_count)}
           </Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.actionButton} onPress={() => onOpenShare(item)}>
-          <ActionIcon name="paper-plane" size={32} />
+          <ReelActionIcon name="paper-plane" size={32} />
           <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>Share</Text>
         </TouchableOpacity>
         {myProfileId && item.author_id !== myProfileId ? (
           <TouchableOpacity style={styles.actionButton} onPress={() => onOpenGift(item)}>
-            <ActionIcon name="gift" size={30} color="#fff" />
+            <ReelActionIcon name="gift" size={30} color="#fff" />
             <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>Gift</Text>
           </TouchableOpacity>
         ) : null}
         <TouchableOpacity style={styles.actionButton}>
-          <ActionIcon name="eye" size={30} />
+          <ReelActionIcon name="eye" size={30} />
           <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>
             {formatReelCount(item.view_count)}
           </Text>
@@ -366,20 +345,6 @@ const styles = StyleSheet.create({
     paddingRight: 4,
   },
   actionButton: { alignItems: 'center', gap: 1, minWidth: 48 },
-  actionIcon3d: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  actionIconDepth: {
-    position: 'absolute',
-    top: 2,
-    left: 1,
-  },
-  actionIconGlyph: {
-    textShadowColor: 'rgba(0,0,0,0.75)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
-  },
   actionText: {
     color: '#fff',
     fontSize: 12,

@@ -5,6 +5,7 @@ import { useWindowDimensions } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
 import QRCode from 'react-native-qrcode-svg'
 import AuthForm from '../../components/AuthForm'
+import PhoneAuthForm from '../../components/PhoneAuthForm'
 import { useAuth } from '../../hooks/useAuth'
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack'
 import type { AuthStackParamList } from '../../navigation/AuthNavigator'
@@ -14,15 +15,15 @@ type LoginNavProp = NativeStackNavigationProp<AuthStackParamList, 'Login'>
 
 export default function LoginScreen() {
   const navigation = useNavigation<LoginNavProp>()
-  const { signIn, loading } = useAuth()
+  const { signIn, sendPhoneOtp, verifyPhoneOtp, loading, enterGuest } = useAuth()
 
+  const [method, setMethod] = useState<'phone' | 'email'>('phone')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
 
   const { width } = useWindowDimensions()
   const isDesktop = width > 700
 
-  // QR states for desktop login flow (adapted from QRCodeScreen)
   const [qrRef, setQrRef] = useState('')
   const [timeLeft, setTimeLeft] = useState(30)
   const spinRef = React.useRef(new Animated.Value(0)).current
@@ -33,28 +34,23 @@ export default function LoginScreen() {
 
   const generateRef = async () => {
     const ref = `login_${Date.now()}`
-    // TODO: In production, insert into a login_sessions table for verification on mobile scan
-    // For now, mock without DB
     setQrRef(ref)
     setTimeLeft(30)
   }
 
-  // Auto refresh
   React.useEffect(() => {
     generateRef()
     const id = setInterval(generateRef, 30000)
     return () => clearInterval(id)
   }, [])
 
-  // Countdown
   React.useEffect(() => {
     const id = setInterval(() => {
-      setTimeLeft(t => t > 0 ? t - 1 : 0)
+      setTimeLeft((t) => (t > 0 ? t - 1 : 0))
     }, 1000)
     return () => clearInterval(id)
   }, [])
 
-  // Animation
   React.useEffect(() => {
     Animated.loop(
       Animated.timing(spinRef, {
@@ -66,12 +62,11 @@ export default function LoginScreen() {
     ).start()
   }, [spinRef])
 
-  const handleLogin = async () => {
+  const handleEmailLogin = async () => {
     if (!email || !password) {
       Alert.alert('Please fill in all fields')
       return
     }
-
     const { error } = await signIn(email.trim(), password)
     if (error) Alert.alert('Login failed', error.message)
   }
@@ -80,10 +75,57 @@ export default function LoginScreen() {
     navigation.navigate('Register')
   }
 
+  const handleExplore = () => {
+    enterGuest()
+  }
+
+  const phoneForm = (
+    <PhoneAuthForm
+      mode="login"
+      loading={loading}
+      footerText="Don't have an account?"
+      footerActionText="Register"
+      onFooterAction={handleSignUp}
+      tertiaryActionText="Use email instead"
+      onTertiaryAction={() => setMethod('email')}
+      secondaryActionText="Explore without an account"
+      onSecondaryAction={handleExplore}
+      noGradient={isDesktop}
+      onSendCode={async ({ phone }) => {
+        const res = await sendPhoneOtp(phone, 'login')
+        if (res.error) return { error: res.error.message }
+        return { phone: res.data!.phone, phone_masked: res.data!.phone_masked }
+      }}
+      onVerifyCode={async ({ phone, token }) => {
+        const res = await verifyPhoneOtp(phone, token)
+        if (res.error) return { error: res.error.message }
+      }}
+    />
+  )
+
+  const emailForm = (
+    <AuthForm
+      title="Login"
+      email={email}
+      password={password}
+      setEmail={setEmail}
+      setPassword={setPassword}
+      onSubmit={handleEmailLogin}
+      loading={loading}
+      footerText="Don't have an account?"
+      footerActionText="Register"
+      onFooterAction={handleSignUp}
+      secondaryActionText="Use phone instead"
+      onSecondaryAction={() => setMethod('phone')}
+      noGradient={isDesktop}
+    />
+  )
+
+  const form = method === 'phone' ? phoneForm : emailForm
+
   if (isDesktop) {
     return (
       <View style={styles.desktopWrapper}>
-        {/* QR Section on Left */}
         <View style={styles.qrContainer}>
           <View style={styles.qrHeader}>
             <Text style={styles.qrTitle}>Link with Mobile</Text>
@@ -119,41 +161,12 @@ export default function LoginScreen() {
           </View>
         </View>
 
-        {/* AuthForm on Right */}
-        <View style={styles.formContainerDesktop}>
-          <AuthForm
-            title="Login"
-            email={email}
-            password={password}
-            setEmail={setEmail}
-            setPassword={setPassword}
-            onSubmit={handleLogin}
-            loading={loading}
-            footerText="Don't have an account?"
-            footerActionText="Register"
-            onFooterAction={handleSignUp}
-            noGradient={true}
-          />
-        </View>
+        <View style={styles.formContainerDesktop}>{form}</View>
       </View>
     )
   }
 
-  // Mobile: Just the AuthForm
-  return (
-    <AuthForm
-      title="Login"
-      email={email}
-      password={password}
-      setEmail={setEmail}
-      setPassword={setPassword}
-      onSubmit={handleLogin}
-      loading={loading}
-      footerText="Don't have an account?"
-      footerActionText="Register"
-      onFooterAction={handleSignUp}
-    />
-  )
+  return form
 }
 
 const styles = StyleSheet.create({

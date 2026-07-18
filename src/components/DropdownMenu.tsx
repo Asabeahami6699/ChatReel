@@ -12,11 +12,13 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import { OfflineAvatar } from './OfflineAvatar';
 import { api } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
 import { useRealtimeTopic } from '../hooks/useRealtimeTopic';
 import Portal from './Portal';
 import { USE_NATIVE_DRIVER } from '../lib/animation';
+import { promptSignIn } from '../lib/requireSignedIn';
 
 interface DropdownMenuProps {
   triggerIcon?: 'ellipsis-horizontal' | 'ellipsis-vertical';
@@ -31,7 +33,7 @@ interface Profile {
 export default function DropdownMenu({ triggerIcon = 'ellipsis-vertical' }: DropdownMenuProps) {
   const [visible, setVisible] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
-  const { user, signOut } = useAuth();
+  const { user, signOut, isGuest, exitGuest } = useAuth();
   const navigation = useNavigation<any>(); // Using any for now, adjust later based on type
 
   const scaleAnim = useRef(new Animated.Value(0.8)).current;
@@ -98,23 +100,49 @@ export default function DropdownMenu({ triggerIcon = 'ellipsis-vertical' }: Drop
     }
   };
 
-  const menuItems = [
-    { title: 'Profile', icon: 'person-outline', onPress: () => navigation.navigate('Profile') },
-    { title: 'New Group', icon: 'people-outline', onPress: () => navigation.navigate('NewGroup') },
-    { title: 'Settings', icon: 'settings-outline', onPress: () => navigation.navigate('Settings') },
-    { title: 'Invite a Friend', icon: 'share-social-outline', onPress: () => navigation.navigate('Invite') },
-    { title: 'My QR Code', icon: 'qr-code-outline', onPress: () => navigation.navigate('QRCode') },
-    { title: 'Link a Device', icon: 'phone-portrait-outline', onPress: () => navigation.navigate('QRScanner') },
-    {
-      title: 'Sign Out',
-      icon: 'log-out-outline',
-      danger: true,
-      onPress: async () => {
-        await signOut();
-        setVisible(false);
-      },
-    },
-  ];
+  const requestLogin = (action: string) => {
+    closeMenu();
+    promptSignIn({
+      title: 'Sign in required',
+      message: `Sign in to ${action.toLowerCase()}, or continue exploring as a guest.`,
+      onLogin: exitGuest,
+    });
+  };
+
+  const menuItems = isGuest
+    ? [
+        { title: 'Profile', icon: 'person-outline', onPress: () => requestLogin('open your profile') },
+        { title: 'New Group', icon: 'people-outline', onPress: () => requestLogin('create a group') },
+        { title: 'Settings', icon: 'settings-outline', onPress: () => requestLogin('open settings') },
+        { title: 'Invite a Friend', icon: 'share-social-outline', onPress: () => requestLogin('invite friends') },
+        { title: 'My QR Code', icon: 'qr-code-outline', onPress: () => requestLogin('view your QR code') },
+        { title: 'Link a Device', icon: 'phone-portrait-outline', onPress: () => requestLogin('link a device') },
+        {
+          title: 'Sign in',
+          icon: 'log-in-outline',
+          onPress: () => {
+            closeMenu();
+            exitGuest();
+          },
+        },
+      ]
+    : [
+        { title: 'Profile', icon: 'person-outline', onPress: () => navigation.navigate('Profile') },
+        { title: 'New Group', icon: 'people-outline', onPress: () => navigation.navigate('NewGroup') },
+        { title: 'Settings', icon: 'settings-outline', onPress: () => navigation.navigate('Settings') },
+        { title: 'Invite a Friend', icon: 'share-social-outline', onPress: () => navigation.navigate('Invite') },
+        { title: 'My QR Code', icon: 'qr-code-outline', onPress: () => navigation.navigate('QRCode') },
+        { title: 'Link a Device', icon: 'phone-portrait-outline', onPress: () => navigation.navigate('QRScanner') },
+        {
+          title: 'Sign Out',
+          icon: 'log-out-outline',
+          danger: true,
+          onPress: async () => {
+            await signOut();
+            setVisible(false);
+          },
+        },
+      ];
 
   return (
     <>
@@ -139,12 +167,11 @@ export default function DropdownMenu({ triggerIcon = 'ellipsis-vertical' }: Drop
             >
               {/* User Info */}
               <View style={styles.userInfo}>
-                <Image
-                  source={{
-                    uri: profile?.avatar_url || 'https://via.placeholder.com/60?text=User',
-                  }}
+                <OfflineAvatar
+                  uri={profile?.avatar_url}
+                  name={profile?.display_name || 'User'}
+                  size={60}
                   style={styles.avatar}
-                  defaultSource={{ uri: 'https://via.placeholder.com/60?text=User' }}
                 />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.displayName} numberOfLines={1}>

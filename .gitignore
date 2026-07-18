@@ -42,6 +42,10 @@ yarn-error.*
 backend/.env
 backend/dist
 
+# Android signing credentials (keep secret, never commit)
+credentials.json
+*.keystore
+
 # typescript
 *.tsbuildinfo
 

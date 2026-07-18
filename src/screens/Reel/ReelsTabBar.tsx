@@ -13,6 +13,7 @@ import {
 } from '../../lib/reelInboxPrefetch';
 import { REEL_TAB_BAR_HEIGHT, REEL_PHONE_MAX_WIDTH } from './reelVideoLayout';
 import { REEL_ACCENT } from './reelTheme';
+import { useAuth } from '../../hooks/useAuth';
 
 const TAB_META: Record<
   keyof ReelsTabParamList,
@@ -32,6 +33,11 @@ const TAB_ORDER: (keyof ReelsTabParamList | 'upload')[] = [
   'ReelAccount',
 ];
 
+const GUEST_TAB_ORDER: (keyof ReelsTabParamList | 'signIn')[] = [
+  'ReelHome',
+  'ReelSearch',
+  'signIn',
+];
 export const DESKTOP_SIDEBAR_EXPANDED = 160;
 export const DESKTOP_SIDEBAR_COLLAPSED = 56;
 
@@ -51,6 +57,7 @@ type ReelsTabBarProps = BottomTabBarProps & {
   onFeedModeChange?: (mode: 'forYou' | 'following') => void;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
+  guestMode?: boolean;
 };
 
 export default function ReelsTabBar({
@@ -60,23 +67,44 @@ export default function ReelsTabBar({
   onFeedModeChange,
   collapsed = false,
   onToggleCollapse,
+  guestMode = false,
 }: ReelsTabBarProps) {
   const insets = useSafeAreaInsets();
   const isDesktop = useIsDesktop();
   const sidebarW = collapsed ? DESKTOP_SIDEBAR_COLLAPSED : DESKTOP_SIDEBAR_EXPANDED;
   const [inboxUnread, setInboxUnread] = useState(0);
+  const { exitGuest } = useAuth();
 
   useEffect(() => {
+    if (guestMode) return;
     void scheduleReelInboxPrefetch(0).then(() => setInboxUnread(getReelInboxUnreadCount()));
     return subscribeReelInbox(() => setInboxUnread(getReelInboxUnreadCount()));
-  }, []);
+  }, [guestMode]);
 
   const openUpload = () => {
     openPostReelCompose();
     if (rootNavigationRef.isReady()) rootNavigationRef.navigate('PostReel');
   };
 
-  const items = TAB_ORDER.map((key) => {
+  const order = guestMode ? GUEST_TAB_ORDER : TAB_ORDER;
+  const items = order.map((key) => {
+    if (key === 'signIn') {
+      return (
+        <TouchableOpacity
+          key="signIn"
+          style={isDesktop ? [dk.item, { width: sidebarW }] : mobileS.item}
+          onPress={() => exitGuest()}
+          activeOpacity={0.85}
+        >
+          <View style={mobileS.iconWrap}>
+            <Ionicons name="log-in-outline" size={isDesktop ? 22 : 24} color="#fff" />
+          </View>
+          {isDesktop && !collapsed && <Text style={dk.label}>Sign in</Text>}
+          {!isDesktop && <Text style={mobileS.label}>Sign in</Text>}
+        </TouchableOpacity>
+      );
+    }
+
     if (key === 'upload') {
       return (
         <TouchableOpacity
@@ -98,7 +126,7 @@ export default function ReelsTabBar({
     const route = state.routes[routeIndex];
     const meta = TAB_META[key];
     const isFocused = state.index === routeIndex;
-    const showInboxBadge = key === 'ReelInbox' && inboxUnread > 0 && !isFocused;
+    const showInboxBadge = !guestMode && key === 'ReelInbox' && inboxUnread > 0 && !isFocused;
 
     return (
       <TouchableOpacity

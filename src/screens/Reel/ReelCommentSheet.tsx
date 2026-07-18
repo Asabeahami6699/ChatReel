@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -14,14 +14,17 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useReelComments } from '../../hooks/useReelComments';
-import type { ReelCommentDTO } from '../../lib/api';
+import { useCurrentProfileId } from '../../hooks/useCurrentProfileId';
+import { ApiError, type ReelCommentDTO } from '../../lib/api';
+import { showAppToast } from '../../lib/appToast';
 import { REEL_ACCENT } from './reelTheme';
 
 interface Props {
   reelId: string;
+  reelAuthorId: string;
   onClose: () => void;
   onCommentAdded?: () => void;
-  onCommentRemoved?: () => void;
+  onCommentRemoved?: (removedCount: number) => void;
 }
 
 function timeAgo(iso: string): string {
@@ -48,10 +51,14 @@ type CommentRow =
 
 export default function ReelCommentSheet({
   reelId,
+  reelAuthorId,
   onClose,
   onCommentAdded,
   onCommentRemoved,
 }: Props) {
+  const currentProfileId = useCurrentProfileId();
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const {
     comments,
     loading,
@@ -108,18 +115,21 @@ export default function ReelCommentSheet({
     }
   };
 
-  const askDelete = (commentId: string) => {
-    Alert.alert('Delete comment?', '', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          await remove(commentId);
-          onCommentRemoved?.();
-        },
-      },
-    ]);
+  const confirmDelete = async () => {
+    if (!pendingDeleteId || deleting) return;
+    const commentId = pendingDeleteId;
+    setDeleting(true);
+    try {
+      const removedCount = await remove(commentId);
+      setPendingDeleteId(null);
+      onCommentRemoved?.(removedCount);
+      showAppToast('Comment deleted');
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : 'Could not delete comment';
+      showAppToast(message, { isError: true });
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const renderRow = ({ item }: { item: CommentRow }) => {
@@ -127,9 +137,16 @@ export default function ReelCommentSheet({
     const avatar = c.author?.avatar_url;
     const name = authorName(c);
     const isReply = item.kind === 'reply';
+    const canDelete =
+      Boolean(currentProfileId) &&
+      (c.user_id === currentProfileId || reelAuthorId === currentProfileId);
 
     return (
-      <TouchableOpacity onLongPress={() => askDelete(c.id)} delayLongPress={500} activeOpacity={0.85}>
+      <TouchableOpacity
+        onLongPress={canDelete ? () => setPendingDeleteId(c.id) : undefined}
+        delayLongPress={500}
+        activeOpacity={0.85}
+      >
         <View style={[styles.commentItem, isReply && styles.replyItem]}>
           {avatar ? (
             <Image source={{ uri: avatar }} style={[styles.commentAvatar, isReply && styles.replyAvatar]} />
@@ -254,6 +271,46 @@ export default function ReelCommentSheet({
           </Text>
         </TouchableOpacity>
       </View>
+
+      {pendingDeleteId && (
+        <View style={styles.deleteConfirmLayer}>
+          <TouchableOpacity
+            style={styles.deleteConfirmBackdrop}
+            activeOpacity={1}
+            onPress={() => {
+              if (!deleting) setPendingDeleteId(null);
+            }}
+          />
+          <View style={styles.deleteConfirmToast}>
+            <View style={styles.deleteConfirmCopy}>
+              <Text style={styles.deleteConfirmTitle}>Delete comment?</Text>
+              <Text style={styles.deleteConfirmMessage}>
+                Replies to this comment will also be deleted.
+              </Text>
+            </View>
+            <View style={styles.deleteConfirmActions}>
+              <TouchableOpacity
+                style={styles.deleteCancelButton}
+                disabled={deleting}
+                onPress={() => setPendingDeleteId(null)}
+              >
+                <Text style={styles.deleteCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.deleteButton}
+                disabled={deleting}
+                onPress={() => void confirmDelete()}
+              >
+                {deleting ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.deleteButtonText}>Delete</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
     </KeyboardAvoidingView>
   );
 }
@@ -278,8 +335,6 @@ const styles = StyleSheet.create({
   },
   title: { color: '#fff', fontSize: 18, fontWeight: '600' },
   commentList: { flex: 1, paddingHorizontal: 16 },
-  commentItem: { flexDirection: 'row', marginVertical: 12 },
-  replyItem: { marginLeft: 28, marginVertical: 6 },
   commentItem: { flexDirection: 'row', marginVertical: 12, alignItems: 'flex-start' },
   replyItem: { marginLeft: 28, marginVertical: 6 },
   commentAvatar: { width: 36, height: 36, borderRadius: 18, marginRight: 12 },
@@ -337,4 +392,49 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 6,
   },
+  deleteConfirmLayer: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 100,
+    elevation: 100,
+    justifyContent: 'flex-end',
+  },
+  deleteConfirmBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+  },
+  deleteConfirmToast: {
+    marginHorizontal: 16,
+    marginBottom: 16,
+    padding: 14,
+    borderRadius: 16,
+    backgroundColor: '#1c1c1e',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#3a3a3c',
+  },
+  deleteConfirmCopy: { marginBottom: 12 },
+  deleteConfirmTitle: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  deleteConfirmMessage: { color: '#bbb', fontSize: 13, marginTop: 3 },
+  deleteConfirmActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+  },
+  deleteCancelButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 10,
+    backgroundColor: '#2c2c2e',
+  },
+  deleteCancelText: { color: '#ddd', fontSize: 13, fontWeight: '700' },
+  deleteButton: {
+    minWidth: 72,
+    minHeight: 36,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#dc2626',
+  },
+  deleteButtonText: { color: '#fff', fontSize: 13, fontWeight: '800' },
 });

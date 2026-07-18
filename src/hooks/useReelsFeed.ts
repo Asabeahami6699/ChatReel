@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
+import { AppState, type AppStateStatus } from 'react-native';
 import { ApiError, api, type ReelDTO } from '../lib/api';
 import {
   getReelsFeedCache,
@@ -7,7 +8,14 @@ import {
 } from '../lib/reelsFeedPrefetch';
 import { useRealtimeTopic } from './useRealtimeTopic';
 
-type FeedSource = 'feed' | 'following' | 'me' | { user: string };
+type FeedSource = 'feed' | 'public' | 'following' | 'me' | { user: string };
+
+type UseReelsFeedOptions = {
+  /** When true, soft-poll for newly approved reels (realtime is unreliable on web). */
+  active?: boolean;
+  /** Insert new reels after this index so the active video does not jump. */
+  insertAfterIndexRef?: MutableRefObject<number>;
+};
 
 type State = {
   reels: ReelDTO[];
@@ -20,11 +28,14 @@ type State = {
 };
 
 // Load enough reels up front so the user isn't blocked waiting for the next page.
-// 50 matches the target UX: initial feed opens quickly, then we fetch more near the end.
-const PAGE_SIZE = 50;
+// Backend caps at 30; keep request aligned so pagination cursors stay consistent.
+const PAGE_SIZE = 30;
+/** Soft poll so approved posts appear without hard refresh when realtime is down. */
+const FEED_POLL_MS = 8_000;
 
 function cacheKeyForSource(source: FeedSource): ReelsFeedCacheKey | null {
   if (source === 'feed') return 'feed';
+  if (source === 'public') return 'public';
   if (source === 'following') return 'following';
   return null;
 }
@@ -58,22 +69,27 @@ function initialStateForSource(source: FeedSource): State {
  * Backing source for the vertical reels feed. Handles initial load,
  * pull-to-refresh, infinite scroll, and live updates via the realtime hub.
  *
- * Realtime strategy: when reels / reel_likes / reel_comments change, we
- * incrementally refresh the *first page* (cheap) and merge so the user's
- * scroll position isn't lost. Likes/comments fired from outside still reflect.
+ * Live strategy: soft-inject newly approved reels (poll + realtime) without
+ * reshuffling the current playlist, so viewers don't need a hard refresh.
  */
-export function useReelsFeed(source: FeedSource = 'feed') {
+export function useReelsFeed(source: FeedSource = 'feed', options: UseReelsFeedOptions = {}) {
+  const { active = true, insertAfterIndexRef } = options;
   const sourceKey = typeof source === 'object' ? source.user : source;
   const [state, setState] = useState<State>(() => initialStateForSource(source));
 
   const reelsRef = useRef<ReelDTO[]>([]);
   reelsRef.current = state.reels;
   const syncingRef = useRef(false);
+  const softSyncingRef = useRef(false);
+  const insertAfterRef = insertAfterIndexRef;
 
   const fetchPage = useCallback(
     async (cursor: string | null) => {
       if (source === 'feed') {
         return api.reels.feed({ cursor: cursor ?? undefined, limit: PAGE_SIZE });
+      }
+      if (source === 'public') {
+        return api.reels.publicFeed({ cursor: cursor ?? undefined, limit: PAGE_SIZE });
       }
       if (source === 'following') {
         return api.reels.followingFeed({ cursor: cursor ?? undefined, limit: PAGE_SIZE });
@@ -173,39 +189,79 @@ export function useReelsFeed(source: FeedSource = 'feed') {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchPage, state.cursor]);
 
-  /** Merge first-page results into existing list, preserving scroll order. */
-  const reconcileFirstPage = useCallback(async () => {
+  /**
+   * Soft live update: prepend only *new* approved reels and patch counts.
+   * Does not reshuffle the playlist (avoids jumpiness with random ranking).
+   */
+  const softInjectNewReels = useCallback(async () => {
+    if (softSyncingRef.current) return;
+    softSyncingRef.current = true;
     try {
       const { reels: latest } = await fetchPage(null);
       setState((s) => {
-        const byId = new Map(s.reels.map((r) => [r.id, r]));
-        const latestIds = new Set(latest.map((r) => r.id));
-        const tail = s.reels.filter((r) => !latestIds.has(r.id));
-        const head = latest.map((fresh) => {
-          const prev = byId.get(fresh.id);
-          if (!prev) return fresh;
-          if (
-            prev.like_count === fresh.like_count &&
-            prev.comment_count === fresh.comment_count &&
-            prev.view_count === fresh.view_count &&
-            prev.liked_by_me === fresh.liked_by_me &&
-            prev.caption === fresh.caption
-          ) {
-            return prev;
+        if (s.reels.length === 0) {
+          const key = cacheKeyForSource(source);
+          if (key && latest.length > 0) {
+            upsertReelsFeedCache(key, latest, s.cursor);
           }
-          return { ...prev, ...fresh };
+          return { ...s, reels: latest, loading: false, error: null };
+        }
+
+        const byId = new Map(s.reels.map((r) => [r.id, r]));
+        const newcomers = latest.filter((r) => !byId.has(r.id));
+        let changed = newcomers.length > 0;
+
+        const patched = s.reels.map((r) => {
+          const fresh = latest.find((x) => x.id === r.id);
+          if (!fresh) return r;
+          if (
+            r.like_count === fresh.like_count &&
+            r.comment_count === fresh.comment_count &&
+            r.view_count === fresh.view_count &&
+            r.liked_by_me === fresh.liked_by_me &&
+            r.moderation_status === fresh.moderation_status &&
+            r.caption === fresh.caption
+          ) {
+            return r;
+          }
+          changed = true;
+          return { ...r, ...fresh };
         });
-        return { ...s, reels: [...head, ...tail] };
+
+        if (!changed) return s;
+
+        // Insert after the reel currently on screen so playback index stays valid.
+        const after = Math.max(
+          0,
+          Math.min(insertAfterRef?.current ?? 0, Math.max(0, patched.length - 1))
+        );
+        const nextReels =
+          newcomers.length > 0
+            ? [
+                ...patched.slice(0, after + 1),
+                ...newcomers,
+                ...patched.slice(after + 1),
+              ].filter((r, idx, arr) => arr.findIndex((x) => x.id === r.id) === idx)
+            : patched;
+
+        const key = cacheKeyForSource(source);
+        if (key) {
+          upsertReelsFeedCache(key, nextReels, s.cursor);
+        }
+        return { ...s, reels: nextReels };
       });
     } catch {
-      /* silent */
+      /* silent — next poll / focus will retry */
+    } finally {
+      softSyncingRef.current = false;
     }
-  }, [fetchPage]);
+  }, [fetchPage, source, insertAfterRef]);
 
   /**
    * Realtime counts sync for visible reels only (debounced, capped batch size).
    */
   const syncLoadedReels = useCallback(async () => {
+    if (source === 'public') return;
     if (syncingRef.current) return;
     const current = reelsRef.current;
     if (current.length === 0) return;
@@ -241,7 +297,7 @@ export function useReelsFeed(source: FeedSource = 'feed') {
     } finally {
       syncingRef.current = false;
     }
-  }, []);
+  }, [sourceKey]);
 
   const debouncedSyncRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scheduleSyncLoadedReels = useCallback(() => {
@@ -290,17 +346,53 @@ export function useReelsFeed(source: FeedSource = 'feed') {
     void loadInitial();
   }, [sourceKey, loadInitial, source]);
 
-  // New/deleted reels: reconcile ordering with first page.
-  useRealtimeTopic('reels', reconcileFirstPage);
-  // Likes/comments: sync already-loaded reels in place (no pull-to-refresh needed).
-  useRealtimeTopic('reelLikes', scheduleSyncLoadedReels);
-  useRealtimeTopic('reelComments', scheduleSyncLoadedReels);
+  // Realtime when available; soft poll covers CHANNEL_ERROR / web gaps.
+  useRealtimeTopic('reels', () => void softInjectNewReels(), active);
+  useRealtimeTopic('reelLikes', scheduleSyncLoadedReels, active);
+  useRealtimeTopic('reelComments', scheduleSyncLoadedReels, active);
+
+  useEffect(() => {
+    if (!active) return;
+    if (source !== 'feed' && source !== 'following' && source !== 'public') return;
+
+    void softInjectNewReels();
+
+    let interval: ReturnType<typeof setInterval> | null = null;
+    const start = () => {
+      if (interval) return;
+      interval = setInterval(() => {
+        void softInjectNewReels();
+      }, FEED_POLL_MS);
+    };
+    const stop = () => {
+      if (!interval) return;
+      clearInterval(interval);
+      interval = null;
+    };
+
+    const onAppState = (next: AppStateStatus) => {
+      if (next === 'active') {
+        void softInjectNewReels();
+        start();
+      } else {
+        stop();
+      }
+    };
+
+    if (AppState.currentState === 'active') start();
+    const sub = AppState.addEventListener('change', onAppState);
+    return () => {
+      stop();
+      sub.remove();
+    };
+  }, [active, softInjectNewReels, source]);
 
   return {
     ...state,
     refresh,
     loadMore,
     reload: loadInitial,
+    softInjectNewReels,
     applyLocalLikeChange,
     applyLocalCommentChange,
     removeReelLocally,

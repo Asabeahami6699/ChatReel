@@ -20,6 +20,9 @@ import { MomentUploadToast } from './src/components/MomentUploadToast';
 import { ConfirmToastHost } from './src/components/ConfirmToastHost';
 import { AppToastHost } from './src/components/AppToastHost';
 import { PresenceSyncRegistrar } from './src/components/PresenceSyncRegistrar';
+import { MessageOutboxFlushRegistrar } from './src/components/MessageOutboxFlushRegistrar';
+import { KeysRegistrar } from './src/components/KeysRegistrar';
+import { ChatSocketRegistrar } from './src/components/ChatSocketRegistrar';
 import { ReelInboxRealtimeRegistrar } from './src/components/ReelInboxRealtimeRegistrar';
 import { useWebIconFonts } from './src/lib/loadWebIconFonts';
 
@@ -41,7 +44,10 @@ export default function App() {
           <ChatSettingsProvider>
             <RealtimeProvider>
               <PushNotificationRegistrar />
+              <ChatSocketRegistrar />
               <PresenceSyncRegistrar />
+              <KeysRegistrar />
+              <MessageOutboxFlushRegistrar />
               <AppPrefetchRegistrar />
               <ChatListRealtimeRegistrar />
               <ReelInboxRealtimeRegistrar />

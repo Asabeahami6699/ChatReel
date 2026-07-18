@@ -16,6 +16,7 @@ import { chatTheme, bubbleCorners, type ClusterPosition } from './chatTheme';
 import { useChatSettings } from '../../context/ChatSettingsContext';
 import type { ChatListMessage } from './chatListModel';
 import { getAudioPlaybackUri } from './chatRoomTypes';
+import { getMessageDisplayText } from '../../lib/messageCrypto';
 import { LinkText } from './LinkText';
 import { LinkPreviewCard } from '../../components/LinkPreviewCard';
 import { openFileUrl, formatGroupReadLabel } from './chatMessageUtils';
@@ -212,7 +213,9 @@ export function ChatMessageRow({
         style={[styles.replyText, { color: isOutgoing ? 'rgba(255,255,255,0.85)' : '#666' }]}
         numberOfLines={2}
       >
-        {replyTo.message_type === 'text' ? replyTo.content : replyTo.file_name || replyTo.message_type}
+        {replyTo.message_type === 'text'
+          ? getMessageDisplayText(replyTo)
+          : replyTo.file_name || replyTo.message_type}
       </Text>
     </View>
   ) : null;
@@ -413,7 +416,8 @@ export function ChatMessageRow({
       );
     }
 
-    const firstUrl = (msg.content ?? '').match(/(https?:\/\/[^\s]+|www\.[^\s]+)/i)?.[0] ?? null;
+    const displayText = getMessageDisplayText(msg);
+    const firstUrl = (displayText ?? '').match(/(https?:\/\/[^\s]+|www\.[^\s]+)/i)?.[0] ?? null;
     const previewUrl = firstUrl
       ? firstUrl.startsWith('http') ? firstUrl : `https://${firstUrl}`
       : null;
@@ -422,11 +426,11 @@ export function ChatMessageRow({
       <View style={[styles.bubble, { backgroundColor: bubbleBg }, corners]}>
         {replyQuote}
         <LinkText
-          text={msg.content ?? ''}
+          text={displayText ?? ''}
           color={textColor}
           linkColor={isOutgoing ? textColor : theme.link}
           onLinkPress={(url) => {
-            void openFileUrl(url.startsWith('http') ? url : `https://${url}`);
+            void openFileUrl(url).catch(() => undefined);
           }}
         />
         {previewUrl && (
@@ -464,10 +468,13 @@ export function ChatMessageRow({
       {!isOutgoing && isGroup && (
         <View style={styles.avatarSlot}>
           {showAvatar ? (
-            <Image
-              source={{ uri: profile?.avatar_url || 'https://via.placeholder.com/32' }}
-              style={styles.avatar}
-            />
+            profile?.avatar_url ? (
+              <Image source={{ uri: profile.avatar_url }} style={styles.avatar} />
+            ) : (
+              <View style={[styles.avatar, styles.avatarFallback]}>
+                <Ionicons name="person" size={16} color="#888" />
+              </View>
+            )
           ) : (
             <View style={styles.avatarSpacer} />
           )}
@@ -538,6 +545,11 @@ const styles = StyleSheet.create({
   rowIn: { justifyContent: 'flex-start' },
   avatarSlot: { width: 36, marginRight: 6, justifyContent: 'flex-end' },
   avatar: { width: 32, height: 32, borderRadius: 16 },
+  avatarFallback: {
+    backgroundColor: '#e8e8e8',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   avatarSpacer: { width: 32, height: 32 },
   content: { maxWidth: '82%' },
   contentOut: { alignItems: 'flex-end' },

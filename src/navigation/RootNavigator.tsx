@@ -1,5 +1,5 @@
 // src/navigation/RootNavigator.tsx
-import React, { useEffect } from 'react';
+import React, { useCallback, useEffect } from 'react';
 import { View, ActivityIndicator } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
@@ -7,25 +7,64 @@ import * as SplashScreen from 'expo-splash-screen';
 import { useAuth } from '../hooks/useAuth';
 import { AuthNavigator } from './AuthNavigator';
 import { AppNavigator } from './AppNavigator';
-import { rootNavigationRef } from './rootNavigation';
+import { GuestNavigator } from './GuestNavigator';
+import { parseInviteTokenFromUrl } from '../lib/groupInviteLinks';
+import {
+  consumePendingInviteToken,
+  setPendingInviteToken,
+} from '../lib/pendingInvite';
+import { navigateToInvite, rootNavigationRef } from './rootNavigation';
 
 const prefix = Linking.createURL('/');
 
 const linking = {
-  prefixes: [prefix, 'yourapp://'],
+  prefixes: [prefix, 'chatapp://', 'yourapp://'],
   config: {
     screens: {
-      Login: 'login',
-      Signup: 'signup',
-      Home: 'home',
-      NewGroup: 'new-group',
       Invite: 'invite/:token',
+      Main: {
+        screens: {
+          Chats: {
+            screens: {
+              ChatList: 'chats',
+              ChatRoom: 'chat/:chatId',
+            },
+          },
+        },
+      },
     },
   },
 };
 
 export const RootNavigator = () => {
-  const { user, loading } = useAuth();
+  const { loading, isGuest, isAuthenticated } = useAuth();
+
+  const handleInviteUrl = useCallback(
+    (url: string | null | undefined) => {
+      if (!url) return;
+      const token = parseInviteTokenFromUrl(url);
+      if (!token) return;
+      if (isAuthenticated) {
+        navigateToInvite(token);
+      } else {
+        void setPendingInviteToken(token);
+      }
+    },
+    [isAuthenticated]
+  );
+
+  useEffect(() => {
+    void Linking.getInitialURL().then(handleInviteUrl);
+    const sub = Linking.addEventListener('url', ({ url }) => handleInviteUrl(url));
+    return () => sub.remove();
+  }, [handleInviteUrl]);
+
+  useEffect(() => {
+    if (!isAuthenticated || loading) return;
+    void consumePendingInviteToken().then((token) => {
+      if (token) navigateToInvite(token);
+    });
+  }, [isAuthenticated, loading]);
 
   useEffect(() => {
     if (!loading) {
@@ -43,7 +82,7 @@ export const RootNavigator = () => {
 
   return (
     <NavigationContainer ref={rootNavigationRef} linking={linking}>
-      {user ? <AppNavigator /> : <AuthNavigator />}
+      {isAuthenticated ? <AppNavigator /> : isGuest ? <GuestNavigator /> : <AuthNavigator />}
     </NavigationContainer>
   );
 };

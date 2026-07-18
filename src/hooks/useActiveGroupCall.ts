@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { AppState } from 'react-native';
 import { api, type CallDTO } from '../lib/api';
 import { useAuth } from './useAuth';
 import { useRealtimeTopic } from './useRealtimeTopic';
@@ -8,6 +9,9 @@ type ActiveCallState = {
   myState: string | null;
   joinedCount: number;
 };
+
+/** Rare safety net — Realtime is the primary refresh path. */
+const FALLBACK_POLL_MS = 45_000;
 
 /**
  * Tracks an ongoing group call so chat members can join from an in-chat banner.
@@ -40,8 +44,14 @@ export function useActiveGroupCall(groupId: string | undefined, enabled = true) 
   useEffect(() => {
     if (!enabled || !groupId) return;
     void refresh();
-    const t = setInterval(() => void refresh(), 8000);
-    return () => clearInterval(t);
+    const t = setInterval(() => void refresh(), FALLBACK_POLL_MS);
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active') void refresh();
+    });
+    return () => {
+      clearInterval(t);
+      sub.remove();
+    };
   }, [enabled, groupId, refresh]);
 
   useRealtimeTopic('calls', refresh, Boolean(enabled && groupId && user?.id));

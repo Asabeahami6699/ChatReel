@@ -3,7 +3,7 @@ import { api } from './api';
 import { prefetchReelNow } from '../screens/Reel/reelVideoCache';
 import { sessionStorage } from './sessionStorage';
 
-export type ReelsFeedCacheKey = 'feed' | 'following';
+export type ReelsFeedCacheKey = 'feed' | 'following' | 'public';
 
 type CacheEntry = {
   reels: ReelDTO[];
@@ -53,7 +53,7 @@ export function scheduleReelsFeedPrefetch(delayMs = 600) {
           const session = await sessionStorage.load();
           if (!session?.access_token) return;
 
-          const { reels, next_cursor } = await api.reels.feed({ limit: 50 });
+          const { reels, next_cursor } = await api.reels.feed({ limit: 30 });
           if (reels.length > 0) {
             setCache('feed', reels, next_cursor ?? null);
             warmFirstReels(reels);

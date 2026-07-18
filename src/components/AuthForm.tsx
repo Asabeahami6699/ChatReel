@@ -29,6 +29,8 @@ interface AuthFormProps {
   footerText: string
   footerActionText: string
   onFooterAction: () => void
+  secondaryActionText?: string
+  onSecondaryAction?: () => void
   noGradient?: boolean // New prop to disable gradient for desktop layouts
 }
 
@@ -47,6 +49,8 @@ export default function AuthForm({
   footerText,
   footerActionText,
   onFooterAction,
+  secondaryActionText,
+  onSecondaryAction,
   noGradient = false,
 }: AuthFormProps) {
   const [emailError, setEmailError] = useState('')
@@ -206,6 +210,16 @@ export default function AuthForm({
           <Text style={styles.footerLink}>{footerActionText}</Text>
         </TouchableOpacity>
       </View>
+
+      {secondaryActionText && onSecondaryAction ? (
+        <TouchableOpacity
+          style={styles.secondaryAction}
+          onPress={onSecondaryAction}
+          activeOpacity={0.75}
+        >
+          <Text style={styles.secondaryActionText}>{secondaryActionText}</Text>
+        </TouchableOpacity>
+      ) : null}
     </View>
   )
 
@@ -315,5 +329,15 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     marginLeft: 6,
+  },
+  secondaryAction: {
+    marginTop: 22,
+    alignItems: 'center',
+    paddingVertical: 10,
+  },
+  secondaryActionText: {
+    color: '#007AFF',
+    fontSize: 15,
+    fontWeight: '600',
   },
 })

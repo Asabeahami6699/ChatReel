@@ -1,36 +1,58 @@
 // hooks/useKeys.ts
 import { useEffect } from 'react';
-import * as SecureStore from 'expo-secure-store';
 import { api } from '../lib/api';
-import { generateKeyPair, encode } from '../lib/crypto';
+import { encode, generateKeyPair, publicKeyFromPrivate } from '../lib/crypto';
+import { ensureLocalIdentity } from '../lib/messageCrypto';
+import {
+  getSecretItem,
+  setSecretItem,
+  signedPrekeyPrivateKeyId,
+} from '../lib/keyStore';
+
+async function ensureSignedPrekey(userId: string): Promise<void> {
+  let signed = await getSecretItem(signedPrekeyPrivateKeyId(userId));
+  if (!signed) {
+    const { privateKey, publicKey } = await generateKeyPair();
+    signed = encode(privateKey);
+    await setSecretItem(signedPrekeyPrivateKeyId(userId), signed);
+    await api.keys.register(encode(publicKey), 'signed_prekey');
+    return;
+  }
+  try {
+    await api.keys.register(publicKeyFromPrivate(signed), 'signed_prekey');
+  } catch {
+    /* already synced */
+  }
+}
 
 export const useKeys = (userId: string) => {
   useEffect(() => {
+    let cancelled = false;
+
     const init = async () => {
       if (!userId) return;
 
-      let identity = await SecureStore.getItemAsync(`id_${userId}`);
-      if (!identity) {
-        const { privateKey, publicKey } = await generateKeyPair();
-        identity = encode(privateKey);
-        await SecureStore.setItemAsync(`id_${userId}`, identity);
-        await api.keys.register(encode(publicKey), 'identity');
-      }
+      try {
+        // Always publish the local identity public key (upsert on server).
+        await ensureLocalIdentity(userId);
+        if (cancelled) return;
 
-      let signed = await SecureStore.getItemAsync(`spk_${userId}`);
-      if (!signed) {
-        const { privateKey, publicKey } = await generateKeyPair();
-        signed = encode(privateKey);
-        await SecureStore.setItemAsync(`spk_${userId}`, signed);
-        await api.keys.register(encode(publicKey), 'signed_prekey');
-      }
+        await ensureSignedPrekey(userId);
+        if (cancelled) return;
 
-      const { count } = await api.keys.prekeyCount();
-      if (count < 50) {
-        const keys = await Promise.all(Array.from({ length: 100 }, generateKeyPair));
-        await api.keys.registerPrekeys(keys.map((k) => encode(k.publicKey)));
+        const { count } = await api.keys.prekeyCount();
+        if (count < 50) {
+          const keys = await Promise.all(Array.from({ length: 100 }, generateKeyPair));
+          await api.keys.registerPrekeys(keys.map((k) => encode(k.publicKey)));
+        }
+      } catch (err) {
+        console.warn('[useKeys] init failed:', err);
       }
     };
-    init();
+
+    void init();
+    return () => {
+      cancelled = true;
+    };
   }, [userId]);
 };

@@ -11,9 +11,11 @@ router.get(
   asyncHandler(async (req, res) => {
     const { data, error } = await supabaseAdmin
       .from('public_keys')
-      .select('public_key, type')
+      .select('public_key, type, created_at')
       .eq('user_id', req.params.userId)
       .eq('type', 'identity')
+      .order('created_at', { ascending: false })
+      .limit(1)
       .maybeSingle();
 
     if (error) return res.status(500).json({ error: error.message });
@@ -33,10 +35,40 @@ router.post(
       })
       .parse(req.body);
 
+    const userId = req.userId!;
+
+    // Keep exactly one key of this type. Skip rewrite when unchanged.
+    if (body.type === 'identity' || body.type === 'signed_prekey') {
+      const { data: existing } = await supabaseAdmin
+        .from('public_keys')
+        .select('id, public_key, type, created_at')
+        .eq('user_id', userId)
+        .eq('type', body.type)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (existing?.public_key === body.public_key) {
+        await supabaseAdmin
+          .from('public_keys')
+          .delete()
+          .eq('user_id', userId)
+          .eq('type', body.type)
+          .neq('id', existing.id);
+        return res.status(200).json({ key: existing, unchanged: true });
+      }
+
+      await supabaseAdmin
+        .from('public_keys')
+        .delete()
+        .eq('user_id', userId)
+        .eq('type', body.type);
+    }
+
     const { data, error } = await supabaseAdmin
       .from('public_keys')
       .insert({
-        user_id: req.userId!,
+        user_id: userId,
         public_key: body.public_key,
         type: body.type,
       })

@@ -1,11 +1,13 @@
 // src/hooks/useGroupList.ts
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
 import { api } from '../lib/api';
 import { useAuth } from './useAuth';
 import { useRealtimeTopic } from './useRealtimeTopic';
 import { subscribeChatListMessageEvents } from '../lib/chatListRealtimeBridge';
+import { isEncryptedMessage, resolveChatListPreview } from '../lib/messageCrypto';
 
 export type Group = {
   id: string;
@@ -23,6 +25,10 @@ export type Group = {
   updated_at?: string | null;
   last_message_sender?: string | null;
   last_message_sender_display_name?: string;
+  last_message_type?: string | null;
+  last_message_plaintext?: boolean | null;
+  last_message_iv?: string | null;
+  last_message_ephemeral_public_key?: string | null;
 };
 
 const KEY_GROUPS = '@groups_list_v2';
@@ -32,6 +38,50 @@ const USER_PROFILES_KEY = '@user_profiles_cache_v2_';
 
 const PROFILE_INVALID_NAMES = new Set(['', 'Unknown User', 'Member']);
 
+async function withDecryptedGroupPreviews(
+  groups: Group[],
+  myUserId: string | undefined
+): Promise<Group[]> {
+  if (!myUserId || groups.length === 0) return groups;
+  return Promise.all(
+    groups.map(async (group) => {
+      const preview = await resolveChatListPreview(
+        {
+          content: group.last_message,
+          message_type: group.last_message_type ?? 'text',
+          plaintext: group.last_message_plaintext,
+          iv: group.last_message_iv,
+          ephemeral_public_key: group.last_message_ephemeral_public_key,
+          sender_id: group.last_message_sender,
+          group_id: group.id,
+        },
+        myUserId
+      );
+      if (preview === group.last_message) return group;
+      return { ...group, last_message: preview };
+    })
+  );
+}
+
+/** Keep group avatar/name stable across message-driven refetches unless metadata changed. */
+function mergeGroupsPreservingProfiles(prev: Group[], next: Group[]): Group[] {
+  if (!prev.length) return next;
+  const prevById = new Map(prev.map((g) => [g.id, g]));
+  return next.map((group) => {
+    const old = prevById.get(group.id);
+    if (!old) return group;
+    const avatarChanged =
+      Boolean(group.avatar_url) &&
+      (group.avatar_url || '').split('?')[0] !== (old.avatar_url || '').split('?')[0];
+    const nameChanged = Boolean(group.name) && group.name !== old.name;
+    return {
+      ...group,
+      avatar_url: avatarChanged ? group.avatar_url : old.avatar_url,
+      name: nameChanged ? group.name : old.name,
+    };
+  });
+}
+
 export const useGroupList = (searchQuery = '') => {
   const { user } = useAuth();
   const [groups, setGroups] = useState<Group[]>([]);
@@ -39,6 +89,8 @@ export const useGroupList = (searchQuery = '') => {
   const [refreshing, setRefreshing] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
   const [isDataStale, setIsDataStale] = useState(false);
+  const paintedLocalRef = useRef(false);
+  const safetyRefetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // -----------------------
   // Storage helpers
@@ -200,6 +252,7 @@ export const useGroupList = (searchQuery = '') => {
       if (!user?.id) {
         setGroups([]);
         setLoading(false);
+        paintedLocalRef.current = false;
         return;
       }
       try {
@@ -207,28 +260,33 @@ export const useGroupList = (searchQuery = '') => {
         const online = Boolean(net.isConnected);
         setIsOnline(online);
 
-        // If offline, try cache and bail
-        if (!online) {
+        // Always paint local first (WhatsApp-style).
+        if (!forceRefresh || !paintedLocalRef.current) {
           const cached = await loadGroupsCache();
-          if (cached) setGroups(cached);
+          if (cached) {
+            setGroups(cached);
+            paintedLocalRef.current = true;
+            setLoading(false);
+          }
+        }
+
+        if (!online) {
           setLoading(false);
           return;
         }
 
-        // Load cache for instant UI if not forcing refresh
-        if (!forceRefresh) {
-          const cached = await loadGroupsCache();
-          if (cached) setGroups(cached);
-        }
-
-        // Silent refreshes (realtime-driven) shouldn't flash the loading state.
-        if (!silent) setLoading(true);
+        // Only flash loading when there is nothing local yet.
+        if (!silent && !paintedLocalRef.current) setLoading(true);
 
         const { groups: formatted } = await api.chats.groups();
+        const withPreviews = await withDecryptedGroupPreviews(
+          formatted as Group[],
+          user.id
+        );
 
         try {
           const lastMessagesCache: Record<string, unknown> = {};
-          (formatted as Group[]).forEach((g) => {
+          withPreviews.forEach((g) => {
             lastMessagesCache[g.id] = {
               message: g.last_message,
               timestamp: g.last_message_at,
@@ -238,19 +296,26 @@ export const useGroupList = (searchQuery = '') => {
           });
           await Promise.all([
             saveGroupLastMessages(lastMessagesCache),
-            saveGroupsCache(formatted as Group[]),
           ]);
         } catch (e) {
           console.warn('[useGroupList] cache save warning:', e);
         }
 
-        setGroups(formatted as Group[]);
+        setGroups((prev) => {
+          const merged = mergeGroupsPreservingProfiles(prev, withPreviews);
+          void saveGroupsCache(merged);
+          return merged;
+        });
+        paintedLocalRef.current = true;
         setIsDataStale(false);
       } catch (err) {
         console.error('[useGroupList] fetchGroups error:', err);
         setIsDataStale(true);
         const cached = await loadGroupsCache();
-        if (cached) setGroups(cached);
+        if (cached) {
+          setGroups(cached);
+          paintedLocalRef.current = true;
+        }
       } finally {
         setLoading(false);
         setRefreshing(false);
@@ -258,6 +323,15 @@ export const useGroupList = (searchQuery = '') => {
     },
     [user?.id]
   );
+
+  const scheduleSafetyRefetch = useCallback(() => {
+    if (!isOnline) return;
+    if (safetyRefetchTimer.current) clearTimeout(safetyRefetchTimer.current);
+    safetyRefetchTimer.current = setTimeout(() => {
+      safetyRefetchTimer.current = null;
+      void fetchGroups(true, true);
+    }, 1200);
+  }, [isOnline, fetchGroups]);
 
   // -----------------------
   // Initial load (cache-first) and profiles cache load/cleanup
@@ -305,9 +379,21 @@ export const useGroupList = (searchQuery = '') => {
   }, [user?.id]);
 
   // Group metadata changes (name, avatar, members) — refetch once.
-  useRealtimeTopic('groups', () => { if (isOnline) fetchGroups(true, true); }, Boolean(user?.id));
-  useRealtimeTopic('groupMembers', () => { if (isOnline) fetchGroups(true, true); }, Boolean(user?.id));
-  useRealtimeTopic('messages', () => { if (isOnline) fetchGroups(true, true); }, Boolean(user?.id));
+  useRealtimeTopic('groups', () => scheduleSafetyRefetch(), Boolean(user?.id));
+  useRealtimeTopic('groupMembers', () => scheduleSafetyRefetch(), Boolean(user?.id));
+  // Debounced catch-up for missed message rows (avatars preserved via merge).
+  useRealtimeTopic('messages', () => scheduleSafetyRefetch(), Boolean(user?.id));
+
+  useEffect(() => {
+    if (!user?.id) return;
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void fetchGroups(true, true);
+    });
+    return () => {
+      sub.remove();
+      if (safetyRefetchTimer.current) clearTimeout(safetyRefetchTimer.current);
+    };
+  }, [user?.id, fetchGroups]);
 
   // ---------------------------------------------------------------------------
   // Realtime: uses the global hub dispatch (subscribeToMessageRows) — the same
@@ -324,9 +410,15 @@ export const useGroupList = (searchQuery = '') => {
       const senderId = row.sender_id as string | undefined;
       if (!senderId) return;
 
-      const content = String(row.content ?? '');
       const createdAt = String(row.created_at ?? new Date().toISOString());
       const isIncoming = senderId !== user.id;
+      const messageType = (row.message_type as string) || 'text';
+      const encrypted = isEncryptedMessage({
+        content: row.content as string | undefined,
+        plaintext: row.plaintext as boolean | null | undefined,
+        iv: row.iv as string | null | undefined,
+        ephemeral_public_key: row.ephemeral_public_key as string | null | undefined,
+      });
 
       setGroups((prev) => {
         const idx = prev.findIndex((g) => g.id === groupId);
@@ -337,8 +429,19 @@ export const useGroupList = (searchQuery = '') => {
         const next = [...prev];
         const updated = {
           ...next[idx],
-          last_message: content,
+          avatar_url: next[idx].avatar_url,
+          name: next[idx].name,
+          last_message: encrypted
+            ? next[idx].last_message
+            : String(row.content ?? next[idx].last_message ?? ''),
           last_message_at: createdAt,
+          last_message_sender: senderId,
+          last_message_type: messageType,
+          last_message_plaintext:
+            (row.plaintext as boolean | null | undefined) ?? null,
+          last_message_iv: (row.iv as string | null | undefined) ?? null,
+          last_message_ephemeral_public_key:
+            (row.ephemeral_public_key as string | null | undefined) ?? null,
           unread_count: isIncoming
             ? (next[idx].unread_count || 0) + 1
             : next[idx].unread_count,
@@ -346,6 +449,40 @@ export const useGroupList = (searchQuery = '') => {
         next.splice(idx, 1);
         return [updated, ...next];
       });
+
+      if (encrypted || messageType === 'text') {
+        void resolveChatListPreview(
+          {
+            content: row.content as string | undefined,
+            message_type: messageType,
+            plaintext: row.plaintext as boolean | null | undefined,
+            iv: row.iv as string | null | undefined,
+            ephemeral_public_key: row.ephemeral_public_key as
+              | string
+              | null
+              | undefined,
+            sender_id: senderId,
+            group_id: groupId,
+          },
+          user.id
+        ).then((preview) => {
+          if (!preview) return;
+          setGroups((prev) => {
+            const idx = prev.findIndex((g) => g.id === groupId);
+            if (idx < 0) return prev;
+            if (prev[idx].last_message === preview) return prev;
+            if (prev[idx].last_message_at !== createdAt) return prev;
+            const next = [...prev];
+            next[idx] = {
+              ...next[idx],
+              avatar_url: next[idx].avatar_url,
+              name: next[idx].name,
+              last_message: preview,
+            };
+            return next;
+          });
+        });
+      }
     });
   }, [user?.id, fetchGroups]);
 

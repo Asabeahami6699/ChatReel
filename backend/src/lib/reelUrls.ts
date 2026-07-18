@@ -1,18 +1,9 @@
-import { env } from '../config/env';
+import { applyMediaCdnUrl } from './mediaUrls';
 import type { ReelRow } from '../services/reels.service';
 
-/** Rewrite Supabase storage URLs through an optional CDN origin (e.g. Cloudflare). */
+/** Rewrite reel storage URLs through MEDIA_CDN_BASE_URL / REELS_CDN_URL. */
 export function applyReelsCdnUrl(url: string | null | undefined): string | null {
-  if (!url) return null;
-  const cdn = env.reelsCdnUrl?.trim();
-  if (!cdn) return url;
-  try {
-    const source = new URL(url);
-    const base = new URL(cdn.replace(/\/$/, ''));
-    return `${base.origin}${source.pathname}${source.search}`;
-  } catch {
-    return url;
-  }
+  return applyMediaCdnUrl(url);
 }
 
 export function getReelPlaybackUrl(reel: Pick<ReelRow, 'video_url' | 'hls_url' | 'transcode_status'>): string {

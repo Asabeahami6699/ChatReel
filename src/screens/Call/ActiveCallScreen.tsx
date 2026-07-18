@@ -9,7 +9,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useRoute } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api, type CallDTO } from '../../lib/api';
 import { getLiveKit, isLiveKitAvailable } from './liveKitClient';
@@ -33,12 +33,20 @@ import {
 } from './callMediaControls';
 import { fetchCallPeerInfo, resolveCallPeerAuthId } from './callPeerInfo';
 import { useAuth } from '../../hooks/useAuth';
+import { useCallRowSync } from '../../hooks/useCallRowSync';
+import { useCallRingtone } from '../../hooks/useCallRingtone';
+import { useCallScreenMessageAlerts } from '../../hooks/useCallScreenMessageAlerts';
+import { useRealtimeTopic } from '../../hooks/useRealtimeTopic';
 import { leaveCallScreen } from '../../navigation/callSessionNav';
 import { showAppToast } from '../../lib/appToast';
 import { confirmAction, showErrorAlert } from '../../lib/confirmAction';
 import { confirmToast } from '../../lib/confirmToast';
-import { MiniCallBubble } from './MiniCallBubble';
-import { applyCallMinimizedChrome } from './callMinimizeChrome';
+import {
+  clearCallPip,
+  getCallPipSnapshot,
+  registerCallPipHandlers,
+  updateCallPip,
+} from './callPipBridge';
 import { CallGiftSheet } from './CallGiftSheet';
 import { beginCallHoldDisconnect, consumeCallHoldDisconnect } from './callHoldIntent';
 import {
@@ -56,12 +64,24 @@ type Params = {
   url: string;
 };
 
+type ActiveCallScreenProps = {
+  /** Rendered from ActiveCallLayer (outside the stack). */
+  embedded?: boolean;
+  call?: CallDTO;
+  token?: string | { token?: string } | Record<string, unknown>;
+  url?: string;
+  /** Layer-driven PiP — keep LiveKit mounted; only chrome hides. */
+  layerMinimized?: boolean;
+};
+
 type RoomParams = {
   call: CallDTO;
   token: string;
   url: string;
   peerName: string;
   peerAvatar: string | null;
+  ringing?: boolean;
+  layerMinimized?: boolean;
 };
 
 function useCallPeer(call: CallDTO | undefined, myAuthId: string | null) {
@@ -104,45 +124,74 @@ function formatDuration(sec: number): string {
   return `${m}:${s}`;
 }
 
+function CallMsgBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return (
+    <View style={styles.msgBadge}>
+      <Text style={styles.msgBadgeText}>{count > 9 ? '9+' : String(count)}</Text>
+    </View>
+  );
+}
+
 export default function ActiveCallScreen() {
   const route = useRoute<any>();
-  const navigation = useNavigation<any>();
+  const params = (route.params ?? {}) as Partial<Params>;
+  return (
+    <ActiveCallContent
+      call={params.call}
+      token={params.token}
+      url={params.url}
+    />
+  );
+}
+
+/** In-call UI used by the stack screen and by ActiveCallLayer (no route required). */
+export function ActiveCallContent(props: ActiveCallScreenProps) {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const params = (route.params ?? {}) as Partial<Params>;
-  const call = params.call;
-  const token = normalizeToken(params.token);
-  const url = params.url;
+  const call = props.call;
+  const token = normalizeToken(props.token);
+  const url = props.url;
   const myAuthId = user?.id ?? null;
   const [latestCall, setLatestCall] = useState<CallDTO | null>(call ?? null);
 
   useEffect(() => {
-    if (!call?.id) return;
-    let mounted = true;
-    const poll = async () => {
-      try {
-        const { call: refreshed } = await api.calls.get(call.id);
-        if (mounted) setLatestCall(refreshed as CallDTO);
-      } catch {
-        /* ignore transient errors */
-      }
-    };
-    void poll();
-    const t = setInterval(() => void poll(), 1800);
-    return () => {
-      mounted = false;
-      clearInterval(t);
-    };
-  }, [call?.id]);
+    if (call) setLatestCall(call);
+  }, [call?.id, call?.status]);
 
   const available = isLiveKitAvailable();
   const effectiveCall = latestCall ?? call;
-  const { peerName, peerAvatar } = useCallPeer(effectiveCall, myAuthId);
-  const isCallerWaitingForAccept =
+  const isCallerRinging =
     !!effectiveCall &&
     !!myAuthId &&
     effectiveCall.caller_id === myAuthId &&
     effectiveCall.status === 'ringing';
+
+  useCallRowSync(call?.id, setLatestCall, true, {
+    fastPollMs: isCallerRinging
+      ? 1000
+      : effectiveCall?.status === 'accepted'
+        ? 4000
+        : null,
+  });
+  useCallRingtone(isCallerRinging ? 'outgoing' : null);
+
+  useEffect(() => {
+    if (!latestCall) return;
+    const snap = getCallPipSnapshot();
+    if (snap.callId === latestCall.id) {
+      updateCallPip({ call: latestCall });
+    }
+  }, [latestCall]);
+
+  const { peerName, peerAvatar } = useCallPeer(effectiveCall, myAuthId);
+
+  useEffect(() => {
+    const snap = getCallPipSnapshot();
+    if (!snap.active || snap.callId !== (effectiveCall?.id ?? null)) return;
+    updateCallPip({ peerName, peerAvatar });
+  }, [peerName, peerAvatar, effectiveCall?.id]);
+
   const callTerminatedBeforeConnect =
     effectiveCall &&
     ['declined', 'missed', 'cancelled', 'ended'].includes(effectiveCall.status);
@@ -150,6 +199,7 @@ export default function ActiveCallScreen() {
   // Peer (or local) ended the call — leave automatically; no Close tap required.
   useEffect(() => {
     if (!callTerminatedBeforeConnect) return;
+    clearCallPip();
     const t = setTimeout(() => leaveCallScreen('Calls', 'Call ended'), 250);
     return () => clearTimeout(t);
   }, [callTerminatedBeforeConnect, effectiveCall?.status]);
@@ -166,15 +216,8 @@ export default function ActiveCallScreen() {
       </View>
     );
   }
-  if (isCallerWaitingForAccept) {
-    return (
-      <View style={[styles.container, { paddingTop: insets.top + 80 }]}>
-        <StatusBar barStyle="light-content" />
-        <Ionicons name="call-outline" size={52} color="#fff" />
-        <Text style={styles.errorText}>Ringing... waiting for receiver to accept</Text>
-      </View>
-    );
-  }
+  // Connect LiveKit while still ringing so caller is in the room before
+  // callee accepts — both sides meet as soon as accept lands.
   if (Platform.OS === 'web') {
     return (
       <WebCallRoom
@@ -183,6 +226,8 @@ export default function ActiveCallScreen() {
         url={url}
         peerName={peerName}
         peerAvatar={peerAvatar}
+        ringing={isCallerRinging}
+        layerMinimized={Boolean(props.layerMinimized)}
       />
     );
   }
@@ -201,12 +246,21 @@ export default function ActiveCallScreen() {
       url={url}
       peerName={peerName}
       peerAvatar={peerAvatar}
+      ringing={isCallerRinging}
+      layerMinimized={Boolean(props.layerMinimized)}
     />
   );
 }
 
-function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
-  const navigation = useNavigation<any>();
+function WebCallRoom({
+  call,
+  token,
+  url,
+  peerName,
+  peerAvatar,
+  ringing = false,
+  layerMinimized = false,
+}: RoomParams) {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const startedAsVideo = call.call_type === 'video';
@@ -221,7 +275,7 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
   const [pipSwapped, setPipSwapped] = useState(false);
   const [facingMode, setFacingMode] = useState<FacingMode>('user');
   const [sharingScreen, setSharingScreen] = useState(false);
-  const [minimized, setMinimized] = useState(false);
+  const [minimized, setMinimized] = useState(layerMinimized);
   const [giftOpen, setGiftOpen] = useState(false);
   const [giftBalance, setGiftBalance] = useState(0);
   const [heldSession, setHeldSession] = useState<HeldCallSession | null>(getHeldCallSession);
@@ -236,6 +290,11 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
 
   const extras = useCallExtras('You');
   extrasHandleRef.current = (bytes) => extras.handleExtrasPayload(bytes, false);
+  const msgAlerts = useCallScreenMessageAlerts({
+    myAuthId: user?.id ?? null,
+    enabled: !callEnded,
+  });
+  const messageBadge = extras.unreadChatCount + msgAlerts.unreadCount;
 
   useEffect(() => subscribeHeldCallSession(setHeldSession), []);
 
@@ -320,10 +379,14 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
   const { sharedVideo, videoEnabled, outgoingRequest, incomingRequest } = negotiation;
 
   useEffect(() => {
+    if (ringing) {
+      setDuration(0);
+      return;
+    }
     const start = Date.now();
     const t = setInterval(() => setDuration(Math.floor((Date.now() - start) / 1000)), 1000);
     return () => clearInterval(t);
-  }, []);
+  }, [ringing]);
 
   useEffect(() => {
     let mounted = true;
@@ -368,6 +431,9 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
         room.on(lk.RoomEvent.Reconnected, () => {
           if (!mounted) return;
           setConnectionState('connected');
+          void import('../../lib/callRowResyncBridge').then((m) =>
+            m.requestCallRowResync(call.id)
+          );
         });
 
         room.on(lk.RoomEvent.ConnectionQualityChanged, (quality: unknown, participant: any) => {
@@ -399,37 +465,50 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
           if (!mounted) return;
           if (callEnded) return;
           if (consumeCallHoldDisconnect()) return;
+          // Remount / chrome swap while floating must not hang up.
+          const pip = getCallPipSnapshot();
+          if (pip.minimized && pip.callId === call.id) return;
           void (async () => {
             try {
               await api.calls.end(call.id);
             } catch {
               /* ignore */
             }
+            clearCallPip();
             leaveCallScreen('Calls', 'Call ended');
           })();
         });
 
         room.on(lk.RoomEvent.ParticipantDisconnected, () => {
           if (!mounted || callEnded) return;
-          // Direct call: when the other party leaves LiveKit, end locally —
-          // unless they're merely on hold (call waiting).
+          // Direct call: peer left LiveKit — wait briefly (PiP / reconnect) before ending.
           if (call.scope === 'direct') {
             const remotes = room.remoteParticipants?.size ?? 0;
             if (remotes === 0) {
-              void (async () => {
-                try {
-                  const { participants } = await api.calls.participants(call.id);
-                  const other = participants.find((p) => p.user_id !== (user?.id ?? ''));
-                  if (other?.state === 'held') {
-                    showAppToast('Other person put you on hold');
-                    return;
+              setTimeout(() => {
+                if (!mounted || callEnded) return;
+                const stillEmpty = (room.remoteParticipants?.size ?? 0) === 0;
+                if (!stillEmpty) return;
+                void (async () => {
+                  try {
+                    const { call: latest } = await api.calls.get(call.id);
+                    if (['ended', 'cancelled', 'declined', 'missed'].includes(latest.status)) {
+                      leaveCallScreen('Calls', 'Call ended');
+                      return;
+                    }
+                    const { participants } = await api.calls.participants(call.id);
+                    const other = participants.find((p) => p.user_id !== (user?.id ?? ''));
+                    if (other?.state === 'held' || other?.state === 'joined') {
+                      if (other.state === 'held') showAppToast('Other person put you on hold');
+                      return;
+                    }
+                    await api.calls.end(call.id);
+                  } catch {
+                    /* ignore */
                   }
-                  await api.calls.end(call.id);
-                } catch {
-                  /* ignore */
-                }
-                leaveCallScreen('Calls', 'Call ended');
-              })();
+                  leaveCallScreen('Calls', 'Call ended');
+                })();
+              }, 1200);
             }
           }
         });
@@ -468,11 +547,12 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
       }
       roomRef.current?.disconnect?.();
     };
-  }, [callEnded, enableLocalVideo, navigation, startedAsVideo, token, url]);
+  }, [callEnded, enableLocalVideo, startedAsVideo, token, url]);
 
   const finishCall = async () => {
     if (callEnded) return;
     if (consumeCallHoldDisconnect()) return;
+    clearCallPip();
     const isGroup = call.scope === 'group';
     setCallEnded(true);
     const held = getHeldCallSession();
@@ -561,12 +641,57 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
 
   const setCallMinimized = (value: boolean) => {
     setMinimized(value);
-    applyCallMinimizedChrome(navigation, value);
-    if (value && sharedVideo && videoEnabled) {
-      // Soft low-data while browsing: drop local camera in the bubble.
-      void negotiation.toggleVideo();
+    if (value) {
+      registerCallPipHandlers({
+        onExpand: () => {
+          setMinimized(false);
+          updateCallPip({ minimized: false, active: true });
+        },
+        onToggleMute: () => void toggleMute(),
+        onEnd: () => void finishCall(),
+      });
+      updateCallPip({
+        active: true,
+        minimized: true,
+        callId: call.id,
+        call,
+        token,
+        url,
+        peerName,
+        peerAvatar,
+        durationLabel: formatDuration(duration),
+        elapsedSec: duration,
+        muted,
+      });
+      if (sharedVideo && videoEnabled) {
+        void negotiation.toggleVideo();
+      }
+    } else {
+      updateCallPip({ minimized: false, active: true });
     }
   };
+
+  useEffect(() => {
+    setMinimized(layerMinimized);
+  }, [layerMinimized]);
+
+  useEffect(() => {
+    if (!minimized) return;
+    updateCallPip({
+      callId: call.id,
+      durationLabel: formatDuration(duration),
+      muted,
+      peerName,
+      peerAvatar,
+    });
+  }, [minimized, duration, muted, peerName, peerAvatar, call.id]);
+
+  useEffect(() => {
+    return () => {
+      // Remount during minimize must not wipe PiP handlers / callId fallback.
+      if (!getCallPipSnapshot().minimized) clearCallPip();
+    };
+  }, []);
 
   useEffect(() => {
     if (minimized) return;
@@ -665,19 +790,8 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
   };
 
   if (minimized) {
-    return (
-      <View style={styles.minimizedRoot} pointerEvents="box-none">
-        <MiniCallBubble
-          peerName={peerName}
-          peerAvatar={peerAvatar}
-          durationLabel={formatDuration(duration)}
-          muted={muted}
-          onExpand={() => setCallMinimized(false)}
-          onToggleMute={() => void toggleMute()}
-          onEnd={() => void finishCall()}
-        />
-      </View>
-    );
+    // LiveKit keeps running here; FloatingCallOverlay shows the bubble on Main.
+    return <View style={styles.minimizedRoot} pointerEvents="none" />;
   }
 
   return (
@@ -823,11 +937,13 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
               )}
               <Text style={styles.peerCallName}>{peerName}</Text>
               <Text style={styles.statusText}>
-                {outgoingRequest
-                  ? 'Video request sent…'
-                  : connected
-                    ? 'On call'
-                    : 'Connecting...'}
+                {ringing
+                  ? 'Ringing…'
+                  : outgoingRequest
+                    ? 'Video request sent…'
+                    : connected
+                      ? 'On call'
+                      : 'Connecting...'}
               </Text>
             </View>
           )}
@@ -868,8 +984,15 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
           >
             <Ionicons name="desktop-outline" size={24} color="#fff" />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.ctrlBtn} onPress={() => extras.setChatOpen(true)}>
+          <TouchableOpacity
+            style={styles.ctrlBtn}
+            onPress={() => {
+              extras.openChat();
+              msgAlerts.clearUnread();
+            }}
+          >
             <Ionicons name="chatbubble-ellipses-outline" size={24} color="#fff" />
+            <CallMsgBadge count={messageBadge} />
           </TouchableOpacity>
           {peerAuthId ? (
             <TouchableOpacity style={styles.ctrlBtn} onPress={() => void openTipSheet()}>
@@ -887,7 +1010,7 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
 
         <CallInCallChat
           visible={extras.chatOpen}
-          onClose={() => extras.setChatOpen(false)}
+          onClose={() => extras.closeChat()}
           myName="You"
           publish={publishExtras}
           messages={extras.messages}
@@ -918,7 +1041,6 @@ function WebCallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
 }
 
 function FallbackError({ message }: { message: string }) {
-  const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
   return (
     <View style={[styles.container, { paddingTop: insets.top + 80 }]}>
@@ -937,23 +1059,38 @@ function FallbackError({ message }: { message: string }) {
  * require in `getLiveKit()` doesn't run on devices that lack the native
  * module.
  */
-function CallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
-  const navigation = useNavigation<any>();
+function CallRoom({
+  call,
+  token,
+  url,
+  peerName,
+  peerAvatar,
+  ringing = false,
+  layerMinimized = false,
+}: RoomParams) {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const [muted, setMuted] = useState(false);
   const [duration, setDuration] = useState(0);
   const [callEnded, setCallEnded] = useState(false);
   const [showAddParticipant, setShowAddParticipant] = useState(false);
-  const [minimized, setMinimized] = useState(false);
+  const [minimized, setMinimized] = useState(layerMinimized);
   const myAuthId = user?.id ?? null;
   const peerAuthId = resolveCallPeerAuthId(call, myAuthId);
 
   useEffect(() => {
+    if (ringing) {
+      setDuration(0);
+      return;
+    }
     const start = Date.now();
     const t = setInterval(() => setDuration(Math.floor((Date.now() - start) / 1000)), 1000);
     return () => clearInterval(t);
-  }, []);
+  }, [ringing]);
+
+  useEffect(() => {
+    setMinimized(layerMinimized);
+  }, [layerMinimized]);
 
   // Lazy-required LiveKit React hooks/components
   const lk = useMemo(() => getLiveKit(), []);
@@ -1027,6 +1164,7 @@ function CallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
     if (consumeCallHoldDisconnect()) {
       return;
     }
+    clearCallPip();
     setCallEnded(true);
     const held = getHeldCallSession();
     try {
@@ -1060,8 +1198,51 @@ function CallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
 
   const setCallMinimized = (value: boolean) => {
     setMinimized(value);
-    applyCallMinimizedChrome(navigation, value);
+    if (value) {
+      registerCallPipHandlers({
+        onExpand: () => {
+          setMinimized(false);
+          updateCallPip({ minimized: false, active: true });
+        },
+        onToggleMute: () => {
+          setMuted((m) => !m);
+        },
+        onEnd: () => void finishCall(true),
+      });
+      updateCallPip({
+        active: true,
+        minimized: true,
+        callId: call.id,
+        call,
+        token,
+        url,
+        peerName,
+        peerAvatar,
+        durationLabel: formatDuration(duration),
+        elapsedSec: duration,
+        muted,
+      });
+    } else {
+      updateCallPip({ minimized: false, active: true });
+    }
   };
+
+  useEffect(() => {
+    if (!minimized) return;
+    updateCallPip({
+      callId: call.id,
+      durationLabel: formatDuration(duration),
+      muted,
+      peerName,
+      peerAvatar,
+    });
+  }, [minimized, duration, muted, peerName, peerAvatar, call.id]);
+
+  useEffect(() => {
+    return () => {
+      if (!getCallPipSnapshot().minimized) clearCallPip();
+    };
+  }, []);
 
   const blockPeer = async () => {
     if (!peerAuthId) return;
@@ -1098,10 +1279,15 @@ function CallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
         audio
         video
         onConnected={() => undefined}
-        onDisconnected={() => finishCall(false)}
+        onDisconnected={() => {
+          if (consumeCallHoldDisconnect()) return;
+          const pip = getCallPipSnapshot();
+          if (pip.minimized && pip.callId === call.id) return;
+          void finishCall(false);
+        }}
         onError={(err: Error) => {
           showAppToast(err.message || 'Call error', { isError: true });
-          finishCall(false);
+          void finishCall(false);
         }}
       >
         <RoomBody
@@ -1114,6 +1300,7 @@ function CallRoom({ call, token, url, peerName, peerAvatar }: RoomParams) {
           duration={duration}
           muted={muted}
           minimized={minimized}
+          ringing={ringing}
           AudioSession={AudioSession}
           onToggleMute={async () => {
             setMuted((m) => !m);
@@ -1144,6 +1331,7 @@ function RoomBody(props: {
   duration: number;
   muted: boolean;
   minimized: boolean;
+  ringing?: boolean;
   AudioSession?: {
     selectAudioOutput?: (id: string) => Promise<void>;
     getAudioOutputs?: () => Promise<string[]>;
@@ -1208,6 +1396,11 @@ function RoomBody(props: {
   const extras = useCallExtras('You');
   const extrasHandleRef = React.useRef<(bytes: Uint8Array) => void>(() => undefined);
   extrasHandleRef.current = (bytes) => extras.handleExtrasPayload(bytes, false);
+  const msgAlerts = useCallScreenMessageAlerts({
+    myAuthId: props.myAuthId,
+    enabled: true,
+  });
+  const messageBadge = extras.unreadChatCount + msgAlerts.unreadCount;
 
   useEffect(() => subscribeHeldCallSession(setHeldSession), []);
 
@@ -1255,12 +1448,32 @@ function RoomBody(props: {
       }
     };
     void load();
-    const t = setInterval(() => void load(), 5000);
+    // Rare fallback — Realtime topics below drive most refreshes.
+    const t = setInterval(() => void load(), 45_000);
     return () => {
       alive = false;
       clearInterval(t);
     };
   }, [props.call.id]);
+
+  useRealtimeTopic(
+    'callParticipants',
+    () => {
+      void (async () => {
+        try {
+          const { participants } = await api.calls.participants(props.call.id);
+          const map = new Map<string, { display_name: string; avatar_url: string | null }>();
+          participants.forEach((p) => {
+            map.set(p.user_id, { display_name: p.display_name, avatar_url: p.avatar_url });
+          });
+          setParticipantProfiles(map);
+        } catch {
+          /* ignore */
+        }
+      })();
+    },
+    Boolean(props.call.id)
+  );
 
   const publishSignal = React.useCallback(
     (signal: CallVideoSignal) => {
@@ -1351,50 +1564,85 @@ function RoomBody(props: {
 
     roomAny.on('dataReceived', onData);
     roomAny.on('connectionQualityChanged', onQuality);
+    let peerGoneTimer: ReturnType<typeof setTimeout> | null = null;
     const onRemoteLeft = () => {
       if (props.call.scope !== 'direct') return;
       const remotes = room.remoteParticipants?.size ?? 0;
-      if (remotes === 0) {
+      if (remotes !== 0) {
+        if (peerGoneTimer) {
+          clearTimeout(peerGoneTimer);
+          peerGoneTimer = null;
+        }
+        return;
+      }
+      if (peerGoneTimer) clearTimeout(peerGoneTimer);
+      peerGoneTimer = setTimeout(() => {
+        peerGoneTimer = null;
+        if ((room.remoteParticipants?.size ?? 0) !== 0) return;
         void (async () => {
           try {
+            const { call: latest } = await api.calls.get(props.call.id);
+            if (['ended', 'cancelled', 'declined', 'missed'].includes(latest.status)) {
+              clearCallPip();
+              leaveCallScreen('Calls', 'Call ended');
+              return;
+            }
             const { participants } = await api.calls.participants(props.call.id);
             const other = participants.find((p) => p.user_id !== props.myAuthId);
-            if (other?.state === 'held') {
-              showAppToast('Other person put you on hold');
+            if (other?.state === 'held' || other?.state === 'joined') {
+              if (other.state === 'held') showAppToast('Other person put you on hold');
               return;
             }
             await api.calls.end(props.call.id);
           } catch {
             /* ignore */
           }
+          clearCallPip();
           leaveCallScreen('Calls', 'Call ended');
         })();
+      }, 1200);
+    };
+    const onRemoteJoined = () => {
+      if (peerGoneTimer) {
+        clearTimeout(peerGoneTimer);
+        peerGoneTimer = null;
       }
     };
     const onReconnecting = () => setConnectionState('reconnecting');
-    const onReconnected = () => setConnectionState('connected');
+    const onReconnected = () => {
+      setConnectionState('connected');
+      void import('../../lib/callRowResyncBridge').then((m) =>
+        m.requestCallRowResync(props.call.id)
+      );
+    };
     const onConnected = () => setConnectionState('connected');
     roomAny.on('participantDisconnected', onRemoteLeft);
+    roomAny.on('participantConnected', onRemoteJoined);
     roomAny.on('reconnecting', onReconnecting);
     roomAny.on('reconnected', onReconnected);
     roomAny.on('connected', onConnected);
     // Some LiveKit RN builds expose ConnectionStateChanged instead.
     const onConnState = (...args: unknown[]) => {
       const state = String(args[0] ?? '').toLowerCase();
-      if (state.includes('reconnect')) setConnectionState('reconnecting');
-      else if (state.includes('connect')) setConnectionState('connected');
+      if (state.includes('reconnect')) {
+        setConnectionState('reconnecting');
+      } else if (state.includes('connect')) {
+        setConnectionState('connected');
+      }
     };
     roomAny.on('connectionStateChanged', onConnState);
     return () => {
+      if (peerGoneTimer) clearTimeout(peerGoneTimer);
       roomAny.off?.('dataReceived', onData);
       roomAny.off?.('connectionQualityChanged', onQuality);
       roomAny.off?.('participantDisconnected', onRemoteLeft);
+      roomAny.off?.('participantConnected', onRemoteJoined);
       roomAny.off?.('reconnecting', onReconnecting);
       roomAny.off?.('reconnected', onReconnected);
       roomAny.off?.('connected', onConnected);
       roomAny.off?.('connectionStateChanged', onConnState);
     };
-  }, [room, props.call.id, props.call.scope]);
+  }, [room, props.call.id, props.call.scope, props.myAuthId]);
 
   // When upgrading to video mid-call, prefer speaker once.
   const autoSpeakerRef = React.useRef(startedAsVideo);
@@ -1543,6 +1791,12 @@ function RoomBody(props: {
     void negotiation.toggleVideo();
   }, [props.minimized]); // eslint-disable-line react-hooks/exhaustive-deps -- once when minimizing
 
+  // Keep mic in sync while floating (full controls unmounted).
+  useEffect(() => {
+    if (!props.minimized) return;
+    void localParticipant.setMicrophoneEnabled(!props.muted);
+  }, [props.minimized, props.muted, localParticipant]);
+
   const openCallMenu = () => {
     if (!props.peerAuthId || props.call.scope !== 'direct') return;
     props.onBlockPeer();
@@ -1636,17 +1890,8 @@ function RoomBody(props: {
   };
 
   if (props.minimized) {
-    return (
-      <MiniCallBubble
-        peerName={props.peerName}
-        peerAvatar={props.peerAvatar}
-        durationLabel={formatDuration(props.duration)}
-        muted={props.muted}
-        onExpand={props.onExpand}
-        onToggleMute={() => void toggleMute()}
-        onEnd={() => void hangup()}
-      />
-    );
+    // Keep LiveKitRoom mounted above; bubble is FloatingCallOverlay.
+    return null;
   }
 
   return (
@@ -1764,7 +2009,13 @@ function RoomBody(props: {
             )}
             <Text style={styles.peerCallName}>{props.peerName}</Text>
             <Text style={styles.statusText}>
-              {sharedVideo ? 'Connecting…' : isMultiParty ? 'Group call' : 'On call'}
+              {props.ringing
+                ? 'Ringing…'
+                : sharedVideo
+                  ? 'Connecting…'
+                  : isMultiParty
+                    ? 'Group call'
+                    : 'On call'}
             </Text>
             {remoteMuted ? (
               <View style={styles.peerMuteRow}>
@@ -1851,8 +2102,15 @@ function RoomBody(props: {
         >
           <Ionicons name="desktop-outline" size={24} color="#fff" />
         </TouchableOpacity>
-        <TouchableOpacity style={styles.ctrlBtn} onPress={() => extras.setChatOpen(true)}>
+        <TouchableOpacity
+          style={styles.ctrlBtn}
+          onPress={() => {
+            extras.openChat();
+            msgAlerts.clearUnread();
+          }}
+        >
           <Ionicons name="chatbubble-ellipses-outline" size={24} color="#fff" />
+          <CallMsgBadge count={messageBadge} />
         </TouchableOpacity>
         {tipRecipientId ? (
           <TouchableOpacity style={styles.ctrlBtn} onPress={() => void openTipSheet()}>
@@ -1878,7 +2136,7 @@ function RoomBody(props: {
 
       <CallInCallChat
         visible={extras.chatOpen}
-        onClose={() => extras.setChatOpen(false)}
+        onClose={() => extras.closeChat()}
         myName="You"
         publish={publishExtras}
         messages={extras.messages}
@@ -2024,6 +2282,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   ctrlBtnActive: { backgroundColor: '#1976d2' },
+  msgBadge: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 4,
+    backgroundColor: '#ef4444',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#111',
+  },
+  msgBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '800',
+  },
   endBtn: { backgroundColor: '#ef4444' },
   errorText: { color: '#fff', textAlign: 'center', paddingHorizontal: 32, marginTop: 16 },
   webBetaBadge: {

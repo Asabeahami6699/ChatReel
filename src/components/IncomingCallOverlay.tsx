@@ -3,9 +3,9 @@ import { Modal } from 'react-native';
 import { useIncomingCall } from '../hooks/useIncomingCall';
 import IncomingCallScreen from '../screens/Call/IncomingCallScreen';
 import { rememberCallReturnPoint } from '../navigation/callSessionNav';
-import { rootNavigationRef } from '../navigation/rootNavigation';
 import { useAuth } from '../hooks/useAuth';
 import { fetchCallPeerInfo } from '../screens/Call/callPeerInfo';
+import { getCallPipSnapshot, subscribeCallPip } from '../screens/Call/callPipBridge';
 
 /**
  * Global ringer overlay. Supports call waiting: when already on ActiveCall,
@@ -22,16 +22,10 @@ export function IncomingCallOverlay() {
   const [onActiveCall, setOnActiveCall] = useState(false);
 
   useEffect(() => {
-    const sync = () => {
-      try {
-        setOnActiveCall(rootNavigationRef.getCurrentRoute()?.name === 'ActiveCall');
-      } catch {
-        setOnActiveCall(false);
-      }
-    };
-    sync();
-    const t = setInterval(sync, 1200);
-    return () => clearInterval(t);
+    setOnActiveCall(getCallPipSnapshot().active);
+    return subscribeCallPip(() => {
+      setOnActiveCall(getCallPipSnapshot().active);
+    });
   }, []);
 
   useEffect(() => {

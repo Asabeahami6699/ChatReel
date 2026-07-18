@@ -10,12 +10,13 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useCallRingtone } from '../../hooks/useCallRingtone';
-import { replaceWithActiveCall, rootNavigationRef } from '../../navigation/rootNavigation';
+import { replaceWithActiveCall } from '../../navigation/rootNavigation';
 import { api, ApiError, type CallDTO } from '../../lib/api';
 import { showAppToast } from '../../lib/appToast';
 import { formatCallPeerName } from './callPeerInfo';
 import { beginCallHoldDisconnect } from './callHoldIntent';
 import { setHeldCallSession } from './callHeldSession';
+import { getCallPipSnapshot } from './callPipBridge';
 
 interface Props {
   call: CallDTO;
@@ -27,9 +28,7 @@ interface Props {
 
 function isOnActiveCall(): boolean {
   try {
-    if (!rootNavigationRef.isReady()) return false;
-    const route = rootNavigationRef.getCurrentRoute();
-    return route?.name === 'ActiveCall';
+    return getCallPipSnapshot().active;
   } catch {
     return false;
   }

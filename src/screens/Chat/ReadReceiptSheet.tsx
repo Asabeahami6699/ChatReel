@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { OfflineAvatar } from '../../components/OfflineAvatar';
 import { api } from '../../lib/api';
 import { chatTheme } from './chatTheme';
 
@@ -66,8 +67,10 @@ export function ReadReceiptSheet({ messageId, visible, onClose }: Props) {
               keyExtractor={(item) => item.user_id}
               renderItem={({ item }) => (
                 <View style={styles.row}>
-                  <Image
-                    source={{ uri: item.avatar_url || 'https://via.placeholder.com/36' }}
+                  <OfflineAvatar
+                    uri={item.avatar_url}
+                    name={item.display_name}
+                    size={36}
                     style={styles.avatar}
                   />
                   <View style={styles.rowBody}>

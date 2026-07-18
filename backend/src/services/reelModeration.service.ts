@@ -339,27 +339,10 @@ export async function cleanupRejectedReelStorage(
   videoUrl?: string | null,
   thumbnailUrl?: string | null
 ) {
-  try {
-    const paths: string[] = [];
-    const extract = (url?: string | null) => {
-      if (!url) return;
-      const m = /\/storage\/v1\/object\/(?:public|sign)\/reels\/(.+?)(?:\?|$)/.exec(url);
-      if (m?.[1]) paths.push(m[1]);
-    };
-    extract(videoUrl);
-    extract(thumbnailUrl);
-    if (paths.length > 0) {
-      await supabaseAdmin.storage.from('reels').remove(paths);
-    }
-    const { data: hlsFiles } = await supabaseAdmin.storage.from('reels').list(`hls/${reelId}`);
-    if (hlsFiles?.length) {
-      await supabaseAdmin.storage
-        .from('reels')
-        .remove(hlsFiles.map((f) => `hls/${reelId}/${f.name}`));
-    }
-  } catch (e) {
-    console.warn('[moderation] storage cleanup failed:', (e as Error).message);
-  }
+  const { cleanupReelStorage, getReelMediaUrls } = await import('./reelStorage.service');
+  // Rejected reels keep their DB row, so reel_media is still queryable here.
+  const mediaUrls = await getReelMediaUrls(reelId);
+  await cleanupReelStorage(reelId, [videoUrl, thumbnailUrl, ...mediaUrls]);
 }
 
 export async function applyModerationDecision(

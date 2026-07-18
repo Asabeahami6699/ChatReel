@@ -1,3 +1,4 @@
+import { filterUsersNeedingMessagePush } from '../lib/activeChatFocus';
 import { supabaseAdmin } from '../lib/supabaseAdmin';
 import {
   getAuthUserIdByProfileId,
@@ -464,15 +465,24 @@ export async function createMomentReply(
     const senderName =
       senderProfile?.display_name || senderProfile?.email?.split('@')[0] || 'New message';
 
-    sendPushToUserSafe(chatReceiverUserId, {
-      title: senderName,
-      body: trimmed.slice(0, 120),
-      data: {
-        type: 'message',
-        chat_id: senderUserId,
-        message_id: chatMessage?.id,
-      },
-    });
+    const [needsPush] = filterUsersNeedingMessagePush(
+      [chatReceiverUserId],
+      senderUserId,
+      'individual'
+    );
+    if (needsPush) {
+      sendPushToUserSafe(needsPush, {
+        title: senderName,
+        body: trimmed.slice(0, 120),
+        data: {
+          type: 'message',
+          chat_id: senderUserId,
+          chat_type: 'individual',
+          chat_name: senderName,
+          message_id: chatMessage?.id,
+        },
+      });
+    }
   }
 
   const author = row.author as unknown as {

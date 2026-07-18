@@ -117,7 +117,8 @@ export async function startRealtimeHub(
     { event: 'UPDATE', schema: 'public', table: 'profiles' },
     (payload) => {
       const row = (payload.new ?? payload.old) as { user_id?: string } | undefined;
-      if (row?.user_id === authUserId) {
+      // Own profile (settings) + any peer presence/last_seen change for open chats.
+      if (row?.user_id) {
         realtimeTopics.profiles.notify();
       }
     }
@@ -142,6 +143,10 @@ export async function startRealtimeHub(
   ch.subscribe(async (status, err) => {
     if (status === 'SUBSCRIBED') {
       errorRetries = 0;
+      // Short resync: call + chat UIs catch up after Realtime reconnects.
+      realtimeTopics.calls.notifyImmediate();
+      realtimeTopics.callParticipants.notifyImmediate();
+      realtimeTopics.messages.notifyImmediate();
       // Start optional tables only after core is healthy — reduces join storms on web.
       if (auxChannels.size === 0) {
         startAuxChannels(authUserId, profileId);
@@ -192,7 +197,7 @@ function startAuxChannel(
   });
 }
 
-function startAuxChannels(authUserId: string, profileId: string | null) {
+function startAuxChannels(authUserId: string, _profileId: string | null) {
   startAuxChannel(
     'group-invites',
     authUserId,
@@ -251,18 +256,18 @@ function startAuxChannels(authUserId: string, profileId: string | null) {
   startAuxChannel('calls', authUserId, { event: '*', schema: 'public', table: 'calls' }, (payload) => {
     const row = (payload.new ?? payload.old) as { caller_id?: string; callee_id?: string } | undefined;
     if (row?.caller_id === authUserId || row?.callee_id === authUserId) {
-      realtimeTopics.calls.notify();
+      // Immediate: caller must jump to ActiveCall as soon as callee accepts.
+      realtimeTopics.calls.notifyImmediate();
     }
   });
   startAuxChannel(
     'call-participants',
     authUserId,
     { event: '*', schema: 'public', table: 'call_participants' },
-    (payload) => {
-      const row = (payload.new ?? payload.old) as { user_id?: string; profile_id?: string } | undefined;
-      if (row?.user_id === authUserId || (profileId && row?.profile_id === profileId)) {
-        realtimeTopics.callParticipants.notify();
-      }
+    () => {
+      // Any participant change may affect an open call UI (join/leave/hold).
+      // Listeners refetch their own call via HTTP — this is a wake, not a payload.
+      realtimeTopics.callParticipants.notifyImmediate();
     }
   );
 

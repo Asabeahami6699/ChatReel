@@ -3,6 +3,7 @@ import { uploadReelImage, uploadReelThumbnail, uploadReelVideo } from './reelUpl
 import { isImageMime } from './reelPlayback';
 import { probeVideoDimensions } from './videoDimensions';
 import { notifyRealtimeTopic } from './realtimeHub';
+import { invalidateReelsFeedCache } from './reelsFeedPrefetch';
 import { loadReelUploadState, saveReelUploadState } from './reelUploadPersistence';
 import {
   clearReelUploadMedia,
@@ -186,6 +187,8 @@ async function finalizePublishedReel(id: string, reelId: string) {
   if (mod === 'rejected') {
     throw new Error('This reel did not meet our community guidelines.');
   }
+  // Drop stale feed cache so soft-inject / local realtime picks up the approved reel.
+  invalidateReelsFeedCache();
   notifyRealtimeTopic('reels');
   updateTask(id, {
     status: 'done',

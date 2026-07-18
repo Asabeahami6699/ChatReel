@@ -106,6 +106,30 @@ function resolveUserFromOfflineToken(token: string): string | null {
   return verified.sub;
 }
 
+export async function resolveAuthUserId(token: string): Promise<string | null> {
+  if (!token) return null;
+
+  const cached = readCachedUserId(token);
+  if (cached) return cached;
+
+  try {
+    const { data, error } = await supabaseAdmin.auth.getUser(token);
+    if (!error && data.user) {
+      cacheUserId(token, data.user.id);
+      return data.user.id;
+    }
+    if (error && isAuthServiceNetworkError(error)) {
+      return resolveUserFromOfflineToken(token);
+    }
+    return null;
+  } catch (err) {
+    if (isAuthServiceNetworkError(err)) {
+      return resolveUserFromOfflineToken(token);
+    }
+    return null;
+  }
+}
+
 export async function requireAuth(req: AuthedRequest, res: Response, next: NextFunction) {
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) {

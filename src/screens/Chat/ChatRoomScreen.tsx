@@ -20,8 +20,11 @@ import {
 } from 'react-native';
 import { IconButton } from 'react-native-paper';
 import { useAuth } from '../../hooks/useAuth';
-import { api } from '../../lib/api';
+import { api, ApiError } from '../../lib/api';
+import { setLocalActiveChatFocus } from '../../lib/activeChatFocus';
+import { flushMessageOutbox, flushOutboxItem } from '../../lib/flushMessageOutbox';
 import { showAppToast } from '../../lib/appToast';
+import NetInfo from '@react-native-community/netinfo';
 import { uploadFromUri } from '../../lib/uploads';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { Ionicons, MaterialIcons, Feather } from '@expo/vector-icons';
@@ -30,6 +33,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import ChatInput from './ChatInput';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
 import { messageStorage } from '../../utils/messageStorage';
+import { ensureChatReelTree, persistChatMedia, cacheRemoteChatMedia } from '../../lib/chatMediaStore';
 import * as FileSystem from 'expo-file-system/legacy';
 import {
   configurePlaybackAudio,
@@ -63,6 +67,7 @@ import {
   type AttachmentFile,
   type ChatRouteParams as RouteParams,
   generateTempId,
+  generateClientMessageId,
   isLocalFile,
   getMediaUri,
   getAudioPlaybackUri,
@@ -82,6 +87,17 @@ import { useChatRoomScroll } from './useChatRoomScroll';
 import { useChatRoomRealtime } from './useChatRoomRealtime';
 import { useRealtimeTopic } from '../../hooks/useRealtimeTopic';
 import { useChatSettings } from '../../context/ChatSettingsContext';
+import {
+  decryptChatMessage,
+  decryptChatMessages,
+  getMessageDisplayText,
+  preserveSenderCleartext,
+  tryEncryptChatText,
+} from '../../lib/messageCrypto';
+import {
+  ensureGroupSenderKeyDistributed,
+  syncGroupSenderKeysForMe,
+} from '../../lib/groupSenderKeys';
 
 export default function ChatRoomScreen() {
   const { user } = useAuth();
@@ -140,6 +156,13 @@ export default function ChatRoomScreen() {
   const [groupMembers, setGroupMembers] = useState<
     Array<{ display_name: string; user_id?: string }>
   >([]);
+  const groupMemberUserIds = useMemo(
+    () =>
+      groupMembers
+        .map((m) => m.user_id)
+        .filter((id): id is string => Boolean(id)),
+    [groupMembers]
+  );
   const unreadCapturedRef = useRef(false);
 
   const { statusText: partnerStatus } = usePartnerPresence(
@@ -295,6 +318,15 @@ export default function ChatRoomScreen() {
     }
   }, [chatId, chatType, loadChatSettings]);
 
+  // Prefetch group sender keys so first send / decrypt is fast.
+  useEffect(() => {
+    if (chatType !== 'group' || !chatId || !user?.id) return;
+    void syncGroupSenderKeysForMe(chatId, user.id);
+    if (groupMemberUserIds.length) {
+      void ensureGroupSenderKeyDistributed(chatId, user.id, groupMemberUserIds);
+    }
+  }, [chatType, chatId, user?.id, groupMemberUserIds]);
+
   useEffect(() => {
     if (!user?.id || unreadCapturedRef.current || !initialLoadComplete) return;
     const first = messages.find((m) => m.sender_id !== user.id && !m.is_read);
@@ -327,13 +359,15 @@ export default function ChatRoomScreen() {
       }
       if (action === 'copy') {
         const text =
-          msg.message_type === 'text' ? msg.content : msg.file_name || msg.content || '';
+          msg.message_type === 'text'
+            ? getMessageDisplayText(msg)
+            : msg.file_name || getMessageDisplayText(msg) || '';
         await setStringAsync(text);
         return;
       }
       if (action === 'edit') {
         setEditingMessage(msg);
-        setComposerDraft(msg.content);
+        setComposerDraft(getMessageDisplayText(msg));
         return;
       }
       if (action === 'react' && emoji && !msg.id.startsWith('temp-')) {
@@ -426,21 +460,37 @@ export default function ChatRoomScreen() {
         return;
       }
 
-      try {
-        const payload = {
-          ...buildForwardPayload(msg),
-          ...(target.chatType === 'individual'
-            ? { receiver_id: target.chatId }
-            : { group_id: target.chatId }),
-        };
-        await api.messages.send(payload);
-        Alert.alert('Forwarded', `Message sent to ${target.chatName}`);
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : 'Could not forward message';
-        Alert.alert('Forward failed', message);
-      } finally {
-        setForwardMessage(null);
-      }
+        try {
+          const payload = {
+            ...buildForwardPayload({
+              ...msg,
+              content: getMessageDisplayText(msg),
+            }),
+            ...(target.chatType === 'individual'
+              ? { receiver_id: target.chatId }
+              : { group_id: target.chatId }),
+          };
+
+          // Re-encrypt forwarded text for DM / group targets when possible.
+          if (msg.message_type === 'text' || !msg.message_type) {
+            const clear = String(payload.content ?? '');
+            const enc = await tryEncryptChatText({
+              chatType: target.chatType,
+              senderUserId: user?.id,
+              chatId: target.chatId,
+              cleartext: clear,
+            });
+            if (enc) Object.assign(payload, enc);
+          }
+
+          await api.messages.send(payload);
+          Alert.alert('Forwarded', `Message sent to ${target.chatName}`);
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : 'Could not forward message';
+          Alert.alert('Forward failed', message);
+        } finally {
+          setForwardMessage(null);
+        }
     },
     [forwardMessage]
   );
@@ -526,6 +576,13 @@ export default function ChatRoomScreen() {
           const localMatch = localMessages.find(localMsg => {
             if (localMsg.id === serverMsg.id) return true;
             if (
+              localMsg.client_message_id &&
+              serverMsg.client_message_id &&
+              localMsg.client_message_id === serverMsg.client_message_id
+            ) {
+              return true;
+            }
+            if (
               localMsg.file_name === serverMsg.file_name &&
               localMsg.file_type === serverMsg.file_type &&
               localMsg.message_type === serverMsg.message_type &&
@@ -534,7 +591,7 @@ export default function ChatRoomScreen() {
             return false;
           });
 
-          return {
+          const merged: Message = {
             ...serverMsg,
             profiles: profilesData[serverMsg.sender_id] || {
               display_name: serverMsg.sender_id === user.id ? 'You' : 'Unknown User',
@@ -544,11 +601,14 @@ export default function ChatRoomScreen() {
             _status: 'sent' as const,
             local_file_uri: localMatch?.local_file_uri || serverMsg.local_file_uri,
             file_url: serverMsg.file_url || localMatch?.file_url,
-            local_audio_uri: localMatch?.local_audio_uri || serverMsg.local_audio_uri
+            local_audio_uri: localMatch?.local_audio_uri || serverMsg.local_audio_uri,
+            decrypted: localMatch?.decrypted,
           };
+          return preserveSenderCleartext(merged, localMatch, user.id);
         });
 
-        const serverMessages = messagesWithProfiles;
+        const decryptedServer = await decryptChatMessages(messagesWithProfiles, user.id);
+        const serverMessages = decryptedServer;
 
         let finalMessages: Message[];
 
@@ -559,12 +619,19 @@ export default function ChatRoomScreen() {
           ]);
         } else {
           const localPending = localMessages.filter(m =>
-            m.id.startsWith('temp-') &&
+            (m.id.startsWith('temp-') || m.client_message_id) &&
             ['pending', 'failed', 'sending'].includes(m._status || '')
           );
 
           const serverIds = new Set(serverMessages.map(m => m.id));
-          const uniquePending = localPending.filter(m => !serverIds.has(m.id));
+          const serverClientIds = new Set(
+            serverMessages.map((m) => m.client_message_id).filter(Boolean) as string[]
+          );
+          const uniquePending = localPending.filter(
+            (m) =>
+              !serverIds.has(m.id) &&
+              !(m.client_message_id && serverClientIds.has(m.client_message_id))
+          );
 
           finalMessages = deduplicateMessages([...serverMessages, ...uniquePending]);
         }
@@ -573,6 +640,46 @@ export default function ChatRoomScreen() {
         setHasMore(messagesData.length === 50);
 
         await messageStorage.saveMessages(chatId, finalMessages);
+
+        // Warm ChatReel local cache for recent media (offline open).
+        for (const m of finalMessages.slice(-20)) {
+          if (
+            m.message_type === 'image' ||
+            m.message_type === 'video' ||
+            m.message_type === 'audio' ||
+            m.message_type === 'file'
+          ) {
+            const key = m.client_message_id || m.id;
+            const remote =
+              (m.file_url && /^https?:\/\//i.test(m.file_url) && m.file_url) ||
+              (m.audio_url && /^https?:\/\//i.test(m.audio_url) && m.audio_url) ||
+              null;
+            if (!key || key.startsWith('temp-') || !remote) continue;
+            void cacheRemoteChatMedia({
+              chatId,
+              clientMessageId: key,
+              remoteUrl: remote,
+              messageType: m.message_type,
+              fileName: m.file_name,
+              mime: m.file_type,
+            }).then((localUri) => {
+              if (!localUri) return;
+              setMessages((prev) => {
+                const next = prev.map((row) => {
+                  if (row.id !== m.id && row.client_message_id !== m.client_message_id) {
+                    return row;
+                  }
+                  if (m.message_type === 'audio') {
+                    return { ...row, local_audio_uri: localUri };
+                  }
+                  return { ...row, local_file_uri: localUri };
+                });
+                void messageStorage.saveMessages(chatId, next);
+                return next;
+              });
+            });
+          }
+        }
       }
       else if (messagesData && messagesData.length === 0 && !loadMore) {
         const kept = deduplicateMessages(
@@ -634,18 +741,22 @@ export default function ChatRoomScreen() {
       const dedupedLocalMessages = deduplicateMessages(
         filterByClearedAt(sanitizeChatMessages(localMessages))
       );
+
+      const localReady = await decryptChatMessages(dedupedLocalMessages, user.id);
       
-      if (!loadMore && dedupedLocalMessages.length > 0) {
-        setMessages(dedupedLocalMessages);
+      if (!loadMore && localReady.length > 0) {
+        setMessages(localReady);
         setLoading(false);
       }
 
       if (isOnline) {
-        await syncWithServer(dedupedLocalMessages, loadMore);
+        await syncWithServer(localReady, loadMore);
       } else {
         if (!loadMore) {
-          if (dedupedLocalMessages.length === 0) {
+          if (localReady.length === 0) {
             setMessages([]);
+          } else {
+            setMessages(localReady);
           }
           setLoading(false);
           setInitialLoadComplete(true);
@@ -709,20 +820,48 @@ export default function ChatRoomScreen() {
 
     try {
       pendingRetryRef.current = true;
-      
-      const pendingMessages = messages.filter(msg => 
-        msg._status === 'pending' || msg._status === 'failed'
+
+      // Durable outbox (text + media upload jobs).
+      const flushed = await flushMessageOutbox(chatId, user?.id);
+      if (flushed.length) {
+        setMessages((prev) => {
+          let updated = prev;
+          for (const item of flushed) {
+            updated = updated.map((msg) =>
+              msg.client_message_id === item.client_message_id ||
+              msg.id === `temp-${item.client_message_id}`
+                ? ({
+                    ...(item.message as unknown as Message),
+                    client_message_id: item.client_message_id,
+                    profiles: msg.profiles,
+                    _status: 'sent' as const,
+                    local_file_uri: msg.local_file_uri ?? item.local_file_uri,
+                    local_audio_uri: msg.local_audio_uri ?? item.local_audio_uri,
+                  } as Message)
+                : msg
+            );
+          }
+          const deduped = deduplicateMessages(updated);
+          void messageStorage.saveMessages(chatId, deduped);
+          return deduped;
+        });
+      }
+
+      // In-memory pending text that never hit the outbox.
+      const pendingMessages = messages.filter(
+        (msg) =>
+          (msg._status === 'pending' || msg._status === 'failed') &&
+          (msg.message_type || 'text') === 'text' &&
+          !flushed.some((f) => f.client_message_id === msg.client_message_id)
       );
 
       const batchSize = 3;
       for (let i = 0; i < pendingMessages.length; i += batchSize) {
         const batch = pendingMessages.slice(i, i + batchSize);
-        await Promise.allSettled(
-          batch.map(msg => sendMessageToServer(msg))
-        );
-        
+        await Promise.allSettled(batch.map((msg) => sendMessageToServer(msg)));
+
         if (i + batchSize < pendingMessages.length) {
-          await new Promise(resolve => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, 100));
         }
       }
     } catch (error) {
@@ -730,15 +869,35 @@ export default function ChatRoomScreen() {
     } finally {
       pendingRetryRef.current = false;
     }
-  }, [messages, isOnline]);
+  }, [messages, isOnline, chatId]);
 
   const sendMessageToServer = async (message: Message) => {
+    const clientMessageId = message.client_message_id || generateClientMessageId();
     try {
+      const cleartext = message.decrypted || message.content;
       const payload = buildChatSendPayload(chatType, chatId, {
-        content: message.content,
+        content: cleartext,
         message_type: message.message_type || 'text',
+        client_message_id: clientMessageId,
         ...(message.reply_to_id ? { reply_to_id: message.reply_to_id } : {}),
       });
+
+      // Text: encrypt when ready (DM ECDH or group sender keys); never block send.
+      if ((message.message_type || 'text') === 'text') {
+        try {
+          const enc = await tryEncryptChatText({
+            chatType,
+            senderUserId: user?.id,
+            chatId,
+            cleartext,
+            memberUserIds:
+              chatType === 'group' ? groupMemberUserIds : undefined,
+          });
+          if (enc) Object.assign(payload, enc);
+        } catch (encErr) {
+          console.warn('[e2e] encrypt ignored, sending plaintext:', encErr);
+        }
+      }
 
       if (message.message_type === 'audio') {
         payload.audio_url = message.audio_url;
@@ -749,23 +908,49 @@ export default function ChatRoomScreen() {
 
       if (message.message_type === 'image' || message.message_type === 'file' || message.message_type === 'video') {
         const cleanFileUrl = message.file_url ? message.file_url.split('?')[0] : message.file_url;
-        payload.file_url = cleanFileUrl;
+        // Don't POST local file:// URIs as remote urls — retry after upload separately.
+        if (cleanFileUrl && /^https?:\/\//i.test(cleanFileUrl)) {
+          payload.file_url = cleanFileUrl;
+        }
         payload.file_name = message.file_name;
         payload.file_type = message.file_type;
         if (message.expires_at) payload.expires_at = message.expires_at;
         if (message.view_once) payload.view_once = true;
       }
 
+      // Text/media with remote URL can live in the durable outbox.
+      const canOutbox =
+        (message.message_type || 'text') === 'text' ||
+        (typeof payload.file_url === 'string' && /^https?:\/\//i.test(payload.file_url)) ||
+        (typeof payload.audio_url === 'string' && /^https?:\/\//i.test(String(payload.audio_url)));
+      if (canOutbox) {
+        try {
+          await messageStorage.enqueueOutbox({
+            client_message_id: clientMessageId,
+            chatId,
+            chatType,
+            payload,
+            created_at: message.created_at || new Date().toISOString(),
+          });
+        } catch (outboxErr) {
+          console.warn('[outbox] enqueue failed (send continues):', outboxErr);
+        }
+      }
+
       const { message: rawData } = await api.messages.send(payload);
       const data = rawData as unknown as Message;
+      await messageStorage.removeOutbox(clientMessageId);
 
       setMessages(prevMessages => {
         const updated: Message[] = prevMessages.map(msg =>
-          msg.id === message.id
+          msg.id === message.id ||
+          (msg.client_message_id && msg.client_message_id === clientMessageId)
             ? ({
                 ...data,
+                client_message_id: clientMessageId,
                 profiles: message.profiles,
                 _status: 'sent' as const,
+                decrypted: cleartext,
                 local_file_uri: msg.local_file_uri,
                 ...(message.message_type === 'audio' && { local_audio_uri: message.local_audio_uri }),
               } as Message)
@@ -783,9 +968,19 @@ export default function ChatRoomScreen() {
     } catch (error) {
       console.error('Send message to server error:', error);
 
+      // Network / 5xx → keep queued for retry. Only hard-fail validation (4xx).
+      const networkish =
+        !(error instanceof ApiError) ||
+        error.isNetworkError ||
+        error.status === 0 ||
+        error.status >= 500;
+      const nextStatus = networkish ? ('pending' as const) : ('failed' as const);
+
       persistMessages((prev) =>
         prev.map((msg) =>
-          msg.id === message.id ? { ...msg, _status: 'failed' as const } : msg
+          msg.id === message.id || msg.client_message_id === clientMessageId
+            ? { ...msg, client_message_id: clientMessageId, _status: nextStatus }
+            : msg
         )
       );
 
@@ -801,6 +996,135 @@ export default function ChatRoomScreen() {
     persistMessages((prev) =>
       prev.map((m) => (m.id === message.id ? { ...m, _status: 'sending' as const } : m))
     );
+
+    const clientMessageId = message.client_message_id || generateClientMessageId();
+    const outbox = await messageStorage.getOutbox(chatId);
+    const queued = outbox.find((x) => x.client_message_id === clientMessageId);
+
+    if (queued?.upload) {
+      const result = await flushOutboxItem(queued, user?.id);
+      if (result) {
+        persistMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === message.id || msg.client_message_id === clientMessageId
+              ? ({
+                  ...(result.message as unknown as Message),
+                  client_message_id: clientMessageId,
+                  profiles: msg.profiles,
+                  _status: 'sent' as const,
+                  local_file_uri: msg.local_file_uri,
+                  local_audio_uri: msg.local_audio_uri,
+                } as Message)
+              : msg
+          )
+        );
+      } else {
+        persistMessages((prev) =>
+          prev.map((m) =>
+            m.id === message.id ? { ...m, _status: 'pending' as const } : m
+          )
+        );
+      }
+      return;
+    }
+
+    // Pending media without outbox row — rebuild upload job from local URI.
+    const localAudio = message.local_audio_uri;
+    const localFile = message.local_file_uri;
+    if (message.message_type === 'audio' && localAudio) {
+      const item = {
+        client_message_id: clientMessageId,
+        chatId,
+        chatType,
+        payload: {},
+        created_at: message.created_at || new Date().toISOString(),
+        upload: {
+          kind: 'audio' as const,
+          localUri: localAudio,
+          mime: message.file_type || (Platform.OS === 'web' ? 'audio/webm' : 'audio/m4a'),
+          fileName: message.file_name || 'voice.m4a',
+          audioDuration: message.audio_duration || 0,
+        },
+      };
+      await messageStorage.enqueueOutbox(item);
+      const result = await flushOutboxItem(item, user?.id);
+      if (result) {
+        persistMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === message.id || msg.client_message_id === clientMessageId
+              ? ({
+                  ...(result.message as unknown as Message),
+                  client_message_id: clientMessageId,
+                  profiles: msg.profiles,
+                  _status: 'sent' as const,
+                  local_audio_uri: msg.local_audio_uri,
+                } as Message)
+              : msg
+          )
+        );
+      } else {
+        persistMessages((prev) =>
+          prev.map((m) =>
+            m.id === message.id ? { ...m, _status: 'pending' as const } : m
+          )
+        );
+      }
+      return;
+    }
+    if (
+      (message.message_type === 'image' ||
+        message.message_type === 'video' ||
+        message.message_type === 'file') &&
+      localFile
+    ) {
+      const kind =
+        message.message_type === 'image'
+          ? ('image' as const)
+          : message.message_type === 'video'
+            ? ('video' as const)
+            : ('file' as const);
+      const item = {
+        client_message_id: clientMessageId,
+        chatId,
+        chatType,
+        payload: {},
+        created_at: message.created_at || new Date().toISOString(),
+        upload: {
+          kind,
+          localUri: localFile,
+          mime: message.file_type || 'application/octet-stream',
+          fileName: message.file_name || 'file',
+          expires_at: message.expires_at,
+          view_once: message.view_once,
+        },
+      };
+      await messageStorage.enqueueOutbox(item);
+      const result = await flushOutboxItem(item, user?.id);
+      if (result) {
+        persistMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === message.id || msg.client_message_id === clientMessageId
+              ? ({
+                  ...(result.message as unknown as Message),
+                  client_message_id: clientMessageId,
+                  profiles: msg.profiles,
+                  _status: 'sent' as const,
+                  local_file_uri: msg.local_file_uri,
+                  local_thumb_uri: msg.local_thumb_uri,
+                } as Message)
+              : msg
+          )
+        );
+      } else {
+        persistMessages((prev) =>
+          prev.map((m) =>
+            m.id === message.id ? { ...m, _status: 'pending' as const } : m
+          )
+        );
+      }
+      return;
+    }
+
     await sendMessageToServer(message);
   };
 
@@ -809,14 +1133,33 @@ export default function ChatRoomScreen() {
 
     if (editingMessage && !editingMessage.id.startsWith('temp-')) {
       try {
-        const { message: updated } = await api.messages.edit(
-          editingMessage.id,
-          messageText.trim()
-        );
+        const clear = messageText.trim();
+        let editBody: {
+          content: string;
+          plaintext?: boolean;
+          iv?: string;
+          ephemeral_public_key?: string;
+        } = { content: clear };
+
+        const enc = await tryEncryptChatText({
+          chatType,
+          senderUserId: user?.id,
+          chatId,
+          cleartext: clear,
+          memberUserIds: chatType === 'group' ? groupMemberUserIds : undefined,
+        });
+        if (enc) editBody = enc;
+
+        const { message: updated } = await api.messages.edit(editingMessage.id, editBody);
         persistMessages((prev) =>
           prev.map((m) =>
             m.id === editingMessage.id
-              ? { ...m, ...(updated as Message), _status: 'sent' as const }
+              ? {
+                  ...m,
+                  ...(updated as Message),
+                  decrypted: clear,
+                  _status: 'sent' as const,
+                }
               : m
           )
         );
@@ -832,7 +1175,8 @@ export default function ChatRoomScreen() {
     }
 
     const messageContent = messageText.trim();
-    const tempId = generateTempId();
+    const clientMessageId = generateClientMessageId();
+    const tempId = generateTempId(clientMessageId);
     const replyId = replyTo?.id.startsWith('temp-') ? undefined : replyTo?.id;
 
     setComposerDraft('');
@@ -841,7 +1185,9 @@ export default function ChatRoomScreen() {
 
     const optimisticMessage: Message = {
       id: tempId,
+      client_message_id: clientMessageId,
       content: messageContent,
+      decrypted: messageContent,
       created_at: new Date().toISOString(),
       sender_id: user.id,
       ...(chatType === 'individual'
@@ -864,29 +1210,70 @@ export default function ChatRoomScreen() {
     stickBeforeSend();
     setTimeout(() => scrollToBottom(), 50);
 
-    if (isOnline) {
-      const success = await sendMessageToServer(optimisticMessage);
-      if (!success) {
-        Alert.alert('Error', 'Failed to send message');
+    // Snapshot network at send time (stale isOnline alone is unreliable on web).
+    const net = await NetInfo.fetch();
+    const onlineNow =
+      Boolean(net.isConnected) && net.isInternetReachable !== false;
+
+    if (!onlineNow) {
+      const payload = buildChatSendPayload(chatType, chatId, {
+        content: messageContent,
+        message_type: 'text',
+        client_message_id: clientMessageId,
+        ...(replyId ? { reply_to_id: replyId } : {}),
+      });
+      // Encrypt now if keys are ready; flush will retry encrypt if still plaintext.
+      {
+        const enc = await tryEncryptChatText({
+          chatType,
+          senderUserId: user?.id,
+          chatId,
+          cleartext: messageContent,
+          memberUserIds: chatType === 'group' ? groupMemberUserIds : undefined,
+        });
+        if (enc) Object.assign(payload, enc);
       }
-    } else {
+      await messageStorage.enqueueOutbox({
+        client_message_id: clientMessageId,
+        chatId,
+        chatType,
+        payload,
+        created_at: optimisticMessage.created_at,
+      });
       persistMessages((prev) =>
         prev.map((msg) =>
           msg.id === tempId ? { ...msg, _status: 'pending' as const } : msg
         )
       );
+      showAppToast("Queued — will send when you're back online");
+      return;
+    }
+
+    const success = await sendMessageToServer(optimisticMessage);
+    if (!success) {
+      showAppToast('Message queued — will retry when the connection is stable');
     }
   };
 
   const sendVoiceMessage = async (audioUri: string, duration: number) => {
     if (!user?.id) return;
 
-    const tempId = generateTempId();
+    const clientMessageId = generateClientMessageId();
+    const tempId = generateTempId(clientMessageId);
     const fileName = `voice_message_${Date.now()}.${Platform.OS === 'web' ? 'webm' : 'm4a'}`;
     const mimeType = Platform.OS === 'web' ? 'audio/webm' : 'audio/m4a';
+    const localAudio = await persistChatMedia({
+      chatId,
+      clientMessageId,
+      fromUri: audioUri,
+      messageType: 'audio',
+      fileName,
+      mime: mimeType,
+    });
 
     const optimisticMessage: Message = {
       id: tempId,
+      client_message_id: clientMessageId,
       content: 'Voice message',
       created_at: new Date().toISOString(),
       sender_id: user.id,
@@ -894,11 +1281,11 @@ export default function ChatRoomScreen() {
         ? { receiver_id: chatId }
         : { group_id: chatId }),
       message_type: 'audio',
-      audio_url: audioUri,
+      audio_url: localAudio,
       audio_duration: Math.round(duration),
       file_name: fileName,
       file_type: mimeType,
-      local_audio_uri: audioUri,
+      local_audio_uri: localAudio,
       delivered: false,
       is_read: false,
       profiles: {
@@ -914,16 +1301,35 @@ export default function ChatRoomScreen() {
     stickBeforeSend();
     setTimeout(() => scrollToBottom(), 50);
 
-    if (!isOnline) {
+    const net = await NetInfo.fetch();
+    const onlineNow =
+      Boolean(net.isConnected) && net.isInternetReachable !== false;
+
+    if (!onlineNow) {
+      await messageStorage.enqueueOutbox({
+        client_message_id: clientMessageId,
+        chatId,
+        chatType,
+        payload: {},
+        created_at: optimisticMessage.created_at,
+        upload: {
+          kind: 'audio',
+          localUri: localAudio,
+          mime: mimeType,
+          fileName,
+          audioDuration: Math.round(duration),
+        },
+      });
       persistMessages((prev) =>
         prev.map((msg) =>
           msg.id === tempId ? { ...msg, _status: 'pending' as const } : msg
         )
       );
+      showAppToast("Voice note saved locally — send when you're online");
       return;
     }
 
-    await uploadAndSendVoiceMessage(optimisticMessage, audioUri, Math.round(duration));
+    await uploadAndSendVoiceMessage(optimisticMessage, localAudio, Math.round(duration));
   };
 
   const uploadAndSendVoiceMessage = async (message: Message, audioUri: string, duration: number) => {
@@ -944,6 +1350,7 @@ export default function ChatRoomScreen() {
       const mimeType = Platform.OS === 'web' ? 'audio/webm' : 'audio/m4a';
       const publicUrl = await uploadFromUri('chat-files', fileName, audioUri, mimeType);
 
+      const clientMessageId = message.client_message_id || generateClientMessageId();
       const payload: Record<string, unknown> = {
         content: 'Voice message',
         message_type: 'audio',
@@ -951,6 +1358,7 @@ export default function ChatRoomScreen() {
         audio_duration: duration,
         file_name: `voice_message_${Date.now()}.${Platform.OS === 'web' ? 'webm' : 'm4a'}`,
         file_type: mimeType,
+        client_message_id: clientMessageId,
       };
 
       if (chatType === 'individual') {
@@ -961,12 +1369,14 @@ export default function ChatRoomScreen() {
 
       const { message: rawInsertedData } = await api.messages.send(payload);
       const insertedData = rawInsertedData as unknown as Message;
+      await messageStorage.removeOutbox(clientMessageId);
 
       setMessages(prevMessages => {
         const updated: Message[] = prevMessages.map(msg =>
-          msg.id === message.id
+          msg.id === message.id || msg.client_message_id === clientMessageId
             ? ({
                 ...insertedData,
+                client_message_id: clientMessageId,
                 profiles: message.profiles,
                 _status: 'sent' as const,
                 local_audio_uri: message.local_audio_uri,
@@ -984,13 +1394,40 @@ export default function ChatRoomScreen() {
     } catch (error) {
       console.error('Failed to send voice message:', error);
 
+      const networkish =
+        !(error instanceof ApiError) ||
+        error.isNetworkError ||
+        error.status === 0 ||
+        error.status >= 500;
+
       persistMessages((prev) =>
         prev.map((msg) =>
-          msg.id === message.id ? { ...msg, _status: 'failed' as const } : msg
+          msg.id === message.id
+            ? { ...msg, _status: networkish ? ('pending' as const) : ('failed' as const) }
+            : msg
         )
       );
 
-      Alert.alert('Error', 'Failed to send voice message');
+      if (networkish) {
+        const clientMessageId = message.client_message_id || generateClientMessageId();
+        await messageStorage.enqueueOutbox({
+          client_message_id: clientMessageId,
+          chatId,
+          chatType,
+          payload: {},
+          created_at: message.created_at || new Date().toISOString(),
+          upload: {
+            kind: 'audio',
+            localUri: audioUri,
+            mime: Platform.OS === 'web' ? 'audio/webm' : 'audio/m4a',
+            fileName: message.file_name || 'voice.m4a',
+            audioDuration: duration,
+          },
+        });
+        showAppToast('Voice note queued — will retry when online');
+      } else {
+        Alert.alert('Error', 'Failed to send voice message');
+      }
     }
   };
 
@@ -1006,11 +1443,33 @@ export default function ChatRoomScreen() {
   ) => {
     if (!user?.id) return;
 
-    const tempId = generateTempId();
+    const clientMessageId = generateClientMessageId();
+    const tempId = generateTempId(clientMessageId);
     const cleanFileName = name.replace(/[^a-zA-Z0-9.-]/g, '_');
+
+    // Persist under Documents/ChatReel/{Images|Videos|Files}/…
+    const localPersisted = await persistChatMedia({
+      chatId,
+      clientMessageId,
+      fromUri: uri,
+      messageType,
+      fileName: cleanFileName,
+      mime: type,
+    });
+    const localThumb = options?.localThumbUri
+      ? await persistChatMedia({
+          chatId,
+          clientMessageId: `${clientMessageId}_thumb`,
+          fromUri: options.localThumbUri,
+          messageType: 'image',
+          fileName: `${cleanFileName}_thumb.jpg`,
+          mime: 'image/jpeg',
+        })
+      : undefined;
 
     const optimisticMessage: Message = {
       id: tempId,
+      client_message_id: clientMessageId,
       content: name,
       created_at: new Date().toISOString(),
       sender_id: user.id,
@@ -1018,9 +1477,9 @@ export default function ChatRoomScreen() {
         ? { receiver_id: chatId }
         : { group_id: chatId }),
       message_type: messageType,
-      file_url: uri,
-      local_file_uri: uri,
-      local_thumb_uri: options?.localThumbUri,
+      file_url: localPersisted,
+      local_file_uri: localPersisted,
+      local_thumb_uri: localThumb,
       file_name: cleanFileName,
       file_type: type,
       delivered: false,
@@ -1040,18 +1499,43 @@ export default function ChatRoomScreen() {
     stickBeforeSend();
     setTimeout(() => scrollToBottom(), 50);
 
-    if (!isOnline) {
+    const net = await NetInfo.fetch();
+    const onlineNow =
+      Boolean(net.isConnected) && net.isInternetReachable !== false;
+
+    if (!onlineNow) {
+      await messageStorage.enqueueOutbox({
+        client_message_id: clientMessageId,
+        chatId,
+        chatType,
+        payload: {},
+        created_at: optimisticMessage.created_at,
+        upload: {
+          kind: messageType,
+          localUri: localPersisted || uri,
+          mime: type,
+          fileName: cleanFileName,
+          expires_at: options?.expiresAt,
+          view_once: options?.viewOnce,
+        },
+      });
       persistMessages((prev) =>
         prev.map((m) =>
           m.id === tempId ? { ...m, _status: 'pending' as const } : m
         )
       );
+      showAppToast("Media saved locally — send when you're online");
       return;
     }
 
     try {
       const storagePath = `${user.id}/files/${Date.now()}_${cleanFileName}`;
-      const publicUrl = await uploadFromUri('chat-files', storagePath, uri, type);
+      const publicUrl = await uploadFromUri(
+        'chat-files',
+        storagePath,
+        localPersisted || uri,
+        type
+      );
 
       const payload: Record<string, unknown> = {
         content: cleanFileName,
@@ -1059,6 +1543,7 @@ export default function ChatRoomScreen() {
         file_url: publicUrl,
         file_name: cleanFileName,
         file_type: type,
+        client_message_id: clientMessageId,
       };
 
       if (options?.expiresAt) payload.expires_at = options.expiresAt;
@@ -1072,12 +1557,14 @@ export default function ChatRoomScreen() {
 
       const { message: rawInsertedData } = await api.messages.send(payload);
       const insertedData = rawInsertedData as unknown as Message;
+      await messageStorage.removeOutbox(clientMessageId);
 
       setMessages((prev) => {
         const updated = prev.map((msg) =>
-          msg.id === tempId
+          msg.id === tempId || msg.client_message_id === clientMessageId
             ? ({
                 ...insertedData,
+                client_message_id: clientMessageId,
                 profiles: optimisticMessage.profiles,
                 _status: 'sent' as const,
                 local_file_uri: optimisticMessage.local_file_uri,
@@ -1096,15 +1583,41 @@ export default function ChatRoomScreen() {
     } catch (error: unknown) {
       console.error('File upload failed:', error);
 
+      const networkish =
+        !(error instanceof ApiError) ||
+        error.isNetworkError ||
+        error.status === 0 ||
+        error.status >= 500;
+
       persistMessages((prev) =>
         prev.map((msg) =>
-          msg.id === tempId ? { ...msg, _status: 'failed' as const } : msg
+          msg.id === tempId
+            ? { ...msg, _status: networkish ? ('pending' as const) : ('failed' as const) }
+            : msg
         )
       );
 
-      const message =
-        error instanceof Error ? error.message : 'Unknown error';
-      Alert.alert('Upload Failed', `Could not send ${messageType}. ${message}`);
+      if (networkish) {
+        await messageStorage.enqueueOutbox({
+          client_message_id: clientMessageId,
+          chatId,
+          chatType,
+          payload: {},
+          created_at: optimisticMessage.created_at,
+          upload: {
+            kind: messageType,
+            localUri: localPersisted || uri,
+            mime: type,
+            fileName: cleanFileName,
+            expires_at: options?.expiresAt,
+            view_once: options?.viewOnce,
+          },
+        });
+        showAppToast('Media queued — will retry when online');
+      } else {
+        const errMsg = error instanceof Error ? error.message : 'Unknown error';
+        Alert.alert('Upload Failed', `Could not send ${messageType}. ${errMsg}`);
+      }
     }
   };
 
@@ -1277,6 +1790,7 @@ export default function ChatRoomScreen() {
   useEffect(() => {
     if (!settingsReady || !user?.id || !chatId) return;
     resetForChat();
+    void ensureChatReelTree();
     void fetchMessages();
   }, [user?.id, chatId, chatType, settingsReady]);
 
@@ -1326,6 +1840,47 @@ export default function ChatRoomScreen() {
     [chatId]
   );
 
+  /** Download remote media into Documents/ChatReel/{Images|Videos|Audio|Files}/ for offline open. */
+  const ensureLocalMediaForMessage = useCallback(
+    (msg: Message) => {
+      if (Platform.OS === 'web') return;
+      const key = msg.client_message_id || msg.id;
+      if (!key || key.startsWith('temp-')) return;
+
+      const remote =
+        (msg.file_url && /^https?:\/\//i.test(msg.file_url) && msg.file_url) ||
+        (msg.audio_url && /^https?:\/\//i.test(msg.audio_url) && msg.audio_url) ||
+        null;
+      if (!remote) return;
+      if (msg.local_file_uri?.includes('/ChatReel/') || msg.local_audio_uri?.includes('/ChatReel/')) {
+        return;
+      }
+
+      void cacheRemoteChatMedia({
+        chatId,
+        clientMessageId: key,
+        remoteUrl: remote,
+        messageType: msg.message_type,
+        fileName: msg.file_name,
+        mime: msg.file_type,
+      }).then((localUri) => {
+        if (!localUri) return;
+        setMessages((prev) => {
+          const next = prev.map((m) => {
+            if (m.id !== msg.id && m.client_message_id !== msg.client_message_id) return m;
+            if (msg.message_type === 'audio') {
+              return { ...m, local_audio_uri: localUri };
+            }
+            return { ...m, local_file_uri: localUri };
+          });
+          void messageStorage.saveMessages(chatId, next);
+          return next;
+        });
+      });
+    },
+    [chatId]
+  );
+
   const upsertRealtimeMessage = useCallback(
     (raw: Message, event: 'INSERT' | 'UPDATE') => {
       if (!user?.id) return;
@@ -1353,92 +1908,119 @@ export default function ChatRoomScreen() {
         user_id: normalized.sender_id,
       };
 
-      const incoming: Message = {
+      const incomingBase: Message = {
         ...normalized,
         profiles: normalized.profiles ?? fallbackProfile,
         _status: 'sent',
       };
 
-      setMessages((prev) => {
-        const idx = prev.findIndex((m) => m.id === incoming.id);
+      void (async () => {
+        let incoming = await decryptChatMessage(incomingBase, user.id);
 
-        if (idx >= 0) {
-          const next = [...prev];
-          const existing = next[idx];
-          next[idx] = {
-            ...existing,
-            ...incoming,
-            local_file_uri: existing.local_file_uri ?? incoming.local_file_uri,
-            local_audio_uri: existing.local_audio_uri ?? incoming.local_audio_uri,
-            file_url: incoming.file_url || existing.file_url,
-            audio_url: incoming.audio_url || existing.audio_url,
-            profiles: incoming.profiles ?? existing.profiles,
-          };
-          void messageStorage.saveMessages(chatId, next);
-          return next;
-        }
-
-        if (event === 'INSERT' && isOutgoing) {
-          const tempIdx = prev.findIndex((m) =>
-            matchesOptimisticTemp(m, incoming, user.id)
-          );
-          if (tempIdx >= 0) {
-            const next = [...prev];
-            const temp = prev[tempIdx];
-            next[tempIdx] = {
-              ...incoming,
-              local_file_uri: temp.local_file_uri,
-              local_audio_uri: temp.local_audio_uri,
-              file_url: incoming.file_url || temp.file_url,
-              audio_url: incoming.audio_url || temp.audio_url,
-              profiles: temp.profiles ?? incoming.profiles,
-              _status: 'sent',
-            };
-            const deduped = deduplicateMessages(next);
-            void messageStorage.saveMessages(chatId, deduped);
-            return deduped;
+        // Preserve sender cleartext from optimistic/local rows when we can't re-decrypt.
+        setMessages((prev) => {
+          const existingById = prev.find((m) => m.id === incoming.id);
+          const existingTemp =
+            event === 'INSERT' && isOutgoing
+              ? prev.find((m) => matchesOptimisticTemp(m, incoming, user.id))
+              : undefined;
+          const localHint = existingById || existingTemp;
+          if (localHint) {
+            incoming = preserveSenderCleartext(incoming, localHint, user.id);
           }
+
+          const idx = prev.findIndex((m) => m.id === incoming.id);
+
+          if (idx >= 0) {
+            const next = [...prev];
+            const existing = next[idx];
+            next[idx] = {
+              ...existing,
+              ...incoming,
+              local_file_uri: existing.local_file_uri ?? incoming.local_file_uri,
+              local_audio_uri: existing.local_audio_uri ?? incoming.local_audio_uri,
+              file_url: incoming.file_url || existing.file_url,
+              audio_url: incoming.audio_url || existing.audio_url,
+              profiles: incoming.profiles ?? existing.profiles,
+              decrypted: incoming.decrypted ?? existing.decrypted,
+            };
+            void messageStorage.saveMessages(chatId, next);
+            return next;
+          }
+
+          if (event === 'INSERT' && isOutgoing) {
+            const tempIdx = prev.findIndex((m) =>
+              matchesOptimisticTemp(m, incoming, user.id)
+            );
+            if (tempIdx >= 0) {
+              const next = [...prev];
+              const temp = prev[tempIdx];
+              next[tempIdx] = {
+                ...incoming,
+                local_file_uri: temp.local_file_uri,
+                local_audio_uri: temp.local_audio_uri,
+                file_url: incoming.file_url || temp.file_url,
+                audio_url: incoming.audio_url || temp.audio_url,
+                profiles: temp.profiles ?? incoming.profiles,
+                decrypted: incoming.decrypted ?? temp.decrypted ?? temp.content,
+                _status: 'sent',
+              };
+              const deduped = deduplicateMessages(next);
+              void messageStorage.saveMessages(chatId, deduped);
+              return deduped;
+            }
+          }
+
+          if (event !== 'INSERT') return prev;
+
+          if (isIncoming || isOutgoing) {
+            const next = deduplicateMessages([...prev, incoming]);
+            void messageStorage.saveMessages(chatId, next);
+            return next;
+          }
+
+          return prev;
+        });
+
+        if (event === 'INSERT' && isIncoming) {
+          if (shouldScrollToBottomRef.current) {
+            requestAnimationFrame(() => scrollToBottom(false));
+            setTimeout(() => scrollToBottom(false), 80);
+          }
+
+          if (chatType === 'individual' && incoming.receiver_id === user.id) {
+            markSingleMessageAsRead(incoming.id);
+          }
+          if (chatType === 'group' && incoming.sender_id !== user.id) {
+            markSingleMessageAsRead(incoming.id);
+          }
+
+          setTimeout(() => void pullLatestMessagesRef.current(), 400);
         }
 
-        if (event !== 'INSERT') return prev;
-
-        if (isIncoming || isOutgoing) {
-          const next = deduplicateMessages([...prev, incoming]);
-          void messageStorage.saveMessages(chatId, next);
-          return next;
+        if (
+          incoming.message_type === 'image' ||
+          incoming.message_type === 'video' ||
+          incoming.message_type === 'audio' ||
+          incoming.message_type === 'file'
+        ) {
+          ensureLocalMediaForMessage(incoming);
         }
 
-        return prev;
-      });
-
-      if (event === 'INSERT' && isIncoming) {
-        // Only follow the new message if the user is already at the bottom.
-        // If they scrolled up to read history, don't yank them down.
-        if (shouldScrollToBottomRef.current) {
-          requestAnimationFrame(() => scrollToBottom(false));
-          setTimeout(() => scrollToBottom(false), 80);
+        if (!normalized.profiles && normalized.sender_id && isIncoming) {
+          void api.profiles
+            .getByUserId(normalized.sender_id)
+            .then(({ profile: p }) => {
+              if (!p) return;
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === normalized.id ? { ...m, profiles: p as Message['profiles'] } : m
+                )
+              );
+            })
+            .catch(() => undefined);
         }
-
-        if (chatType === 'individual' && incoming.receiver_id === user.id) {
-          markSingleMessageAsRead(incoming.id);
-        }
-        if (chatType === 'group' && incoming.sender_id !== user.id) {
-          markSingleMessageAsRead(incoming.id);
-        }
-
-        setTimeout(() => void pullLatestMessagesRef.current(), 400);
-      }
-
-      if (!normalized.profiles && normalized.sender_id && isIncoming) {
-        void api.profiles.getByUserId(normalized.sender_id).then(({ profile: p }) => {
-          if (!p) return;
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === normalized.id ? { ...m, profiles: p as Message['profiles'] } : m
-            )
-          );
-        }).catch(() => undefined);
-      }
+      })();
     },
     [
       messageBelongsToChat,
@@ -1447,6 +2029,7 @@ export default function ChatRoomScreen() {
       chatType,
       scrollToBottom,
       markSingleMessageAsRead,
+      ensureLocalMediaForMessage,
     ]
   );
 
@@ -1482,15 +2065,34 @@ export default function ChatRoomScreen() {
         undefined,
         since
       );
-      const incoming = sanitizeChatMessages([...(raw as Message[])]).filter(
+      const incomingRaw = sanitizeChatMessages([...(raw as Message[])]).filter(
         messageBelongsToChat
       );
-      if (incoming.length === 0) return;
+      if (incomingRaw.length === 0) return;
+
+      const incoming = await decryptChatMessages(incomingRaw, user.id);
 
       setMessages((prev) => {
         const prevIds = new Set(prev.map((m) => m.id));
         const hasNew = incoming.some((m) => !prevIds.has(m.id));
-        if (!hasNew) return prev;
+        if (!hasNew) {
+          // Still refresh decrypted / fields for existing encrypted rows.
+          let changed = false;
+          const next = prev.map((m) => {
+            const fresh = incoming.find((x) => x.id === m.id);
+            if (!fresh) return m;
+            if (fresh.decrypted && fresh.decrypted !== m.decrypted) {
+              changed = true;
+              return { ...m, ...fresh, decrypted: fresh.decrypted ?? m.decrypted };
+            }
+            return m;
+          });
+          if (changed) {
+            void messageStorage.saveMessages(chatId, next);
+            return next;
+          }
+          return prev;
+        }
 
         const pending = prev.filter(
           (m) =>
@@ -1500,8 +2102,19 @@ export default function ChatRoomScreen() {
             m._status === 'failed'
         );
         const incomingIds = new Set(incoming.map((m) => m.id));
-        const kept = prev.filter((m) => !incomingIds.has(m.id));
-        const uniquePending = pending.filter((m) => !incomingIds.has(m.id));
+        const incomingClientIds = new Set(
+          incoming.map((m) => m.client_message_id).filter(Boolean) as string[]
+        );
+        const kept = prev.filter(
+          (m) =>
+            !incomingIds.has(m.id) &&
+            !(m.client_message_id && incomingClientIds.has(m.client_message_id))
+        );
+        const uniquePending = pending.filter(
+          (m) =>
+            !incomingIds.has(m.id) &&
+            !(m.client_message_id && incomingClientIds.has(m.client_message_id))
+        );
         const merged = deduplicateMessages([...kept, ...incoming, ...uniquePending]);
 
         const readIds = new Set(prev.filter((m) => m.is_read).map((m) => m.id));
@@ -1540,7 +2153,7 @@ export default function ChatRoomScreen() {
     Boolean(chatId && user?.id)
   );
 
-  // Mark read + incremental sync while the chat is open (realtime backup).
+  // Realtime-first while open: focus catch-up + rare safety poll (not a 2s heartbeat).
   useFocusEffect(
     useCallback(() => {
       void ensureSupabaseSession().then(() => {
@@ -1548,11 +2161,33 @@ export default function ChatRoomScreen() {
         markMessagesAsRead();
       });
 
+      // Suppress Expo message push while this room is open (Realtime delivers).
+      setLocalActiveChatFocus({ chatId, chatType });
+      void api.profiles.setActiveChat(chatId, chatType).catch(() => undefined);
+
+      const chatKey =
+        chatType === 'group'
+          ? `group:${chatId}`
+          : user?.id && user.id < chatId
+            ? `dm:${user.id}:${chatId}`
+            : `dm:${chatId}:${user?.id}`;
+      void import('../../lib/chatSocket').then((m) => {
+        if (chatKey.includes('undefined')) return;
+        m.subscribeChatSocket(chatKey);
+      });
+
       const poll = setInterval(() => {
         void pullLatestMessages();
-      }, 2000);
-      return () => clearInterval(poll);
-    }, [markMessagesAsRead, pullLatestMessages])
+      }, 45_000);
+      return () => {
+        clearInterval(poll);
+        setLocalActiveChatFocus(null);
+        void api.profiles.setActiveChat(null).catch(() => undefined);
+        void import('../../lib/chatSocket').then((m) => {
+          if (!chatKey.includes('undefined')) m.unsubscribeChatSocket(chatKey);
+        });
+      };
+    }, [markMessagesAsRead, pullLatestMessages, chatId, chatType, user?.id])
   );
 
   // Keep the viewport pinned to the newest row when live messages arrive (web FlatList).
@@ -1820,7 +2455,11 @@ export default function ChatRoomScreen() {
             <View style={styles.albumAvatarSlot}>
               {item.showAvatar ? (
                 <Image
-                  source={{ uri: profile?.avatar_url || 'https://via.placeholder.com/32' }}
+                  source={
+                    profile?.avatar_url
+                      ? { uri: profile.avatar_url }
+                      : undefined
+                  }
                   style={styles.albumAvatar}
                 />
               ) : (
@@ -1894,10 +2533,13 @@ export default function ChatRoomScreen() {
             onPress={() => navigation.goBack()} 
           />
           <TouchableOpacity style={styles.headerInfo} onPress={handleInfoPress}>
-            <Image 
-              source={{ uri: avatarUrl || 'https://via.placeholder.com/40' }} 
-              style={styles.headerAvatar} 
-            />
+            {avatarUrl ? (
+              <Image source={{ uri: avatarUrl }} style={styles.headerAvatar} />
+            ) : (
+              <View style={[styles.headerAvatar, styles.headerAvatarFallback]}>
+                <Ionicons name="person" size={22} color={theme.headerStatus} />
+              </View>
+            )}
             <View style={styles.headerText}>
               <Text style={[styles.headerName, { color: theme.headerText }]} numberOfLines={1}>
                 {chatName}
@@ -2165,6 +2807,11 @@ const styles = StyleSheet.create({
     height: 40,
     borderRadius: 20,
     marginRight: 12,
+  },
+  headerAvatarFallback: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   headerText: {
     flexDirection: 'column',

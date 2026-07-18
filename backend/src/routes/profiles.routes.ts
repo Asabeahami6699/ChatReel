@@ -1,5 +1,9 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import {
+  clearActiveChatFocus,
+  setActiveChatFocus,
+} from '../lib/activeChatFocus';
 import { supabaseAdmin } from '../lib/supabaseAdmin';
 import {
   getCachedProfileMe,
@@ -122,7 +126,8 @@ router.patch(
       .update({
         ...body,
         updated_at: new Date().toISOString(),
-        ...(body.status === 'Offline' ? { last_seen_at: new Date().toISOString() } : {}),
+        // Always bump last_seen so peer presence Realtime stays fresh.
+        last_seen_at: new Date().toISOString(),
       })
       .eq('user_id', req.userId!)
       .select('*')
@@ -131,6 +136,54 @@ router.patch(
     if (error) return res.status(500).json({ error: error.message });
     invalidateProfileMe(req.userId!);
     return res.json({ profile: data });
+  })
+);
+
+/** Lightweight presence ping while the app is foregrounded. */
+router.post(
+  '/me/heartbeat',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const now = new Date().toISOString();
+    const { data, error } = await supabaseAdmin
+      .from('profiles')
+      .update({
+        status: 'Online',
+        last_seen_at: now,
+        updated_at: now,
+      })
+      .eq('user_id', req.userId!)
+      .select('id, user_id, status, last_seen_at')
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+    invalidateProfileMe(req.userId!);
+    return res.json({ ok: true, profile: data });
+  })
+);
+
+/**
+ * Report which chat is currently open so message pushes can be skipped
+ * (Realtime already delivers to the open room).
+ */
+router.post(
+  '/me/active-chat',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const body = z
+      .object({
+        chat_id: z.string().min(1).nullable(),
+        chat_type: z.enum(['individual', 'group']).optional(),
+      })
+      .parse(req.body);
+
+    const userId = req.userId!;
+    if (!body.chat_id) {
+      clearActiveChatFocus(userId);
+    } else {
+      setActiveChatFocus(userId, body.chat_id, body.chat_type ?? 'individual');
+    }
+    return res.json({ ok: true });
   })
 );
 

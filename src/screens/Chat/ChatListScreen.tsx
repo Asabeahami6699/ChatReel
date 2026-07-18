@@ -4,11 +4,9 @@ import {
   View,
   Text,
   StyleSheet,
-  FlatList,
   ActivityIndicator,
   TouchableOpacity,
   Image,
-  RefreshControl,
   useWindowDimensions,
   Platform,
   Modal,
@@ -17,13 +15,15 @@ import {
   Animated,
   Easing,
 } from 'react-native'
-import { SoftFadeImage } from '../../components/SoftFadeImage'
+import { ChatListAvatar } from '../../components/ChatListAvatar'
+import { ChatListRow, ChatListScrollPane } from '../../components/ChatListRow'
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { TextInput, FAB, Button } from 'react-native-paper'
 import { Ionicons } from '@expo/vector-icons'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { useAuth } from '../../hooks/useAuth'
-import { TabView, SceneMap } from 'react-native-tab-view'
+import { promptSignIn } from '../../lib/requireSignedIn'
+import { TabView } from 'react-native-tab-view'
 import { LinearGradient } from 'expo-linear-gradient'
 import { useIndividualChats, type IndividualChat } from '../../hooks/useIndividualChats'
 import DropdownMenu from '../../components/DropdownMenu'
@@ -62,6 +62,18 @@ const ALL_FAB_ACTIONS = [
   { key: 'new-group', label: 'New group', icon: 'people' as const, route: 'NewGroup' },
   { key: 'friends-list', label: 'Friends list', icon: 'people-circle' as const, route: 'FriendsList' },
 ] as const
+
+const GROUP_FAB_ACTIONS = [
+  { key: 'create-group', label: 'Create group', icon: 'people' as const, route: 'NewGroup' },
+  { key: 'group-list', label: 'Group list', icon: 'list' as const, route: 'GroupsList' },
+] as const
+
+type FabAction = {
+  key: string
+  label: string
+  icon: React.ComponentProps<typeof Ionicons>['name']
+  route: string
+}
 
 type FriendSearchRow = {
   user_id: string
@@ -111,7 +123,7 @@ type AllFeedItem =
   | { kind: 'request'; key: string; sortAt: string; item: IncomingRequestRow }
 
 export default function ChatListScreen({ setSelectedChat }: Props) {
-  const { user } = useAuth()
+  const { user, isGuest, exitGuest } = useAuth()
   const { theme } = useChatSettings()
   const myProfileId = useCurrentProfileId()
   const navigation = useNavigation<any>()
@@ -496,20 +508,36 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
     }).start()
   }, [fabMenuAnim, fabMenuOpen])
 
+  const requireAuth = useCallback(
+    (message?: string) => {
+      if (!isGuest) return true
+      promptSignIn({
+        title: 'Sign in required',
+        message: message ?? 'Sign in to continue, or keep exploring as a guest.',
+        onLogin: exitGuest,
+      })
+      return false
+    },
+    [isGuest, exitGuest]
+  )
+
   const runFabAction = useCallback(
     (route: string) => {
       closeFabMenu()
+      if (!requireAuth('Sign in to use friends, groups, and chat tools.')) return
       if (!isOnline) return
       navigation.navigate(route)
     },
-    [closeFabMenu, isOnline, navigation]
+    [closeFabMenu, isOnline, navigation, requireAuth]
   )
 
+  const prevFabTabRef = useRef(index)
   useEffect(() => {
-    if (index !== allTabIndex && fabMenuOpen) {
-      closeFabMenu()
+    if (prevFabTabRef.current !== index) {
+      prevFabTabRef.current = index
+      if (fabMenuOpen) closeFabMenu()
     }
-  }, [allTabIndex, closeFabMenu, fabMenuOpen, index])
+  }, [closeFabMenu, fabMenuOpen, index])
 
   useEffect(() => {
     if (searchOpen && fabMenuOpen) {
@@ -576,6 +604,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
   }
 
   const handleChatPress = async (item: any, isGroup = false) => {
+    if (!requireAuth('Sign in to open chats.')) return
     const kind: ChatListEntryKind = isGroup ? 'group' : 'individual'
     const chatId = isGroup ? item.id : item.user_id
     if (hiddenChatKeys.has(chatListKey(kind, chatId))) {
@@ -645,6 +674,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
 
   const selectSearchSuggestion = useCallback(
     (item: SearchSuggestion) => {
+      if (!requireAuth('Sign in to open chats.')) return
       const label = item.name.trim()
       if (label) addToSearchHistory(label)
 
@@ -672,7 +702,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
       setSearchOpen(false)
       searchInputRef.current?.blur()
     },
-    [addToSearchHistory, navigation, setSelectedChat]
+    [addToSearchHistory, navigation, setSelectedChat, requireAuth]
   )
 
   const suggestionIcon = (kind: SearchSuggestion['kind']) => {
@@ -719,96 +749,19 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
     )
   }
 
-  const AvatarComponent = ({ uri, name }: { uri?: string; name: string }) => {
-    const [error, setError] = useState(false);
-
-    if (error || !uri || uri.includes('placeholder.com')) {
-      return (
-        <View style={styles.avatarFallback}>
-          <Text style={styles.avatarInitials}>
-            {name ? name.charAt(0).toUpperCase() : '?'}
-          </Text>
-        </View>
-      );
-    }
-
-    return (
-      <SoftFadeImage
-        uri={uri}
-        style={styles.avatar}
-        onError={() => setError(true)}
-        fallback={
-          <View style={styles.avatarFallback}>
-            <Text style={styles.avatarInitials}>
-              {name ? name.charAt(0).toUpperCase() : '?'}
-            </Text>
-          </View>
-        }
-      />
-    );
-  };
-
   const renderChatItem = ({ item, isGroup = false }: { item: any; isGroup?: boolean }) => {
     return (
-      <TouchableOpacity 
-        style={[styles.chatItem, { backgroundColor: theme.listBg }]} 
+      <ChatListRow
+        item={item}
+        isGroup={isGroup}
+        listBg={theme.listBg}
+        primaryText={theme.listPrimaryText}
+        secondaryText={theme.listSecondaryText}
+        preview={formatLastMessage(item, isGroup)}
+        timeLabel={item.last_message_at ? formatTime(item.last_message_at) : ''}
         onPress={() => handleChatPress(item, isGroup)}
         onLongPress={(e) => openChatMenu(e, item, isGroup)}
-        delayLongPress={400}
-      >
-        <View style={styles.avatarContainer}>
-          <AvatarComponent uri={item.avatar_url} name={item.name} />
-          {/* Show role badge for groups */}
-          {isGroup && item.user_role && (item.user_role === 'creator' || item.user_role === 'admin') && (
-            <View style={[
-              styles.roleBadge, 
-              item.user_role === 'creator' ? styles.creatorBadge : styles.adminBadge
-            ]}>
-              <Text style={styles.roleBadgeText}>
-                {item.user_role === 'creator' ? '👑' : '⚡'}
-              </Text>
-            </View>
-          )}
-        </View>
-
-        <View style={styles.chatInfo}>
-          <View style={styles.chatHeader}>
-            <Text style={[styles.chatName, { color: theme.listPrimaryText }]} numberOfLines={1}>
-              {item.name}
-              {isGroup && item.member_count > 0 && (
-                <Text style={[styles.memberCountText, { color: theme.listSecondaryText }]}> • {item.member_count}</Text>
-              )}
-            </Text>
-            <View style={styles.timeContainer}>
-              {item.last_message_at && (
-                <Text style={[styles.time, { color: theme.listSecondaryText }]}>{formatTime(item.last_message_at)}</Text>
-              )}
-            </View>
-          </View>
-
-          <View style={styles.messageContainer}>
-            <Text
-              style={[
-                styles.lastMessage,
-                { color: theme.listSecondaryText },
-                item.unread_count > 0 && [styles.unreadMessage, { color: theme.listPrimaryText }],
-              ]}
-              numberOfLines={1}
-            >
-              {formatLastMessage(item, isGroup)}
-            </Text>
-            <View style={styles.rightContainer}>
-              {item.unread_count > 0 && (
-                <View style={styles.unreadBadge}>
-                  <Text style={styles.unreadCount}>
-                    {item.unread_count > 99 ? '99+' : item.unread_count}
-                  </Text>
-                </View>
-              )}
-            </View>
-          </View>
-        </View>
-      </TouchableOpacity>
+      />
     );
   };
 
@@ -842,7 +795,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
           activeOpacity={0.75}
         >
           <View style={styles.avatarContainer}>
-            <AvatarComponent uri={request.avatar_url} name={request.display_name} />
+            <ChatListAvatar uri={request.avatar_url} name={request.display_name} />
             <View style={[styles.callTypeIcon, styles.requestIcon]}>
               <Ionicons name="person-add" size={12} color="#fff" />
             </View>
@@ -876,137 +829,141 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
     return renderChatItem({ item: item.item })
   }
 
-  const AllRoute = () => (
-    <FlatList
-      data={allFeedItems}
-      renderItem={({ item }) => renderAllFeedItem({ item })}
-      keyExtractor={(item) => item.key}
-      refreshControl={
-        <RefreshControl
-          refreshing={isRefreshing}
-          onRefresh={onRefresh}
-          enabled={isOnline}
-        />
-      }
-      ListEmptyComponent={
-        individualLoading || groupsLoading || requestsLoading ? (
-          <ActivityIndicator size="large" color={theme.primary} style={styles.loader} />
-        ) : (
-          <EmptyState
-            title="Nothing here yet"
-            subtitle={
-              searchQuery.trim()
-                ? 'No chats or requests match your search'
-                : 'Start chatting, join a group, or accept a friend request'
+  const offlineOrStaleHeader = (
+    !isOnline ? (
+      <View style={styles.offlineNotice}>
+        <Text style={styles.offlineNoticeText}>📡 Offline Mode - Showing cached data</Text>
+      </View>
+    ) : individualStale || groupsStale ? (
+      <TouchableOpacity style={styles.staleNotice} onPress={onRefresh}>
+        <Text style={styles.staleNoticeText}>🔄 Data may be outdated. Tap to refresh.</Text>
+      </TouchableOpacity>
+    ) : null
+  )
+
+  const renderScene = ({ route }: { route: { key: string } }) => {
+    switch (route.key) {
+      case 'all':
+        return (
+          <ChatListScrollPane
+            refreshing={isRefreshing}
+            onRefresh={onRefresh}
+            isOnline={isOnline}
+            header={offlineOrStaleHeader}
+            empty={
+              individualLoading || groupsLoading || requestsLoading ? (
+                <ActivityIndicator size="large" color={theme.primary} style={styles.loader} />
+              ) : (
+                <EmptyState
+                  title="Nothing here yet"
+                  subtitle={
+                    searchQuery.trim()
+                      ? 'No chats or requests match your search'
+                      : 'Start chatting, join a group, or accept a friend request'
+                  }
+                  buttonText="Add Friends"
+                  onPress={() => {
+                    if (!requireAuth('Sign in to add friends.')) return
+                    navigation.navigate('FriendsList')
+                  }}
+                  isOnline={isOnline}
+                />
+              )
             }
-            buttonText="Add Friends"
-            onPress={() => navigation.navigate('FriendsList')}
-            isOnline={isOnline}
-          />
+          >
+            {allFeedItems.map((feedItem) => (
+              <View key={feedItem.key}>{renderAllFeedItem({ item: feedItem })}</View>
+            ))}
+          </ChatListScrollPane>
         )
-      }
-      ListHeaderComponent={
-        !isOnline ? (
-          <View style={styles.offlineNotice}>
-            <Text style={styles.offlineNoticeText}>📡 Offline Mode - Showing cached data</Text>
-          </View>
-        ) : individualStale || groupsStale ? (
-          <TouchableOpacity style={styles.staleNotice} onPress={onRefresh}>
-            <Text style={styles.staleNoticeText}>🔄 Data may be outdated. Tap to refresh.</Text>
-          </TouchableOpacity>
-        ) : null
-      }
-    />
-  )
-
-  const FriendsRoute = () => (
-    <FlatList
-      data={visibleIndividualChats}
-      renderItem={({ item }) => renderChatItem({ item })}
-      keyExtractor={item => item.user_id}
-      refreshControl={
-        <RefreshControl 
-          refreshing={isRefreshing} 
-          onRefresh={onRefresh}
-          enabled={isOnline}
-        />
-      }
-      ListEmptyComponent={
-        individualLoading ? (
-          <ActivityIndicator size="large" color={theme.primary} style={styles.loader} />
-        ) : (
-          <EmptyState
-            title="No conversations yet"
-            subtitle={individualChats.length === 0 ? "Add friends to start chatting" : "No chats match your search"}
-            buttonText="Add Friends"
-            onPress={() => navigation.navigate('FriendsList')}
+      case 'friends':
+        return (
+          <ChatListScrollPane
+            refreshing={isRefreshing}
+            onRefresh={onRefresh}
             isOnline={isOnline}
-          />
+            header={
+              !isOnline ? (
+                <View style={styles.offlineNotice}>
+                  <Text style={styles.offlineNoticeText}>📡 Offline Mode - Showing cached data</Text>
+                </View>
+              ) : individualStale ? (
+                <TouchableOpacity style={styles.staleNotice} onPress={refreshIndividuals}>
+                  <Text style={styles.staleNoticeText}>🔄 Data may be outdated. Tap to refresh.</Text>
+                </TouchableOpacity>
+              ) : null
+            }
+            empty={
+              individualLoading ? (
+                <ActivityIndicator size="large" color={theme.primary} style={styles.loader} />
+              ) : (
+                <EmptyState
+                  title="No conversations yet"
+                  subtitle={
+                    individualChats.length === 0
+                      ? 'Add friends to start chatting'
+                      : 'No chats match your search'
+                  }
+                  buttonText="Add Friends"
+                  onPress={() => {
+                    if (!requireAuth('Sign in to add friends.')) return
+                    navigation.navigate('FriendsList')
+                  }}
+                  isOnline={isOnline}
+                />
+              )
+            }
+          >
+            {visibleIndividualChats.map((chat) => (
+              <View key={chat.user_id}>{renderChatItem({ item: chat })}</View>
+            ))}
+          </ChatListScrollPane>
         )
-      }
-      ListHeaderComponent={
-        !isOnline ? (
-          <View style={styles.offlineNotice}>
-            <Text style={styles.offlineNoticeText}>📡 Offline Mode - Showing cached data</Text>
-          </View>
-        ) : individualStale ? (
-          <TouchableOpacity style={styles.staleNotice} onPress={refreshIndividuals}>
-            <Text style={styles.staleNoticeText}>🔄 Data may be outdated. Tap to refresh.</Text>
-          </TouchableOpacity>
-        ) : null
-      }
-    />
-  )
-
-  const GroupRoute = () => (
-    <FlatList
-      data={visibleGroupChats}
-      renderItem={({ item }) => renderChatItem({ item, isGroup: true })}
-      keyExtractor={item => item.id}
-      refreshControl={
-        <RefreshControl 
-          refreshing={isRefreshing} 
-          onRefresh={onRefresh}
-          enabled={isOnline}
-        />
-      }
-      ListEmptyComponent={
-        groupsLoading ? (
-          <ActivityIndicator size="large" color={theme.primary} style={styles.loader} />
-        ) : (
-          <EmptyState
-            title="No groups yet"
-            subtitle="Create or join a group to start chatting"
-            buttonText="Create New Group"
-            onPress={() => navigation.navigate('NewGroup')}
+      case 'group':
+        return (
+          <ChatListScrollPane
+            refreshing={isRefreshing}
+            onRefresh={onRefresh}
             isOnline={isOnline}
-          />
+            header={
+              !isOnline ? (
+                <View style={styles.offlineNotice}>
+                  <Text style={styles.offlineNoticeText}>📡 Offline Mode - Showing cached data</Text>
+                </View>
+              ) : groupsStale ? (
+                <TouchableOpacity style={styles.staleNotice} onPress={refreshGroups}>
+                  <Text style={styles.staleNoticeText}>🔄 Data may be outdated. Tap to refresh.</Text>
+                </TouchableOpacity>
+              ) : null
+            }
+            empty={
+              groupsLoading ? (
+                <ActivityIndicator size="large" color={theme.primary} style={styles.loader} />
+              ) : (
+                <EmptyState
+                  title="No groups yet"
+                  subtitle="Create or join a group to start chatting"
+                  buttonText="Create New Group"
+                  onPress={() => {
+                    if (!requireAuth('Sign in to create a group.')) return
+                    navigation.navigate('NewGroup')
+                  }}
+                  isOnline={isOnline}
+                />
+              )
+            }
+          >
+            {visibleGroupChats.map((group) => (
+              <View key={group.id}>{renderChatItem({ item: group, isGroup: true })}</View>
+            ))}
+          </ChatListScrollPane>
         )
-      }
-      ListHeaderComponent={
-        !isOnline ? (
-          <View style={styles.offlineNotice}>
-            <Text style={styles.offlineNoticeText}>📡 Offline Mode - Showing cached data</Text>
-          </View>
-        ) : groupsStale ? (
-          <TouchableOpacity style={styles.staleNotice} onPress={refreshGroups}>
-            <Text style={styles.staleNoticeText}>🔄 Data may be outdated. Tap to refresh.</Text>
-          </TouchableOpacity>
-        ) : null
-      }
-    />
-  )
-
-  const RequestsRoute = () => (
-    <FriendRequestsScreen />
-  )
-
-  const renderScene = SceneMap({
-    all: AllRoute,
-    friends: FriendsRoute,
-    group: GroupRoute,
-    requests: RequestsRoute,
-  })
+      case 'requests':
+        return <FriendRequestsScreen />
+      default:
+        return null
+    }
+  }
 
   const renderTabBar = () => (
     <View style={[styles.tabStripContainer, { backgroundColor: theme.listBg, borderBottomColor: theme.listBorder }]}>
@@ -1042,6 +999,79 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
     </View>
   )
 
+  const renderFabMenu = (actions: readonly FabAction[]) => (
+    <>
+      {actions.map((action, actionIndex) => {
+        const lift = (actionIndex + 1) * 64
+        return (
+          <Animated.View
+            key={action.key}
+            pointerEvents={fabMenuOpen ? 'auto' : 'none'}
+            style={[
+              styles.fabActionRow,
+              {
+                bottom: fabBottom + 8,
+                opacity: fabMenuAnim.interpolate({
+                  inputRange: [0, 0.35, 1],
+                  outputRange: [0, 0.7, 1],
+                }),
+                transform: [
+                  {
+                    translateY: fabMenuAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [16, -lift],
+                    }),
+                  },
+                  {
+                    scale: fabMenuAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [0.6, 1],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          >
+            <TouchableOpacity
+              style={styles.fabActionLabel}
+              onPress={() => runFabAction(action.route)}
+              activeOpacity={0.85}
+              disabled={!isOnline}
+              accessibilityRole="button"
+              accessibilityLabel={action.label}
+            >
+              <Text style={styles.fabActionLabelText}>{action.label}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.fabMini, !isOnline && styles.fabMiniDisabled]}
+              onPress={() => runFabAction(action.route)}
+              activeOpacity={0.9}
+              disabled={!isOnline}
+              accessibilityRole="button"
+              accessibilityLabel={action.label}
+            >
+              <Ionicons name={action.icon} size={24} color="#fff" />
+            </TouchableOpacity>
+          </Animated.View>
+        )
+      })}
+
+      <FAB
+        style={[
+          styles.fab,
+          { bottom: fabBottom },
+          !isOnline && styles.disabledFab,
+          fabMenuOpen && styles.fabOpen,
+        ]}
+        color="#FFFFFF"
+        icon={fabMenuOpen ? 'close' : 'plus'}
+        onPress={() => {
+          if (isOnline) toggleFabMenu()
+        }}
+        accessibilityLabel={fabMenuOpen ? 'Close action menu' : 'Open action menu'}
+      />
+    </>
+  )
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.listBg }]} edges={['left', 'right']}>
@@ -1193,95 +1223,29 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
         swipeEnabled
       />
 
-      {index === allTabIndex && !searchOpen && (
-        <>
-          {ALL_FAB_ACTIONS.map((action, actionIndex) => {
-            const lift = (actionIndex + 1) * 64
-            return (
-              <Animated.View
-                key={action.key}
-                pointerEvents={fabMenuOpen ? 'auto' : 'none'}
-                style={[
-                  styles.fabActionRow,
-                  {
-                    bottom: fabBottom + 8,
-                    opacity: fabMenuAnim.interpolate({
-                      inputRange: [0, 0.35, 1],
-                      outputRange: [0, 0.7, 1],
-                    }),
-                    transform: [
-                      {
-                        translateY: fabMenuAnim.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: [16, -lift],
-                        }),
-                      },
-                      {
-                        scale: fabMenuAnim.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: [0.6, 1],
-                        }),
-                      },
-                    ],
-                  },
-                ]}
-              >
-                <TouchableOpacity
-                  style={styles.fabActionLabel}
-                  onPress={() => runFabAction(action.route)}
-                  activeOpacity={0.85}
-                  disabled={!isOnline}
-                >
-                  <Text style={styles.fabActionLabelText}>{action.label}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.fabMini, !isOnline && styles.fabMiniDisabled]}
-                  onPress={() => runFabAction(action.route)}
-                  activeOpacity={0.9}
-                  disabled={!isOnline}
-                >
-                  <Ionicons name={action.icon} size={24} color="#fff" />
-                </TouchableOpacity>
-              </Animated.View>
-            )
-          })}
-
-          <FAB
-            style={[
-              styles.fab,
-              { bottom: fabBottom },
-              !isOnline && styles.disabledFab,
-              fabMenuOpen && styles.fabOpen,
-            ]}
-            color="#FFFFFF"
-            icon={fabMenuOpen ? 'close' : 'plus'}
-            onPress={() => (isOnline ? toggleFabMenu() : undefined)}
-          />
-        </>
-      )}
+      {index === allTabIndex && !searchOpen && renderFabMenu(ALL_FAB_ACTIONS)}
 
       {index === friendsTabIndex && !searchOpen && (
         <FAB
           style={[styles.fab, { bottom: fabBottom }, !isOnline && styles.disabledFab]}
           color="#FFFFFF"
           icon="account-plus"
-          onPress={() => isOnline && navigation.navigate('FriendsList')}
+          onPress={() => {
+            if (!requireAuth('Sign in to open your friend list.')) return
+            if (isOnline) navigation.navigate('FriendsList')
+          }}
         />
       )}
-      {index === groupsTabIndex && !searchOpen && (
-        <FAB
-          style={[styles.fab, { bottom: fabBottom }, !isOnline && styles.disabledFab]}
-          color="#FFFFFF"
-          icon="account-group"
-          onPress={() => isOnline && navigation.navigate('NewGroup')}
-        />
-      )}
+      {index === groupsTabIndex && !searchOpen && renderFabMenu(GROUP_FAB_ACTIONS)}
       {index === requestsTabIndex && !searchOpen && (
         <FAB
           style={[styles.fab, { bottom: fabBottom }, !isOnline && styles.disabledFab]}
           color="#FFFFFF"
           icon="account-plus"
-          onPress={() => isOnline && navigation.navigate('AddFriend')}
+          onPress={() => {
+            if (!requireAuth('Sign in to add friends.')) return
+            if (isOnline) navigation.navigate('AddFriend')
+          }}
         />
       )}
 

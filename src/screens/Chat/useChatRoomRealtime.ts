@@ -1,10 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type { RealtimeChannel } from '@supabase/supabase-js';
-import {
-  subscribeToChatMessages,
-  subscribeToMessageRows,
-} from '../../lib/chatRealtime';
-import { ensureSupabaseSession } from '../../lib/ensureSupabaseSession';
+import { subscribeToMessageRows } from '../../lib/chatRealtime';
 import type { ChatMessage } from './chatRoomTypes';
 import {
   isIncomingChatMessage,
@@ -35,9 +30,10 @@ function logRealtime(
 }
 
 /**
- * Live message delivery for the open chat:
- * 1) Dedicated per-chat Supabase channel (primary, with SUBSCRIBED / INSERT logs)
- * 2) Global hub dispatch (backup via subscribeToMessageRows)
+ * Live message delivery for the open chat via the global hub dispatch
+ * (subscribeToMessageRows). Rows arrive from the hub's single Supabase
+ * `messages` binding and from the custom chat WebSocket; both funnel through
+ * dispatchMessageRow, and INSERTs are deduped here by message id.
  */
 export function useChatRoomRealtime({
   chatId,
@@ -52,7 +48,6 @@ export function useChatRoomRealtime({
     if (!chatId || !userId) return;
 
     let cancelled = false;
-    let chatChannel: RealtimeChannel | null = null;
     const deliveredIds = new Set<string>();
 
     logRealtime('log', 'listening', { chatType, chatId, userId });
@@ -63,7 +58,7 @@ export function useChatRoomRealtime({
     const deliver = (
       row: ChatMessage,
       event: 'INSERT' | 'UPDATE',
-      source: 'channel' | 'hub'
+      source: 'hub'
     ) => {
       if (cancelled || !row?.id) return;
 
@@ -105,14 +100,6 @@ export function useChatRoomRealtime({
       handlerRef.current(row, event);
     };
 
-    void ensureSupabaseSession().then(() => {
-      if (cancelled) return;
-      chatChannel = subscribeToChatMessages(chatId, chatType, userId, {
-        onInsert: (row) => deliver(row as ChatMessage, 'INSERT', 'channel'),
-        onUpdate: (row) => deliver(row as ChatMessage, 'UPDATE', 'channel'),
-      });
-    });
-
     const unsubscribeHub = subscribeToMessageRows((row, event) => {
       deliver(row as ChatMessage, event, 'hub');
     });
@@ -120,10 +107,6 @@ export function useChatRoomRealtime({
     return () => {
       cancelled = true;
       unsubscribeHub();
-      if (chatChannel) {
-        void chatChannel.unsubscribe();
-        chatChannel = null;
-      }
       logRealtime('log', 'stopped listening', { chatType, chatId });
     };
   }, [chatId, chatType, userId]);

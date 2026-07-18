@@ -1,6 +1,6 @@
 {
   "cli": {
-    "version": ">= 16.27.0",
+    "version": ">= 16.28.0",
     "appVersionSource": "remote"
   },
   "build": {
@@ -9,24 +9,43 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "http://localhost:3001",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://npchtzfjcaqhlptqsqkg.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5wY2h0emZqY2FxaGxwdHFzcWtnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQwNDIwOTksImV4cCI6MjA5OTYxODA5OX0.dXyVIqz5NzvwDDXssaTJ81U9sWTpnbutUapYaXKrZRE"
       }
     },
     "preview": {
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://chatreel-nerq.onrender.com",
+        "EXPO_PUBLIC_WEB_URL": "https://chat-reel.vercel.app",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://npchtzfjcaqhlptqsqkg.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5wY2h0emZqY2FxaGxwdHFzcWtnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQwNDIwOTksImV4cCI6MjA5OTYxODA5OX0.dXyVIqz5NzvwDDXssaTJ81U9sWTpnbutUapYaXKrZRE"
       }
     },
     "production": {
       "autoIncrement": true,
+      "credentialsSource": "local",
       "android": {
         "buildType": "app-bundle"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://chatreel-nerq.onrender.com",
+        "EXPO_PUBLIC_WEB_URL": "https://chat-reel.vercel.app",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://npchtzfjcaqhlptqsqkg.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5wY2h0emZqY2FxaGxwdHFzcWtnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQwNDIwOTksImV4cCI6MjA5OTYxODA5OX0.dXyVIqz5NzvwDDXssaTJ81U9sWTpnbutUapYaXKrZRE"
       }
     }
   },
   "submit": {
     "production": {
       "android": {
+        "serviceAccountKeyPath": "./play-service-account.json",
         "track": "internal"
       }
     }

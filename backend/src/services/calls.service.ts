@@ -105,14 +105,27 @@ export async function createLiveKitToken(opts: {
     canPublishData: true,
   });
 
-  const expiresAt = new Date(Date.now() + ttl * 1000).toISOString();
-  const rawJwt = await at.toJwt();
-  const token = typeof rawJwt === 'string' ? rawJwt : String(rawJwt ?? '');
-  return {
-    token,
-    url: env.liveKit.url,
-    expiresAt,
-  };
+  try {
+    const expiresAt = new Date(Date.now() + ttl * 1000).toISOString();
+    const rawJwt = await at.toJwt();
+    const token = typeof rawJwt === 'string' ? rawJwt : String(rawJwt ?? '');
+    // Metrics are best-effort (avoid circular import weight at module load).
+    void import('../lib/callMetrics').then((m) => m.incCallMetric('livekit_token_minted'));
+    return {
+      token,
+      url: env.liveKit.url,
+      expiresAt,
+    };
+  } catch (err) {
+    void import('../lib/callMetrics').then((m) => m.incCallMetric('livekit_errors'));
+    const message = err instanceof Error ? err.message : 'LiveKit token error';
+    if (/quota|limit|capacity|resource.?exhaust/i.test(message)) {
+      throw new Error(
+        'Call capacity reached on the media server. Try again in a moment.'
+      );
+    }
+    throw err;
+  }
 }
 
 /**
@@ -218,6 +231,18 @@ export async function isJoinedParticipant(
  * Accepted calls older than ~8 minutes are also treated as stale (orphaned
  * after reload / disconnect without hangup).
  */
+const RINGING_FRESH_MS = 120_000;
+const ACCEPTED_FRESH_MS = 8 * 60 * 1000;
+
+function isFreshActiveCall(c: CallRow, now = Date.now()): boolean {
+  const created = new Date(c.created_at).getTime();
+  const age = now - created;
+  if (!Number.isFinite(age)) return false;
+  if (c.status === 'accepted' && age < ACCEPTED_FRESH_MS) return true;
+  if (c.status === 'ringing' && age < RINGING_FRESH_MS) return true;
+  return false;
+}
+
 export async function findUserBusyCall(userId: string): Promise<CallRow | null> {
   const { data: parts } = await supabaseAdmin
     .from('call_participants')
@@ -237,18 +262,66 @@ export async function findUserBusyCall(userId: string): Promise<CallRow | null> 
     .order('created_at', { ascending: false })
     .limit(10);
 
-  const RINGING_FRESH_MS = 120_000;
-  const ACCEPTED_FRESH_MS = 8 * 60 * 1000;
   const now = Date.now();
   for (const row of calls ?? []) {
     const c = row as CallRow;
-    const created = new Date(c.created_at).getTime();
-    const age = now - created;
-    if (!Number.isFinite(age)) continue;
-    if (c.status === 'accepted' && age < ACCEPTED_FRESH_MS) return c;
-    if (c.status === 'ringing' && age < RINGING_FRESH_MS) return c;
+    if (isFreshActiveCall(c, now)) return c;
   }
   return null;
+}
+
+/**
+ * Count non-stale joined/held sessions for this user (Phase 2 concurrency cap).
+ */
+export async function countUserConcurrentCalls(userId: string): Promise<number> {
+  const { data: parts } = await supabaseAdmin
+    .from('call_participants')
+    .select('call_id, state')
+    .eq('user_id', userId)
+    .in('state', ['joined', 'held'])
+    .limit(40);
+
+  if (!parts?.length) return 0;
+
+  const callIds = [...new Set(parts.map((p) => p.call_id as string))];
+  const { data: calls } = await supabaseAdmin
+    .from('calls')
+    .select('*')
+    .in('id', callIds)
+    .in('status', ['ringing', 'accepted']);
+
+  const now = Date.now();
+  return (calls ?? []).filter((row) => isFreshActiveCall(row as CallRow, now)).length;
+}
+
+/** Release only stale/orphaned sessions so intentional holds survive. */
+export async function clearStaleBusyCalls(userId: string): Promise<number> {
+  const { data: parts } = await supabaseAdmin
+    .from('call_participants')
+    .select('call_id, state')
+    .eq('user_id', userId)
+    .in('state', ['joined', 'held'])
+    .limit(40);
+
+  if (!parts?.length) return 0;
+
+  const callIds = [...new Set(parts.map((p) => p.call_id as string))];
+  const { data: calls } = await supabaseAdmin
+    .from('calls')
+    .select('*')
+    .in('id', callIds)
+    .in('status', ['ringing', 'accepted']);
+
+  const now = Date.now();
+  let cleared = 0;
+  for (const row of calls ?? []) {
+    const c = row as CallRow;
+    if (!isFreshActiveCall(c, now)) {
+      await releaseUserFromCall(c.id, userId);
+      cleared += 1;
+    }
+  }
+  return cleared;
 }
 
 /** Clear a user's joined row; end the call if direct / last participant. */

@@ -34,6 +34,10 @@ import { ReelBrandBadge } from './ReelBrandBadge';
 import { ReelEndScreen } from './ReelEndScreen';
 import { REEL_ACCENT, REEL_END_SCREEN_MS, reelBottomLayout } from './reelTheme';
 import { registerReelFeedPauseHandler, useReelPlaybackGateActive } from '../../lib/reelPlaybackBridge';
+import { useRealtimeTopic } from '../../hooks/useRealtimeTopic';
+import { ReelActionIcon } from './ReelActionIcon';
+import { useAuth } from '../../hooks/useAuth';
+import { promptSignIn } from '../../lib/requireSignedIn';
 
 type Props = {
   reels: ReelDTO[];
@@ -63,6 +67,9 @@ export function ReelImmersiveViewer({
 }: Props) {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
+  const { isAuthenticated, exitGuest } = useAuth();
+  const isGuestRef = useRef(!isAuthenticated);
+  isGuestRef.current = !isAuthenticated;
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const { frameWidth: reelWidth, frameHeight: reelHeight, usePhoneFrame, desktopActionOffset } = useMemo(
     () => getReelFrameDimensions(windowWidth, windowHeight),
@@ -130,6 +137,38 @@ export function ReelImmersiveViewer({
       });
     },
     [onReelsChange]
+  );
+
+  const adjustCommentCount = useCallback(
+    (reelId: string, delta: number) => {
+      setReels((prev) => {
+        const next = prev.map((reel) =>
+          reel.id === reelId
+            ? { ...reel, comment_count: Math.max(0, reel.comment_count + delta) }
+            : reel
+        );
+        onReelsChange?.(next);
+        return next;
+      });
+    },
+    [onReelsChange]
+  );
+
+  const refreshActiveCommentCount = useCallback(async () => {
+    const reelId = activeReelIdRef.current;
+    if (!reelId) return;
+    try {
+      const { reel } = await api.reels.get(reelId);
+      patchReel(reelId, { comment_count: reel.comment_count });
+    } catch {
+      // Realtime count refresh is best-effort; local create/delete callbacks still update immediately.
+    }
+  }, [patchReel]);
+
+  useRealtimeTopic(
+    'reelComments',
+    () => void refreshActiveCommentCount(),
+    reels.length > 0
   );
 
   const activePlayerKey = useCallback((reelId: string | null) => {
@@ -297,8 +336,21 @@ export function ReelImmersiveViewer({
     });
   }, [heartOpacity, heartScale]);
 
+  const requireAuth = useCallback(
+    (message?: string) => {
+      if (isAuthenticated) return true;
+      promptSignIn({
+        message: message ?? 'Sign in to interact with reels.',
+        onLogin: () => exitGuest(),
+      });
+      return false;
+    },
+    [isAuthenticated, exitGuest]
+  );
+
   const toggleLike = useCallback(
     async (reel: ReelDTO, viaDoubleTap = false) => {
+      if (!requireAuth('Sign in to like this reel.')) return;
       const next = !reel.liked_by_me;
       patchReel(reel.id, {
         liked_by_me: next,
@@ -313,7 +365,7 @@ export function ReelImmersiveViewer({
         Alert.alert('Reels', e instanceof ApiError ? e.message : 'Failed to update like');
       }
     },
-    [animateHeart, patchReel]
+    [animateHeart, patchReel, requireAuth]
   );
 
   const handlePlaybackStatus = useCallback((reelId: string, status: ReelPlaybackStatus, isCurrent: boolean) => {
@@ -450,7 +502,9 @@ export function ReelImmersiveViewer({
       if (!viewedReelIds.current.has(reel.id)) {
         viewedReelIds.current.add(reel.id);
         markReelWatched(reel.id);
-        api.reels.view(reel.id).catch(() => undefined);
+        if (!isGuestRef.current) {
+          api.reels.view(reel.id).catch(() => undefined);
+        }
         setReels((prev) =>
           prev.map((r) => (r.id === reel.id ? { ...r, view_count: r.view_count + 1 } : r))
         );
@@ -522,13 +576,14 @@ export function ReelImmersiveViewer({
 
   const onUseReelAudio = useCallback(
     (reel: ReelDTO) => {
+      if (!requireAuth('Sign in to use this sound.')) return;
       if (reel.sound?.id) {
         navigation.navigate('ReelSound', { soundId: reel.sound.id });
         return;
       }
       navigation.navigate('ReelSound', { fromReelId: reel.id });
     },
-    [navigation]
+    [navigation, requireAuth]
   );
 
   const renderReel = useCallback(
@@ -608,7 +663,12 @@ export function ReelImmersiveViewer({
                 {disableProfileNavigation ? (
                   <Text style={styles.username}>@{authorLabel(item)}</Text>
                 ) : (
-                  <TouchableOpacity onPress={() => openSheet(setOpenProfile, item)}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      if (!requireAuth('Sign in to view creator profiles.')) return;
+                      openSheet(setOpenProfile, item);
+                    }}
+                  >
                     <Text style={styles.username}>@{authorLabel(item)}</Text>
                   </TouchableOpacity>
                 )}
@@ -624,7 +684,10 @@ export function ReelImmersiveViewer({
               <ReelSoundStrip
                 reel={item}
                 authorHandle={authorLabel(item)}
-                onPressSound={(soundId) => navigation.navigate('ReelSound', { soundId })}
+                onPressSound={(soundId) => {
+                  if (!requireAuth('Sign in to browse sounds.')) return;
+                  navigation.navigate('ReelSound', { soundId });
+                }}
                 onPressOriginalAudio={onUseReelAudio}
               />
             </View>
@@ -638,20 +701,38 @@ export function ReelImmersiveViewer({
             ]}
           >
             <TouchableOpacity style={styles.actionButton} onPress={() => toggleLike(item)}>
-              <Ionicons name={isLiked ? 'heart' : 'heart-outline'} size={36} color={isLiked ? REEL_ACCENT : '#fff'} />
-              <Text style={styles.actionText}>{formatCount(item.like_count)}</Text>
+              <ReelActionIcon name="heart" size={36} color={isLiked ? REEL_ACCENT : '#fff'} />
+              <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>
+                {formatCount(item.like_count)}
+              </Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.actionButton} onPress={() => openSheet(setOpenComments, item)}>
-              <Ionicons name="chatbubble-ellipses-outline" size={34} color="#fff" />
-              <Text style={styles.actionText}>{formatCount(item.comment_count)}</Text>
+            <TouchableOpacity
+              style={styles.actionButton}
+              onPress={() => {
+                if (!requireAuth('Sign in to comment on reels.')) return;
+                openSheet(setOpenComments, item);
+              }}
+            >
+              <ReelActionIcon name="chatbubble-ellipses" size={34} />
+              <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>
+                {formatCount(item.comment_count)}
+              </Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.actionButton} onPress={() => openSheet(setOpenShare, item)}>
-              <Ionicons name="paper-plane-outline" size={32} color="#fff" />
-              <Text style={styles.actionText}>Share</Text>
+            <TouchableOpacity
+              style={styles.actionButton}
+              onPress={() => {
+                if (!requireAuth('Sign in to share reels with friends.')) return;
+                openSheet(setOpenShare, item);
+              }}
+            >
+              <ReelActionIcon name="paper-plane" size={32} />
+              <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>Share</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.actionButton}>
-              <Ionicons name="eye-outline" size={30} color="#fff" />
-              <Text style={styles.actionText}>{formatCount(item.view_count)}</Text>
+              <ReelActionIcon name="eye" size={30} />
+              <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>
+                {formatCount(item.view_count)}
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -686,6 +767,8 @@ export function ReelImmersiveViewer({
       disableProfileNavigation,
       navigation,
       onUseReelAudio,
+      openSheet,
+      requireAuth,
     ]
   );
 
@@ -765,9 +848,11 @@ export function ReelImmersiveViewer({
             {openComments && (
               <ReelCommentSheet
                 reelId={openComments.id}
+                reelAuthorId={openComments.author_id}
                 onClose={closeSheets}
-                onCommentAdded={() =>
-                  patchReel(openComments.id, { comment_count: openComments.comment_count + 1 })
+                onCommentAdded={() => adjustCommentCount(openComments.id, 1)}
+                onCommentRemoved={(removedCount) =>
+                  adjustCommentCount(openComments.id, -removedCount)
                 }
               />
             )}
@@ -887,6 +972,9 @@ const styles = StyleSheet.create({
     right: REEL_ACTION_RAIL_RIGHT,
     alignItems: 'center',
     gap: 10,
+    paddingVertical: 14,
+    paddingHorizontal: 10,
+    minWidth: REEL_ACTION_RAIL_WIDTH,
     zIndex: 16,
     elevation: 16,
   },
@@ -894,8 +982,16 @@ const styles = StyleSheet.create({
     right: 0,
     paddingRight: 4,
   },
-  actionButton: { alignItems: 'center', gap: 1 },
-  actionText: { color: '#fff', fontSize: 11, marginTop: 2, fontWeight: '600' },
+  actionButton: { alignItems: 'center', gap: 1, minWidth: 48 },
+  actionText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
+    textShadowColor: 'rgba(0,0,0,0.65)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
+  actionTextDesktop: { fontSize: 11 },
   heartAnimation: {
     position: 'absolute',
     alignSelf: 'center',

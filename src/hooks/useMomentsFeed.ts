@@ -7,6 +7,7 @@ import {
 } from '../lib/momentsFeedPrefetch';
 import { dedupeMomentSlides } from '../lib/momentSlides';
 import { useRealtimeTopic } from './useRealtimeTopic';
+import { useAuth } from './useAuth';
 
 function dedupeAuthors(authors: MomentAuthorFeedDTO[]): MomentAuthorFeedDTO[] {
   const byId = new Map<string, MomentAuthorFeedDTO>();
@@ -45,13 +46,21 @@ function dedupeAuthors(authors: MomentAuthorFeedDTO[]): MomentAuthorFeedDTO[] {
 }
 
 export function useMomentsFeed() {
-  const cached = getMomentsFeedCache();
+  const { isAuthenticated } = useAuth();
+  const cached = isAuthenticated ? getMomentsFeedCache() : null;
   const [authors, setAuthors] = useState<MomentAuthorFeedDTO[]>(() => cached?.authors ?? []);
-  const [loading, setLoading] = useState(() => cached == null);
+  const [loading, setLoading] = useState(() => (isAuthenticated ? cached == null : false));
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async (isRefresh = false) => {
+    if (!isAuthenticated) {
+      setAuthors([]);
+      setLoading(false);
+      setRefreshing(false);
+      setError(null);
+      return;
+    }
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     setError(null);
@@ -67,9 +76,10 @@ export function useMomentsFeed() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [isAuthenticated]);
 
   const silentRefresh = useCallback(async () => {
+    if (!isAuthenticated) return;
     try {
       const { authors: data } = await api.moments.feed();
       const next = dedupeAuthors(data);
@@ -78,9 +88,17 @@ export function useMomentsFeed() {
     } catch {
       /* ignore background refresh errors */
     }
-  }, []);
+  }, [isAuthenticated]);
 
   useEffect(() => {
+    if (!isAuthenticated) {
+      setAuthors([]);
+      setLoading(false);
+      setRefreshing(false);
+      setError(null);
+      return;
+    }
+
     let cancelled = false;
 
     void (async () => {
@@ -101,10 +119,10 @@ export function useMomentsFeed() {
     return () => {
       cancelled = true;
     };
-  }, [load, silentRefresh]);
+  }, [isAuthenticated, load, silentRefresh]);
 
-  useRealtimeTopic('moments', () => void silentRefresh());
-  useRealtimeTopic('momentViews', () => void silentRefresh());
+  useRealtimeTopic('moments', () => void silentRefresh(), isAuthenticated);
+  useRealtimeTopic('momentViews', () => void silentRefresh(), isAuthenticated);
 
   const refresh = useCallback(() => load(true), [load]);
 

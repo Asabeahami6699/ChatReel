@@ -37,7 +37,7 @@ export function useReelComments(reelId: string | null) {
 
   const remove = useCallback(
     (commentId: string) => {
-      if (!reelId) return Promise.resolve();
+      if (!reelId) return Promise.resolve(0);
       return removeComment(reelId, commentId);
     },
     [reelId, removeComment]

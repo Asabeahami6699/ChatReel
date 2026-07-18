@@ -20,9 +20,13 @@ type Props = {
   fallback?: React.ReactNode;
 };
 
+/** URIs that have already faded in once this session — skip re-fade on remount. */
+const warmedUris = new Set<string>();
+
 /**
  * Soft blur/placeholder while decoding — avoids black tile + progressive JPEG
  * left-to-right paint. Sharp image fades in once loaded.
+ * Already-warmed URIs stay visible immediately (no flicker on chat-list message updates).
  */
 export function SoftFadeImage({
   uri,
@@ -31,14 +35,19 @@ export function SoftFadeImage({
   onError,
   fallback,
 }: Props) {
-  const opacity = useRef(new Animated.Value(0)).current;
+  const alreadyWarm = Boolean(uri && warmedUris.has(uri));
+  const opacity = useRef(new Animated.Value(alreadyWarm ? 1 : 0)).current;
   const [failed, setFailed] = useState(false);
-  const [loaded, setLoaded] = useState(false);
+  const [loaded, setLoaded] = useState(alreadyWarm);
+  const prevUriRef = useRef(uri);
 
   useEffect(() => {
-    opacity.setValue(0);
+    if (prevUriRef.current === uri) return;
+    prevUriRef.current = uri;
+    const warm = Boolean(uri && warmedUris.has(uri));
+    opacity.setValue(warm ? 1 : 0);
     setFailed(false);
-    setLoaded(false);
+    setLoaded(warm);
   }, [uri, opacity]);
 
   if (!uri || failed) {
@@ -51,7 +60,6 @@ export function SoftFadeImage({
 
   return (
     <View style={[styles.fill, styles.placeholder, style]}>
-      {/* Soft stand-in: blurred copy on web, muted fill on native until load. */}
       {Platform.OS === 'web' && !loaded ? (
         <Image
           source={{ uri }}
@@ -66,7 +74,13 @@ export function SoftFadeImage({
         style={[StyleSheet.absoluteFill, { opacity }]}
         resizeMode={resizeMode}
         onLoad={() => {
+          const skipFade = warmedUris.has(uri);
+          warmedUris.add(uri);
           setLoaded(true);
+          if (skipFade) {
+            opacity.setValue(1);
+            return;
+          }
           Animated.timing(opacity, {
             toValue: 1,
             duration: 260,

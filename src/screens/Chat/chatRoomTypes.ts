@@ -29,12 +29,20 @@ export type ChatMessage = {
     user_id?: string;
   };
   _status?: 'sending' | 'sent' | 'pending' | 'failed';
+  /** Stable client id for idempotent retries (survives offline / double-tap). */
+  client_message_id?: string;
   local_audio_uri?: string;
   /** Disappearing media: ISO timestamp after which the message is hidden. */
   expires_at?: string | null;
   /** View-once media: removed after the recipient opens it. */
   view_once?: boolean;
   viewed_at?: string | null;
+  /** false = content is ciphertext (DM E2E). Missing/true = plaintext. */
+  plaintext?: boolean;
+  iv?: string;
+  ephemeral_public_key?: string;
+  /** Client-only cleartext after decrypt / sender cache. Never sent to API. */
+  decrypted?: string;
 };
 
 export type ChatRouteParams = {
@@ -59,8 +67,22 @@ export type AttachmentFile = {
   viewOnce?: boolean;
 };
 
-export const generateTempId = () =>
-  `temp-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+/** UUID-like client id used for idempotent inserts. */
+export function generateClientMessageId(): string {
+  try {
+    const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+    if (c?.randomUUID) return c.randomUUID();
+  } catch {
+    /* fall through */
+  }
+  return `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`;
+}
+
+/** Local optimistic row id (still recognized by temp-* merge paths). */
+export function generateTempId(clientMessageId?: string) {
+  const cid = clientMessageId ?? generateClientMessageId();
+  return `temp-${cid}`;
+}
 
 /** Convert a "disappear after N seconds" choice into an absolute expiry timestamp. */
 export function visibilityToExpiry(seconds?: number | null): string | null {
@@ -138,21 +160,48 @@ export function getAudioPlaybackUri(message: ChatMessage): string {
 }
 
 export function deduplicateMessages(messages: ChatMessage[]): ChatMessage[] {
-  const seen = new Set<string>();
-  return messages
-    .filter((message) => {
-      if (!message.id || seen.has(message.id)) return false;
-      seen.add(message.id);
-      return true;
-    })
-    .sort((a, b) => {
-      const ta = new Date(a.created_at).getTime();
-      const tb = new Date(b.created_at).getTime();
-      if (!Number.isFinite(ta) && !Number.isFinite(tb)) return 0;
-      if (!Number.isFinite(ta)) return 1;
-      if (!Number.isFinite(tb)) return -1;
-      return ta - tb;
-    });
+  const byId = new Map<string, ChatMessage>();
+  const byClientId = new Map<string, ChatMessage>();
+
+  const prefer = (a: ChatMessage, b: ChatMessage): ChatMessage => {
+    const aTemp = a.id.startsWith('temp-');
+    const bTemp = b.id.startsWith('temp-');
+    if (aTemp !== bTemp) return aTemp ? b : a;
+    return a;
+  };
+
+  for (const message of messages) {
+    if (!message?.id) continue;
+    const prev = byId.get(message.id);
+    byId.set(message.id, prev ? prefer(prev, message) : message);
+
+    const cid = message.client_message_id;
+    if (cid) {
+      const prevCid = byClientId.get(cid);
+      byClientId.set(cid, prevCid ? prefer(prevCid, message) : message);
+    }
+  }
+
+  // Collapse temp + server rows that share client_message_id.
+  const collapsed = new Map<string, ChatMessage>();
+  for (const message of byId.values()) {
+    const cid = message.client_message_id;
+    if (cid && byClientId.has(cid)) {
+      const winner = byClientId.get(cid)!;
+      collapsed.set(winner.id, winner);
+      continue;
+    }
+    collapsed.set(message.id, message);
+  }
+
+  return [...collapsed.values()].sort((a, b) => {
+    const ta = new Date(a.created_at).getTime();
+    const tb = new Date(b.created_at).getTime();
+    if (!Number.isFinite(ta) && !Number.isFinite(tb)) return 0;
+    if (!Number.isFinite(ta)) return 1;
+    if (!Number.isFinite(tb)) return -1;
+    return ta - tb;
+  });
 }
 
 export function messageBelongsToChat(
@@ -197,6 +246,13 @@ export function matchesOptimisticTemp(
 ): boolean {
   if (!temp.id.startsWith('temp-') || temp.sender_id !== userId || server.sender_id !== userId) {
     return false;
+  }
+  if (
+    temp.client_message_id &&
+    server.client_message_id &&
+    temp.client_message_id === server.client_message_id
+  ) {
+    return true;
   }
   if (temp.content && server.content && temp.content === server.content) return true;
   if (temp.file_name && server.file_name && temp.file_name === server.file_name) return true;

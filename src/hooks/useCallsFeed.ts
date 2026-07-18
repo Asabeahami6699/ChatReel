@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { AppState } from 'react-native';
 import { ApiError, api, type CallHistoryItemDTO } from '../lib/api';
 import {
   getCallsPrefetchCache,
@@ -6,44 +7,76 @@ import {
 } from '../lib/callsPrefetch';
 import { friendshipsToCallFriends, type CallFriendRow } from '../lib/callFriends';
 import { useRealtimeTopic } from './useRealtimeTopic';
+import { useAuth } from './useAuth';
 
 export function useCallsFeed(myProfileId: string | null) {
-  const cached = getCallsPrefetchCache();
+  const { isAuthenticated } = useAuth();
+  const cached = isAuthenticated ? getCallsPrefetchCache() : null;
   const [calls, setCalls] = useState<CallHistoryItemDTO[]>(() => cached?.calls ?? []);
   const [friends, setFriends] = useState<CallFriendRow[]>(() => cached?.friends ?? []);
   const [callsEnabled, setCallsEnabled] = useState<boolean | null>(
     () => cached?.callsEnabled ?? null
   );
-  const [loading, setLoading] = useState(() => !(cached?.calls.length ?? 0));
+  const [loading, setLoading] = useState(() =>
+    isAuthenticated ? !(cached?.calls.length ?? 0) : false
+  );
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const safetyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const applyPayload = useCallback(
+    (
+      history: CallHistoryItemDTO[],
+      nextFriends: CallFriendRow[],
+      enabled: boolean | null
+    ) => {
+      setCalls(history);
+      setFriends(nextFriends);
+      setCallsEnabled(enabled);
+      upsertCallsPrefetchCache({
+        calls: history,
+        friends: nextFriends,
+        callsEnabled: enabled,
+      });
+    },
+    []
+  );
+
+  const fetchBundle = useCallback(async () => {
+    if (!isAuthenticated) return;
+    const [configRes, historyRes, friendsRes] = await Promise.all([
+      api.calls.config(),
+      api.calls.history(80),
+      myProfileId
+        ? api.friendships.list('accepted')
+        : Promise.resolve({ friendships: [] as Record<string, unknown>[] }),
+    ]);
+    const history = historyRes.calls;
+    const nextFriends = friendshipsToCallFriends(
+      friendsRes.friendships ?? [],
+      myProfileId
+    );
+    applyPayload(history, nextFriends, configRes.enabled);
+  }, [isAuthenticated, myProfileId, applyPayload]);
 
   const load = useCallback(
     async (isRefresh = false) => {
+      if (!isAuthenticated) {
+        setCalls([]);
+        setFriends([]);
+        setCallsEnabled(null);
+        setLoading(false);
+        setRefreshing(false);
+        setError(null);
+        return;
+      }
       if (isRefresh) setRefreshing(true);
-      else setLoading(true);
+      else if (!(getCallsPrefetchCache()?.calls.length ?? 0) && calls.length === 0) {
+        setLoading(true);
+      }
       setError(null);
       try {
-        const [configRes, historyRes, friendsRes] = await Promise.all([
-          api.calls.config(),
-          api.calls.history(80),
-          myProfileId
-            ? api.friendships.list('accepted')
-            : Promise.resolve({ friendships: [] as Record<string, unknown>[] }),
-        ]);
-        const history = historyRes.calls;
-        const nextFriends = friendshipsToCallFriends(
-          friendsRes.friendships ?? [],
-          myProfileId
-        );
-        setCalls(history);
-        setFriends(nextFriends);
-        setCallsEnabled(configRes.enabled);
-        upsertCallsPrefetchCache({
-          calls: history,
-          friends: nextFriends,
-          callsEnabled: configRes.enabled,
-        });
+        await fetchBundle();
       } catch (err) {
         const message = err instanceof ApiError ? err.message : 'Failed to load call history';
         setError(message);
@@ -52,47 +85,50 @@ export function useCallsFeed(myProfileId: string | null) {
         setRefreshing(false);
       }
     },
-    [myProfileId]
+    [isAuthenticated, fetchBundle, calls.length]
   );
 
   const silentRefresh = useCallback(async () => {
+    if (!isAuthenticated) return;
     try {
-      const [configRes, historyRes, friendsRes] = await Promise.all([
-        api.calls.config(),
-        api.calls.history(80),
-        myProfileId
-          ? api.friendships.list('accepted')
-          : Promise.resolve({ friendships: [] as Record<string, unknown>[] }),
-      ]);
-      const history = historyRes.calls;
-      const nextFriends = friendshipsToCallFriends(
-        friendsRes.friendships ?? [],
-        myProfileId
-      );
-      setCalls(history);
-      setFriends(nextFriends);
-      setCallsEnabled(configRes.enabled);
-      upsertCallsPrefetchCache({
-        calls: history,
-        friends: nextFriends,
-        callsEnabled: configRes.enabled,
-      });
+      await fetchBundle();
     } catch {
       /* ignore background refresh errors */
     }
-  }, [myProfileId]);
+  }, [isAuthenticated, fetchBundle]);
+
+  const scheduleSilentRefresh = useCallback(() => {
+    if (safetyTimer.current) clearTimeout(safetyTimer.current);
+    safetyTimer.current = setTimeout(() => {
+      safetyTimer.current = null;
+      void silentRefresh();
+    }, 800);
+  }, [silentRefresh]);
 
   useEffect(() => {
+    if (!isAuthenticated) {
+      setCalls([]);
+      setFriends([]);
+      setCallsEnabled(null);
+      setLoading(false);
+      setRefreshing(false);
+      setError(null);
+      return;
+    }
     const entry = getCallsPrefetchCache();
-    if (entry && entry.calls.length > 0) {
+    if (entry) {
+      setCalls(entry.calls);
+      setFriends(entry.friends);
+      setCallsEnabled(entry.callsEnabled);
+      setLoading(false);
       void silentRefresh();
       return;
     }
     void load();
-  }, [load, silentRefresh]);
+  }, [isAuthenticated, load, silentRefresh]);
 
   useEffect(() => {
-    if (!myProfileId || friends.length > 0) return;
+    if (!isAuthenticated || !myProfileId || friends.length > 0) return;
     void (async () => {
       try {
         const { friendships } = await api.friendships.list('accepted');
@@ -104,9 +140,21 @@ export function useCallsFeed(myProfileId: string | null) {
         /* ignore */
       }
     })();
-  }, [myProfileId, friends.length]);
+  }, [isAuthenticated, myProfileId, friends.length]);
 
-  useRealtimeTopic('calls', () => void silentRefresh());
+  useRealtimeTopic('calls', () => scheduleSilentRefresh(), isAuthenticated);
+  useRealtimeTopic('callParticipants', () => scheduleSilentRefresh(), isAuthenticated);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void silentRefresh();
+    });
+    return () => {
+      sub.remove();
+      if (safetyTimer.current) clearTimeout(safetyTimer.current);
+    };
+  }, [isAuthenticated, silentRefresh]);
 
   const refresh = useCallback(() => load(true), [load]);
 

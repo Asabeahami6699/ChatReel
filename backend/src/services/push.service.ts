@@ -1,7 +1,7 @@
 import { env } from '../config/env';
 import { supabaseAdmin } from '../lib/supabaseAdmin';
 
-type PushPayload = {
+export type PushPayload = {
   title: string;
   body: string;
   data?: Record<string, unknown>;
@@ -23,7 +23,7 @@ function channelIdFor(data?: Record<string, unknown>): string {
   if (type === 'message' || type === 'friend_request' || type === 'friend_accepted') {
     return 'default';
   }
-  if (type === 'incoming_call') return 'default';
+  if (type === 'incoming_call') return 'calls';
   return 'default';
 }
 
@@ -70,6 +70,8 @@ async function postExpoPush(
     data: Record<string, unknown>;
     channelId: string;
     priority: 'high';
+    _contentAvailable?: boolean;
+    interruptionLevel?: 'active' | 'critical' | 'passive' | 'timeSensitive';
   }>
 ): Promise<void> {
   const headers: Record<string, string> = {
@@ -134,6 +136,7 @@ export async function sendPushToUsers(userIds: string[], payload: PushPayload): 
   if (error || !tokens?.length) return;
 
   const channelId = channelIdFor(payload.data);
+  const isCall = payload.data?.type === 'incoming_call';
   const messages = tokens.map((row) => ({
     to: row.token as string,
     sound: 'default' as const,
@@ -142,15 +145,23 @@ export async function sendPushToUsers(userIds: string[], payload: PushPayload): 
     data: payload.data ?? {},
     channelId,
     priority: 'high' as const,
+    // Wake path for ringing while backgrounded (best-effort on iOS).
+    ...(isCall
+      ? {
+          _contentAvailable: true,
+          interruptionLevel: 'timeSensitive' as const,
+        }
+      : {}),
   }));
 
   await postExpoPush(messages);
 }
 
 export function sendPushToUserSafe(userId: string, payload: PushPayload): void {
-  void sendPushToUser(userId, payload);
+  // Phase 3: go through the job queue (memory or Redis).
+  void import('../lib/pushQueue').then((m) => m.enqueuePushToUser(userId, payload));
 }
 
 export function sendPushToUsersSafe(userIds: string[], payload: PushPayload): void {
-  void sendPushToUsers(userIds, payload);
+  void import('../lib/pushQueue').then((m) => m.enqueuePushToUsers(userIds, payload));
 }

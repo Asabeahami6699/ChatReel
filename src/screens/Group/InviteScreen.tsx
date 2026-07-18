@@ -6,13 +6,14 @@ import {
   Alert,
   ActivityIndicator,
   StyleSheet,
-  Image,
   TouchableOpacity,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
+import { OfflineAvatar } from '../../components/OfflineAvatar';
 import { api } from '../../lib/api';
 import { useAuth } from '../../hooks/useAuth';
 import { notifyRealtimeTopic } from '../../lib/realtimeHub';
+import { openChat } from '../../navigation/chatNavigationBridge';
 
 export default function InviteScreen() {
   const navigation = useNavigation<any>();
@@ -20,20 +21,18 @@ export default function InviteScreen() {
   const { user } = useAuth();
 
   const [loading, setLoading] = useState(true);
+  const [joining, setJoining] = useState(false);
   const [groupInfo, setGroupInfo] = useState<any>(null);
   const [inviteToken, setInviteToken] = useState<string | null>(null);
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      const token = route.params?.token;
-      if (!token) {
-        navigation.goBack();
-        return;
-      }
-      verifyInvite(token);
-    }, 100);
-    return () => clearTimeout(timer);
-  }, [route.params]);
+    const token = route.params?.token;
+    if (!token) {
+      navigation.goBack();
+      return;
+    }
+    void verifyInvite(token);
+  }, [route.params?.token]);
 
   const verifyInvite = async (token: string) => {
     try {
@@ -43,40 +42,44 @@ export default function InviteScreen() {
       setGroupInfo(group);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Failed to verify invite';
-      Alert.alert('Error', message);
-      navigation.goBack();
+      Alert.alert('Invalid invite', message, [{ text: 'OK', onPress: () => navigation.goBack() }]);
     } finally {
       setLoading(false);
     }
   };
 
+  const goToGroup = (groupId: string) => {
+    openChat({
+      chatId: groupId,
+      chatType: 'group',
+      chatName: groupInfo?.name ?? 'Group',
+      avatarUrl: groupInfo?.avatar_url ?? undefined,
+    });
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+    }
+  };
+
   const acceptInvite = async () => {
-    if (!inviteToken || !groupInfo || !user) return;
+    if (!inviteToken || !groupInfo || !user || joining) return;
 
     try {
-      setLoading(true);
-      await api.groups.joinByToken(inviteToken);
+      setJoining(true);
+      const { group_id, already_member } = await api.groups.joinByToken(inviteToken);
       notifyRealtimeTopic('groupMembers');
       notifyRealtimeTopic('groups');
 
-      Alert.alert('Success', `You have joined "${groupInfo.name}"!`, [
-        {
-          text: 'Go to Group',
-          onPress: () => {
-            navigation.reset({
-              index: 0,
-              routes: [
-                { name: 'MainTabs' },
-                { name: 'ChatRoom', params: { groupId: groupInfo.id } },
-              ],
-            });
-          },
-        },
-      ]);
-    } catch {
-      Alert.alert('Error', 'Failed to join group');
+      if (already_member) {
+        goToGroup(group_id);
+        return;
+      }
+
+      goToGroup(group_id);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Failed to join group';
+      Alert.alert('Error', message);
     } finally {
-      setLoading(false);
+      setJoining(false);
     }
   };
 
@@ -84,43 +87,44 @@ export default function InviteScreen() {
     return (
       <View style={styles.container}>
         <ActivityIndicator size="large" color="#007AFF" />
-        <Text style={styles.loadingText}>Processing invite...</Text>
+        <Text style={styles.loadingText}>Loading invite…</Text>
       </View>
     );
+  }
+
+  if (!groupInfo) {
+    return null;
   }
 
   return (
     <View style={styles.container}>
       <View style={styles.card}>
-        <Image
-          source={{ uri: groupInfo?.avatar_url || 'https://via.placeholder.com/80' }}
+        <OfflineAvatar
+          uri={groupInfo?.avatar_url}
+          name={groupInfo?.name}
+          size={80}
           style={styles.groupAvatar}
         />
 
         <Text style={styles.groupName}>{groupInfo?.name}</Text>
 
-        {groupInfo?.description && (
+        {groupInfo?.description ? (
           <Text style={styles.groupDescription}>{groupInfo.description}</Text>
-        )}
+        ) : null}
 
         <View style={styles.infoSection}>
           <Text style={styles.infoTitle}>You're invited to join this group</Text>
           <Text style={styles.infoText}>
-            This invite was created by the group admin. By joining, you'll be able to:
+            Tap Join to enter the group chat and start messaging with members.
           </Text>
-          <View style={styles.featureList}>
-            <Text style={styles.feature}>• Send and receive messages</Text>
-            <Text style={styles.feature}>• See group members</Text>
-            <Text style={styles.feature}>• Participate in group chats</Text>
-          </View>
         </View>
 
         <TouchableOpacity
-          style={[styles.joinButton, loading && styles.joinButtonDisabled]}
+          style={[styles.joinButton, joining && styles.joinButtonDisabled]}
           onPress={acceptInvite}
-          disabled={loading}
+          disabled={joining}
         >
-          {loading ? (
+          {joining ? (
             <ActivityIndicator color="#fff" />
           ) : (
             <Text style={styles.joinButtonText}>Join Group</Text>
@@ -130,9 +134,9 @@ export default function InviteScreen() {
         <TouchableOpacity
           style={styles.cancelButton}
           onPress={() => navigation.goBack()}
-          disabled={loading}
+          disabled={joining}
         >
-          <Text style={styles.cancelButtonText}>Cancel</Text>
+          <Text style={styles.cancelButtonText}>Not now</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -187,9 +191,7 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   infoTitle: { fontSize: 16, fontWeight: '600', color: '#000', marginBottom: 8 },
-  infoText: { fontSize: 14, color: '#666', marginBottom: 12, lineHeight: 20 },
-  featureList: { paddingLeft: 8 },
-  feature: { fontSize: 14, color: '#666', marginBottom: 4, lineHeight: 20 },
+  infoText: { fontSize: 14, color: '#666', lineHeight: 20 },
   joinButton: {
     backgroundColor: '#007AFF',
     width: '100%',

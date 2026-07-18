@@ -28,6 +28,8 @@ import { getExploreProfileCache } from '../../lib/momentsFeedPrefetch';
 import { useMomentsFeed } from '../../hooks/useMomentsFeed';
 import { useIsFocused } from '@react-navigation/native';
 import { useCurrentProfileId } from '../../hooks/useCurrentProfileId';
+import { useAuth } from '../../hooks/useAuth';
+import { promptSignIn } from '../../lib/requireSignedIn';
 import { MomentComposer, type MomentDraft, type MomentDraftItem } from './MomentComposer';
 import { MomentViewer } from './MomentViewer';
 import { getTextBackground } from '../../lib/momentTextBackgrounds';
@@ -160,6 +162,7 @@ function MomentSlidePreview({
 export default function FeedScreen() {
   const insets = useSafeAreaInsets();
   const isScreenFocused = useIsFocused();
+  const { isGuest, exitGuest } = useAuth();
   const myProfileId = useCurrentProfileId();
   const { authors, loading, refreshing, error, refresh, markSlideViewed, removeSlide } =
     useMomentsFeed();
@@ -168,25 +171,39 @@ export default function FeedScreen() {
     display_name: string | null;
     email: string | null;
     avatar_url: string | null;
-  } | null>(() => getExploreProfileCache());
+  } | null>(() => (isGuest ? null : getExploreProfileCache()));
 
   const [composerDraft, setComposerDraft] = useState<MomentDraft | null>(null);
   const [viewerIndex, setViewerIndex] = useState(-1);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [uploadTasks, setUploadTasks] = useState<MomentUploadTask[]>([]);
 
+  const requireAuth = useCallback(
+    (message?: string) => {
+      if (!isGuest) return true;
+      promptSignIn({
+        title: 'Sign in required',
+        message: message ?? 'Sign in to use Moments, or continue exploring as a guest.',
+        onLogin: exitGuest,
+      });
+      return false;
+    },
+    [isGuest, exitGuest]
+  );
+
   useEffect(() => {
+    if (isGuest) return;
     return subscribeMomentUploadQueue((tasks) => {
       setUploadTasks(tasks.filter((t) => t.status !== 'done'));
     });
-  }, []);
+  }, [isGuest]);
 
   const renderSlidePreview = (slide: MomentSlideDTO, style: object) => (
     <MomentSlidePreview slide={slide} style={style} />
   );
 
   useEffect(() => {
-    if (myProfile) return;
+    if (isGuest || myProfile) return;
     api.profiles
       .me()
       .then(({ profile }) => {
@@ -197,7 +214,7 @@ export default function FeedScreen() {
         });
       })
       .catch(() => undefined);
-  }, [myProfile]);
+  }, [isGuest, myProfile]);
 
   const myFeed = useMemo(
     () => authors.find((a) => a.author.id === myProfileId) ?? null,
@@ -368,10 +385,12 @@ export default function FeedScreen() {
   }, [appendDraftItems]);
 
   const openAddMenu = useCallback(() => {
+    if (!requireAuth('Sign in to post a moment.')) return;
     setAddMenuOpen(true);
-  }, []);
+  }, [requireAuth]);
 
   const openAuthor = useCallback((author: MomentAuthorFeedDTO) => {
+    if (!requireAuth('Sign in to view moments from friends.')) return;
     if (author.author.id === myProfileId && author.slides.length === 0) {
       openAddMenu();
       return;
@@ -379,7 +398,7 @@ export default function FeedScreen() {
     if (!author.slides.length) return;
     const idx = viewerQueue.findIndex((a) => a.author.id === author.author.id);
     setViewerIndex(idx >= 0 ? idx : 0);
-  }, [myProfileId, openAddMenu, viewerQueue]);
+  }, [myProfileId, openAddMenu, viewerQueue, requireAuth]);
 
   const closeViewer = useCallback(() => {
     setViewerIndex(-1);
@@ -395,6 +414,7 @@ export default function FeedScreen() {
 
   const handleSlideViewed = useCallback(
     async (authorId: string, slideId: string) => {
+      if (isGuest) return;
       markSlideViewed(authorId, slideId);
       try {
         await api.moments.view(slideId);
@@ -402,7 +422,7 @@ export default function FeedScreen() {
         /* ignore */
       }
     },
-    [markSlideViewed]
+    [isGuest, markSlideViewed]
   );
 
   const renderBubble = (item: MomentAuthorFeedDTO) => {
@@ -670,7 +690,11 @@ export default function FeedScreen() {
               <View style={styles.emptyState}>
                 <Ionicons name="sparkles-outline" size={48} color={C.muted} />
                 <Text style={styles.emptyTitle}>No moments yet</Text>
-                <Text style={styles.emptySub}>Post the first moment for your friends.</Text>
+                <Text style={styles.emptySub}>
+                  {isGuest
+                    ? 'Sign in to see friends’ moments and post your own.'
+                    : 'Post the first moment for your friends.'}
+                </Text>
               </View>
             )}
           </>

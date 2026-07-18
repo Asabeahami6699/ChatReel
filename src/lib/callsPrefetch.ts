@@ -23,6 +23,11 @@ export function getCallsPrefetchCache(): CallsPrefetchCache | null {
   return cache;
 }
 
+export function clearCallsPrefetchCache() {
+  cache = null;
+  prefetchPromise = null;
+}
+
 export function upsertCallsPrefetchCache(
   patch: Partial<Omit<CallsPrefetchCache, 'fetchedAt'>> & { fetchedAt?: number }
 ) {

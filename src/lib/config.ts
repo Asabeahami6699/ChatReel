@@ -9,6 +9,7 @@ import { normalizeDevApiUrl } from './devServer';
 
 type PublicExtra = {
   apiUrl?: string;
+  webUrl?: string;
   supabaseUrl?: string;
   supabaseAnonKey?: string;
 };
@@ -44,8 +45,14 @@ const SUPABASE_ANON_KEY =
   process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ??
   '';
 
+const WEB_URL =
+  manifestExtra.webUrl ??
+  process.env.EXPO_PUBLIC_WEB_URL ??
+  'https://chat-reel.vercel.app';
+
 export const config = {
   apiUrl: normalizeApiUrlForPlatform(API_URL).replace(/\/$/, ''),
+  webUrl: WEB_URL.replace(/\/$/, ''),
   supabaseUrl: SUPABASE_URL,
   supabaseAnonKey: SUPABASE_ANON_KEY,
 };

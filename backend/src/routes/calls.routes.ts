@@ -1,13 +1,19 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { isLiveKitConfigured } from '../config/env';
+import { env, isLiveKitConfigured } from '../config/env';
+import {
+  getCallMetricsSnapshot,
+  incCallMetric,
+  recordCallJoinLatencyMs,
+} from '../lib/callMetrics';
 import { supabaseAdmin } from '../lib/supabaseAdmin';
 import { asyncHandler, AuthedRequest, requireAuth } from '../middleware/auth';
 import {
   areAuthUsersFriends,
   countActiveParticipants,
+  countUserConcurrentCalls,
   createLiveKitToken,
-  clearOwnBusyCalls,
+  clearStaleBusyCalls,
   answerWaitingCall,
   findUserBusyCall,
   holdUserOnCall,
@@ -23,6 +29,7 @@ import {
   switchHeldCall,
   type CallRow,
 } from '../services/calls.service';
+import { callStartRateLimit } from '../middleware/rateLimit';
 import { sendPushToUserSafe } from '../services/push.service';
 
 const router = Router();
@@ -34,7 +41,22 @@ router.get(
   '/config',
   requireAuth,
   asyncHandler(async (_req: AuthedRequest, res) => {
-    return res.json({ enabled: isLiveKitConfigured() });
+    return res.json({
+      enabled: isLiveKitConfigured(),
+      max_concurrent_calls: env.maxConcurrentCalls,
+      // TURN/ICE: LiveKit Cloud includes TURN. Self-host: configure TURN on the
+      // LiveKit server — clients keep using the SDK + JWT from this API.
+      turn: 'livekit-managed',
+    });
+  })
+);
+
+/** Lightweight in-process call metrics (single API instance). */
+router.get(
+  '/metrics',
+  requireAuth,
+  asyncHandler(async (_req: AuthedRequest, res) => {
+    return res.json({ metrics: getCallMetricsSnapshot() });
   })
 );
 
@@ -64,6 +86,7 @@ const startSchema = z
 router.post(
   '/',
   requireAuth,
+  callStartRateLimit,
   asyncHandler(async (req: AuthedRequest, res) => {
     if (!isLiveKitConfigured()) {
       return res.status(503).json({ error: 'Calls are not enabled on this server' });
@@ -71,9 +94,18 @@ router.post(
     const body = startSchema.parse(req.body);
     const callerId = req.userId!;
 
-    // Clear orphaned "joined" rows (reload / disconnect without hangup) so the
-    // user is never permanently stuck unable to place calls.
-    await clearOwnBusyCalls(callerId);
+    // Drop orphaned/stale sessions only — intentional holds stay (Phase 2).
+    await clearStaleBusyCalls(callerId);
+
+    const concurrent = await countUserConcurrentCalls(callerId);
+    if (concurrent >= env.maxConcurrentCalls) {
+      incCallMetric('calls_concurrency_rejected');
+      return res.status(429).json({
+        error: `Too many active calls (max ${env.maxConcurrentCalls}). End or leave a call first.`,
+        code: 'CALL_CONCURRENCY_LIMIT',
+        max_concurrent_calls: env.maxConcurrentCalls,
+      });
+    }
 
     // Call waiting: if callee is busy, still create the ringing call so they
     // can answer and put the other party on hold.
@@ -162,7 +194,7 @@ router.post(
           }))
         );
 
-      // Push notification (best effort)
+      // Notify invitees ASAP (before minting caller's LiveKit token).
       const callerName = await resolveDisplayName(callerId);
       const title = body.type === 'video' ? '📹 Video call' : '📞 Voice call';
       const pushBody =
@@ -185,17 +217,54 @@ router.post(
           },
         });
       }
+
+      // Mint a token for the caller.
+      let liveKit: Awaited<ReturnType<typeof createLiveKitToken>>;
+      try {
+        liveKit = await createLiveKitToken({
+          userId: callerId,
+          identity: callerId,
+          displayName: callerName,
+          roomName,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'LiveKit error';
+        const capacity = /capacity|quota|Try again/i.test(msg);
+        return res.status(capacity ? 503 : 500).json({
+          error: msg,
+          code: capacity ? 'LIVEKIT_CAPACITY' : 'LIVEKIT_ERROR',
+        });
+      }
+
+      incCallMetric('calls_started');
+      return res.status(201).json({
+        call,
+        live_kit: liveKit,
+        waiting_on_busy: waitingOnBusy,
+        busy_call_id: calleeBusy?.id ?? null,
+      });
     }
 
-    // Mint a token for the caller right away.
+    // No invitees (shouldn't happen for direct) — still mint caller token.
     const callerName = await resolveDisplayName(callerId);
-    const liveKit = await createLiveKitToken({
-      userId: callerId,
-      identity: callerId,
-      displayName: callerName,
-      roomName,
-    });
+    let liveKit: Awaited<ReturnType<typeof createLiveKitToken>>;
+    try {
+      liveKit = await createLiveKitToken({
+        userId: callerId,
+        identity: callerId,
+        displayName: callerName,
+        roomName,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'LiveKit error';
+      const capacity = /capacity|quota|Try again/i.test(msg);
+      return res.status(capacity ? 503 : 500).json({
+        error: msg,
+        code: capacity ? 'LIVEKIT_CAPACITY' : 'LIVEKIT_ERROR',
+      });
+    }
 
+    incCallMetric('calls_started');
     return res.status(201).json({
       call,
       live_kit: liveKit,
@@ -285,12 +354,28 @@ router.post(
       .maybeSingle();
 
     const displayName = await resolveDisplayName(userId);
-    const liveKit = await createLiveKitToken({
-      userId,
-      identity: userId,
-      displayName,
-      roomName: (freshCall ?? call).room_name,
-    });
+    let liveKit: Awaited<ReturnType<typeof createLiveKitToken>>;
+    try {
+      liveKit = await createLiveKitToken({
+        userId,
+        identity: userId,
+        displayName,
+        roomName: (freshCall ?? call).room_name,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'LiveKit error';
+      const capacity = /capacity|quota|Try again/i.test(msg);
+      return res.status(capacity ? 503 : 500).json({
+        error: msg,
+        code: capacity ? 'LIVEKIT_CAPACITY' : 'LIVEKIT_ERROR',
+      });
+    }
+
+    incCallMetric('calls_accepted');
+    const createdMs = new Date(call.created_at).getTime();
+    if (Number.isFinite(createdMs)) {
+      recordCallJoinLatencyMs(Date.now() - createdMs);
+    }
 
     return res.json({ call: freshCall ?? call, live_kit: liveKit });
   })
@@ -321,6 +406,7 @@ router.post(
 
     if (call.scope === 'direct' && call.callee_id === userId && call.status === 'ringing') {
       await supabaseAdmin.from('calls').update({ status: 'declined' }).eq('id', id);
+      incCallMetric('calls_declined');
     }
 
     return res.json({ success: true });
@@ -344,24 +430,55 @@ router.post(
       .maybeSingle();
     if (!call) return res.status(404).json({ error: 'Call not found' });
 
+    const nowIso = new Date().toISOString();
+
     // Mark this participant as left
     await supabaseAdmin
       .from('call_participants')
-      .update({ state: 'left', left_at: new Date().toISOString() })
+      .update({ state: 'left', left_at: nowIso })
       .eq('call_id', id)
       .eq('user_id', userId);
 
-    // For direct calls: end immediately when caller or callee leaves.
+    // For direct calls: end for both sides immediately + kick peer from LiveKit.
     if (call.scope === 'direct') {
+      let nextStatus: 'cancelled' | 'ended' | null = null;
       if (call.status === 'ringing' && call.caller_id === userId) {
-        // caller cancelled before pickup
-        await supabaseAdmin.from('calls').update({ status: 'cancelled' }).eq('id', id);
-      } else if (
-        call.status === 'accepted' ||
-        call.status === 'ringing' /* fallback */
-      ) {
-        await supabaseAdmin.from('calls').update({ status: 'ended' }).eq('id', id);
+        nextStatus = 'cancelled';
+        incCallMetric('calls_cancelled');
+      } else if (call.status === 'accepted' || call.status === 'ringing') {
+        nextStatus = 'ended';
+        incCallMetric('calls_ended');
       }
+
+      if (nextStatus) {
+        await supabaseAdmin
+          .from('calls')
+          .update({ status: nextStatus, ended_at: nowIso })
+          .eq('id', id)
+          .in('status', ['ringing', 'accepted']);
+
+        // Both parties leave the row so neither looks "still on call".
+        await supabaseAdmin
+          .from('call_participants')
+          .update({ state: 'left', left_at: nowIso })
+          .eq('call_id', id)
+          .neq('state', 'left');
+
+        // Force the other side out of the media room so their UI hangs up.
+        const peerIds = [call.caller_id, call.callee_id].filter(
+          (uid): uid is string => Boolean(uid) && uid !== userId
+        );
+        if (isLiveKitConfigured() && call.room_name) {
+          await Promise.all(
+            peerIds.map((identity) =>
+              removeParticipantFromRoom(call.room_name, identity).catch((err) => {
+                console.warn('[calls] removeParticipant on end failed', identity, err);
+              })
+            )
+          );
+        }
+      }
+
       return res.json({ success: true });
     }
 
@@ -374,9 +491,10 @@ router.post(
     if (!count || count === 0) {
       await supabaseAdmin
         .from('calls')
-        .update({ status: 'ended' })
+        .update({ status: 'ended', ended_at: nowIso })
         .eq('id', id)
         .neq('status', 'ended');
+      incCallMetric('calls_ended');
     }
     return res.json({ success: true });
   })
@@ -405,6 +523,7 @@ router.post(
 
     if (call.scope === 'direct' && call.caller_id === userId) {
       await supabaseAdmin.from('calls').update({ status: 'missed' }).eq('id', id);
+      incCallMetric('calls_missed');
       if (call.callee_id) {
         await supabaseAdmin
           .from('call_participants')

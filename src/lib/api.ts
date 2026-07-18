@@ -329,11 +329,20 @@ export class ApiError extends Error {
   status: number;
   /** True when the session is invalid and the user should sign in again. */
   isAuthError: boolean;
+  /** True for offline / DNS / connection refused / 5xx — safe to queue & retry. */
+  isNetworkError: boolean;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, isNetworkError = false) {
     super(sanitizeApiErrorMessage(message, status));
     this.status = status;
     this.isAuthError = status === 401 || status === 403;
+    this.isNetworkError =
+      isNetworkError ||
+      status === 0 ||
+      status >= 500 ||
+      /fetch failed|network|timeout|Failed to fetch|ECONNREFUSED|ENOTFOUND/i.test(
+        message
+      );
   }
 }
 
@@ -407,28 +416,37 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     return { res, data };
   };
 
-  let token = auth ? await getAccessToken() : null;
-  let sentToken = Boolean(token);
-  let { res, data } = await doFetch(token);
+  try {
+    let token = auth ? await getAccessToken() : null;
+    let sentToken = Boolean(token);
+    let { res, data } = await doFetch(token);
 
-  if (auth && res.status === 401 && path !== '/api/auth/refresh') {
-    const session = await ensureSupabaseSession();
-    token = session?.access_token ?? null;
-    if (token) {
-      sentToken = true;
-      ({ res, data } = await doFetch(token));
+    if (auth && res.status === 401 && path !== '/api/auth/refresh') {
+      const session = await ensureSupabaseSession();
+      token = session?.access_token ?? null;
+      if (token) {
+        sentToken = true;
+        ({ res, data } = await doFetch(token));
+      }
     }
-  }
 
-  if (!res.ok) {
-    // Only wipe local session when we had a token and the server rejected it as invalid.
-    if (auth && res.status === 401 && path !== '/api/auth/refresh' && sentToken) {
-      notifyAuthExpired();
+    if (!res.ok) {
+      // Only wipe local session when we had a token and the server rejected it as invalid.
+      if (auth && res.status === 401 && path !== '/api/auth/refresh' && sentToken) {
+        notifyAuthExpired();
+      }
+      throw new ApiError(
+        typeof data.error === 'string' ? data.error : `Request failed (${res.status})`,
+        res.status
+      );
     }
-    throw new ApiError(data.error ?? `Request failed (${res.status})`, res.status);
-  }
 
-  return data as T;
+    return data as T;
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    const message = err instanceof Error ? err.message : 'Network request failed';
+    throw new ApiError(message, 0, true);
+  }
 }
 
 export const api = {
@@ -447,6 +465,32 @@ export const api = {
         auth: false,
       }),
 
+    sendPhoneOtp: (phone: string, mode: 'login' | 'register', display_name?: string) =>
+      apiRequest<{ ok: boolean; phone: string; phone_masked: string; message: string }>(
+        '/api/auth/otp/send',
+        {
+          method: 'POST',
+          body: { phone, mode, display_name },
+          auth: false,
+        }
+      ),
+
+    verifyPhoneOtp: (
+      phone: string,
+      token: string,
+      opts?: { display_name?: string; email?: string }
+    ) =>
+      apiRequest<{ user: Session['user']; session: Session | null }>('/api/auth/otp/verify', {
+        method: 'POST',
+        body: {
+          phone,
+          token,
+          display_name: opts?.display_name,
+          email: opts?.email,
+        },
+        auth: false,
+      }),
+
     refresh: (refresh_token: string) =>
       apiRequest<{ user: Session['user']; session: Session | null }>('/api/auth/refresh', {
         method: 'POST',
@@ -461,6 +505,17 @@ export const api = {
       apiRequest<{ profile: Record<string, unknown> }>('/api/profiles/me', {
         method: 'PATCH',
         body: data,
+      }),
+    heartbeat: () =>
+      apiRequest<{ ok: boolean; profile: Record<string, unknown> }>(
+        '/api/profiles/me/heartbeat',
+        { method: 'POST' }
+      ),
+    /** Tell the API which chat is open so it can skip redundant message pushes. */
+    setActiveChat: (chat_id: string | null, chat_type?: 'individual' | 'group') =>
+      apiRequest<{ ok: boolean }>('/api/profiles/me/active-chat', {
+        method: 'POST',
+        body: { chat_id, chat_type },
       }),
     search: (q: string) =>
       apiRequest<{ profiles: Record<string, unknown>[] }>(
@@ -567,6 +622,29 @@ export const api = {
         `/api/groups/invites/${token}/join`,
         { method: 'POST' }
       ),
+    publishSenderKeys: (
+      groupId: string,
+      distributions: Array<{
+        recipient_id: string;
+        ciphertext: string;
+        iv: string;
+        sender_identity_pub: string;
+      }>
+    ) =>
+      apiRequest<{ count: number }>(`/api/groups/${groupId}/sender-keys`, {
+        method: 'POST',
+        body: { distributions },
+      }),
+    getSenderKeys: (groupId: string) =>
+      apiRequest<{
+        keys: Array<{
+          sender_id: string;
+          ciphertext: string;
+          iv: string;
+          sender_identity_pub: string;
+          created_at: string;
+        }>;
+      }>(`/api/groups/${groupId}/sender-keys`),
   },
 
   messages: {
@@ -593,10 +671,23 @@ export const api = {
         method: 'POST',
         body: data,
       }),
-    edit: (id: string, content: string) =>
+    edit: (
+      id: string,
+      contentOrFields:
+        | string
+        | {
+            content: string;
+            plaintext?: boolean;
+            iv?: string;
+            ephemeral_public_key?: string;
+          }
+    ) =>
       apiRequest<{ message: Record<string, unknown> }>(`/api/messages/${id}`, {
         method: 'PATCH',
-        body: { content },
+        body:
+          typeof contentOrFields === 'string'
+            ? { content: contentOrFields }
+            : contentOrFields,
       }),
     delete: (id: string, forEveryone = false) =>
       apiRequest<{ success: boolean }>(
@@ -701,6 +792,16 @@ export const api = {
         `/api/reels/feed${qs ? `?${qs}` : ''}`
       );
     },
+    publicFeed: (params?: { cursor?: string; limit?: number }) => {
+      const search = new URLSearchParams();
+      if (params?.cursor) search.set('cursor', params.cursor);
+      if (params?.limit) search.set('limit', String(params.limit));
+      const qs = search.toString();
+      return apiRequest<{ reels: ReelDTO[]; next_cursor: string | null }>(
+        `/api/reels/feed/public${qs ? `?${qs}` : ''}`,
+        { auth: false }
+      );
+    },
     followingFeed: (params?: { cursor?: string; limit?: number }) => {
       const search = new URLSearchParams();
       if (params?.cursor) search.set('cursor', params.cursor);
@@ -718,6 +819,11 @@ export const api = {
       apiRequest<{ reels: ReelDTO[]; profiles: ReelAuthorDTO[] }>(
         `/api/reels/search?q=${encodeURIComponent(q)}`,
         { signal: opts?.signal }
+      ),
+    publicSearch: (q: string, opts?: { signal?: AbortSignal }) =>
+      apiRequest<{ reels: ReelDTO[]; profiles: ReelAuthorDTO[] }>(
+        `/api/reels/search/public?q=${encodeURIComponent(q)}`,
+        { auth: false, signal: opts?.signal }
       ),
     byUser: (profileId: string, limit = 30) =>
       apiRequest<{ reels: ReelDTO[] }>(`/api/reels/user/${profileId}?limit=${limit}`),
@@ -1052,6 +1158,38 @@ export const api = {
         method: 'DELETE',
         body: { token },
       }),
+  },
+
+  realtime: {
+    status: () =>
+      apiRequest<{
+        region: string;
+        e2e_mode: string;
+        ws_path: string;
+        queue: string;
+        ws: { connections: number; users_online: number };
+      }>('/api/realtime/status'),
+    metrics: () => apiRequest('/api/realtime/metrics'),
+    registerDevice: (body: {
+      device_id: string;
+      platform?: string;
+      app_version?: string;
+    }) => apiRequest('/api/realtime/devices', { method: 'POST', body }),
+    listDevices: () =>
+      apiRequest<{ devices: Record<string, unknown>[] }>('/api/realtime/devices'),
+    ackSync: (body: {
+      device_id: string;
+      stream?: string;
+      cursor_at: string;
+    }) => apiRequest('/api/realtime/sync/ack', { method: 'POST', body }),
+    getSyncCursor: (device_id: string, stream = 'messages') =>
+      apiRequest<{ cursor: Record<string, unknown> | null }>(
+        `/api/realtime/sync/cursor?device_id=${encodeURIComponent(device_id)}&stream=${encodeURIComponent(stream)}`
+      ),
+    syncMessages: (since: string, limit = 50) =>
+      apiRequest<{ messages: Record<string, unknown>[] }>(
+        `/api/realtime/sync/messages?since=${encodeURIComponent(since)}&limit=${limit}`
+      ),
   },
 
   gifts: {

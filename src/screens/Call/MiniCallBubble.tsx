@@ -13,7 +13,7 @@ type Props = {
   onEnd: () => void;
 };
 
-/** Floating bubble while the full call UI is minimized over Main. */
+/** Floating bubble — only the chip captures touches; rest of the screen stays usable. */
 export function MiniCallBubble({
   peerName,
   peerAvatar,
@@ -26,11 +26,11 @@ export function MiniCallBubble({
   const insets = useSafeAreaInsets();
 
   return (
-    <View
-      pointerEvents="box-none"
-      style={[styles.host, { paddingTop: insets.top + 8, paddingBottom: insets.bottom + 8 }]}
-    >
-      <View style={styles.bubble}>
+    <View pointerEvents="box-none" style={styles.host}>
+      <View
+        pointerEvents="auto"
+        style={[styles.bubble, { top: insets.top + 8, right: 12 }]}
+      >
         <TouchableOpacity style={styles.mainTap} onPress={onExpand} activeOpacity={0.9}>
           {peerAvatar ? (
             <Image source={{ uri: peerAvatar }} style={styles.avatar} />
@@ -69,12 +69,11 @@ export function MiniCallBubble({
 const styles = StyleSheet.create({
   host: {
     ...StyleSheet.absoluteFillObject,
-    justifyContent: 'flex-start',
-    alignItems: 'flex-end',
-    paddingHorizontal: 12,
     zIndex: 100,
+    elevation: 100,
   },
   bubble: {
+    position: 'absolute',
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(17,24,39,0.94)',

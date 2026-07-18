@@ -1,6 +1,11 @@
-import { Linking, Platform } from 'react-native';
+import { Linking } from 'react-native';
+import { getMessageDisplayText } from '../../lib/messageCrypto';
+import { isInviteLink, parseInviteTokenFromUrl } from '../../lib/groupInviteLinks';
+import { setPendingInviteToken } from '../../lib/pendingInvite';
+import { navigateToInvite } from '../../navigation/rootNavigation';
 
-const URL_REGEX = /(https?:\/\/[^\s]+|www\.[^\s]+)/gi;
+const URL_REGEX =
+  /(https?:\/\/[^\s]+|www\.[^\s]+|(?:chatapp|yourapp):\/\/[^\s]+)/gi;
 const MENTION_REGEX = /(@[\w][\w.-]*)/g;
 
 export type TextSegment = { type: 'text' | 'link' | 'mention'; value: string };
@@ -35,6 +40,14 @@ export function splitTextWithLinks(text: string): TextSegment[] {
 }
 
 export async function openFileUrl(url: string): Promise<void> {
+  if (isInviteLink(url)) {
+    const token = parseInviteTokenFromUrl(url);
+    if (token) {
+      await setPendingInviteToken(token);
+      navigateToInvite(token);
+      return;
+    }
+  }
   const normalized = url.startsWith('http') ? url : `https://${url}`;
   const can = await Linking.canOpenURL(normalized);
   if (!can) throw new Error('Cannot open this file');
@@ -123,6 +136,10 @@ export function replyPreviewText(msg: {
   message_type?: string;
   content?: string;
   file_name?: string;
+  plaintext?: boolean;
+  decrypted?: string;
+  iv?: string;
+  ephemeral_public_key?: string;
 }): string {
   switch (msg.message_type) {
     case 'audio':
@@ -138,6 +155,6 @@ export function replyPreviewText(msg: {
     case 'moment':
       return 'Moment';
     default:
-      return msg.content || 'Message';
+      return getMessageDisplayText(msg) || 'Message';
   }
 }

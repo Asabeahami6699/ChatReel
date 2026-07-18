@@ -11,6 +11,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { chatTheme } from './chatTheme';
 import type { ChatListMessage } from './chatListModel';
+import { getMessageDisplayText } from '../../lib/messageCrypto';
 
 type Props = {
   visible: boolean;
@@ -30,7 +31,7 @@ export function ChatSearchOverlay({ visible, messages, onClose, onSelect }: Prop
         if (m.message_type && m.message_type !== 'text') {
           return (m.file_name || '').toLowerCase().includes(q);
         }
-        return (m.content || '').toLowerCase().includes(q);
+        return getMessageDisplayText(m).toLowerCase().includes(q);
       })
       .slice(-40)
       .reverse();
@@ -73,7 +74,9 @@ export function ChatSearchOverlay({ visible, messages, onClose, onSelect }: Prop
                 {new Date(item.created_at).toLocaleString()}
               </Text>
               <Text numberOfLines={2} style={styles.rowText}>
-                {item.message_type === 'text' ? item.content : item.file_name || item.message_type}
+                {item.message_type === 'text'
+                  ? getMessageDisplayText(item)
+                  : item.file_name || item.message_type}
               </Text>
             </TouchableOpacity>
           )}

@@ -20,6 +20,8 @@ import { api, ApiError, type ReelAuthorDTO, type ReelDTO } from '../../lib/api';
 import { getReelGridThumbnail, splitCaptionHighlight } from '../../lib/reelThumbnails';
 import type { ReelsStackParamList, ReelsTabParamList } from '../../navigation/reelsNavigation';
 import { reelTabBarOffset } from './ReelsTabBar';
+import { useAuth } from '../../hooks/useAuth';
+import { promptSignIn } from '../../lib/requireSignedIn';
 
 type ReelSearchNavigation = CompositeNavigationProp<
   BottomTabNavigationProp<ReelsTabParamList, 'ReelSearch'>,
@@ -38,6 +40,7 @@ export default function ReelSearchScreen() {
   const insets = useSafeAreaInsets();
   const bottomPad = reelTabBarOffset(insets.bottom);
   const navigation = useNavigation<ReelSearchNavigation>();
+  const { isGuest, exitGuest } = useAuth();
 
   const [query, setQuery] = useState('');
   const [tab, setTab] = useState<SearchTab>('all');
@@ -70,8 +73,8 @@ export default function ReelSearchScreen() {
       const controller = new AbortController();
       abortRef.current = controller;
       setLoading(true);
-      api.reels
-        .search(q, { signal: controller.signal })
+      const searchFn = isGuest ? api.reels.publicSearch : api.reels.search;
+      searchFn(q, { signal: controller.signal })
         .then((res) => {
           if (!alive) return;
           const nextReels = res.reels ?? [];
@@ -103,7 +106,7 @@ export default function ReelSearchScreen() {
       clearTimeout(timer);
       abortRef.current?.abort();
     };
-  }, [query]);
+  }, [query, isGuest]);
 
   const showVideos = tab === 'all' || tab === 'videos';
   const showUsers = tab === 'all' || tab === 'users';
@@ -119,6 +122,13 @@ export default function ReelSearchScreen() {
   };
 
   const openCreator = (p: ProfileRow) => {
+    if (isGuest) {
+      promptSignIn({
+        message: 'Sign in to view creator profiles.',
+        onLogin: () => exitGuest(),
+      });
+      return;
+    }
     navigation.navigate('ReelCreatorProfile', {
       profileId: p.id,
       displayName: displayName(p),
@@ -126,6 +136,13 @@ export default function ReelSearchScreen() {
   };
 
   const openMyAccount = () => {
+    if (isGuest) {
+      promptSignIn({
+        message: 'Sign in to manage your reel account.',
+        onLogin: () => exitGuest(),
+      });
+      return;
+    }
     navigation.navigate('ReelAccount');
   };
 
@@ -182,7 +199,7 @@ export default function ReelSearchScreen() {
           keyExtractor={(item) => item.key}
           contentContainerStyle={[styles.list, { paddingBottom: bottomPad + 16 }]}
           ListHeaderComponent={
-            !query.trim() ? (
+            !query.trim() && !isGuest ? (
               <TouchableOpacity style={styles.accountCard} onPress={openMyAccount}>
                 <Ionicons name="person-circle-outline" size={28} color="#fff" />
                 <View style={styles.accountCardText}>

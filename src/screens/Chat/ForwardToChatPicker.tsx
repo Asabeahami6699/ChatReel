@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { OfflineAvatar } from '../../components/OfflineAvatar';
 import { api } from '../../lib/api';
 import { chatTheme } from './chatTheme';
 
@@ -141,8 +142,10 @@ export function ForwardToChatPicker({
                   onClose();
                 }}
               >
-                <Image
-                  source={{ uri: item.avatarUrl || 'https://via.placeholder.com/44' }}
+                <OfflineAvatar
+                  uri={item.avatarUrl}
+                  name={item.chatName}
+                  size={44}
                   style={styles.avatar}
                 />
                 <View style={styles.rowBody}>

@@ -188,7 +188,6 @@ router.get(
       .from('group_invites')
       .select('*')
       .eq('token', req.params.token)
-      .is('used_at', null)
       .gt('expires_at', new Date().toISOString())
       .maybeSingle();
 
@@ -215,7 +214,6 @@ router.post(
       .from('group_invites')
       .select('*')
       .eq('token', req.params.token)
-      .is('used_at', null)
       .gt('expires_at', new Date().toISOString())
       .single();
 
@@ -241,11 +239,6 @@ router.post(
     });
 
     if (memberError) return res.status(500).json({ error: memberError.message });
-
-    await supabaseAdmin
-      .from('group_invites')
-      .update({ used_at: new Date().toISOString(), used_by: userId })
-      .eq('id', invite.id);
 
     return res.json({ group_id: invite.group_id, already_member: false });
   })
@@ -333,6 +326,103 @@ router.post(
   })
 );
 
+async function assertGroupMember(groupId: string, userId: string): Promise<boolean> {
+  const { data: group } = await supabaseAdmin
+    .from('groups')
+    .select('creator_id')
+    .eq('id', groupId)
+    .maybeSingle();
+  if (group?.creator_id === userId) return true;
+  const { data: member } = await supabaseAdmin
+    .from('group_members')
+    .select('id')
+    .eq('group_id', groupId)
+    .eq('user_id', userId)
+    .maybeSingle();
+  return Boolean(member);
+}
+
+/** Distribute / refresh my group sender key to peers (encrypted per recipient). */
+router.post(
+  '/:groupId/sender-keys',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const groupId = z.string().uuid().parse(req.params.groupId);
+    const userId = req.userId!;
+    if (!(await assertGroupMember(groupId, userId))) {
+      return res.status(403).json({ error: 'Not a group member' });
+    }
+
+    const body = z
+      .object({
+        distributions: z
+          .array(
+            z.object({
+              recipient_id: z.string().uuid(),
+              ciphertext: z.string().min(1),
+              iv: z.string().min(1),
+              sender_identity_pub: z.string().min(1),
+            })
+          )
+          .min(1)
+          .max(200),
+      })
+      .parse(req.body);
+
+    const rows = body.distributions.map((d) => ({
+      group_id: groupId,
+      sender_id: userId,
+      recipient_id: d.recipient_id,
+      ciphertext: d.ciphertext,
+      iv: d.iv,
+      sender_identity_pub: d.sender_identity_pub,
+      created_at: new Date().toISOString(),
+    }));
+
+    // Upsert per (group, sender, recipient)
+    const { error } = await supabaseAdmin.from('group_sender_keys').upsert(rows, {
+      onConflict: 'group_id,sender_id,recipient_id',
+    });
+
+    if (error) {
+      // Table may not exist yet — surface a clear hint.
+      return res.status(500).json({
+        error: error.message,
+        hint: 'Apply supabase/migrations/035_group_sender_keys.sql',
+      });
+    }
+    return res.status(201).json({ count: rows.length });
+  })
+);
+
+/** Fetch sender keys encrypted for me in this group. */
+router.get(
+  '/:groupId/sender-keys',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const groupId = z.string().uuid().parse(req.params.groupId);
+    const userId = req.userId!;
+    if (!(await assertGroupMember(groupId, userId))) {
+      return res.status(403).json({ error: 'Not a group member' });
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from('group_sender_keys')
+      .select('sender_id, ciphertext, iv, sender_identity_pub, created_at')
+      .eq('group_id', groupId)
+      .eq('recipient_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      return res.status(500).json({
+        error: error.message,
+        hint: 'Apply supabase/migrations/035_group_sender_keys.sql',
+      });
+    }
+    return res.json({ keys: data ?? [] });
+  })
+);
+
 router.delete(
   '/:groupId',
   requireAuth,
@@ -341,6 +431,7 @@ router.delete(
 
     await supabaseAdmin.from('group_invites').delete().eq('group_id', groupId);
     await supabaseAdmin.from('group_members').delete().eq('group_id', groupId);
+    await supabaseAdmin.from('group_sender_keys').delete().eq('group_id', groupId);
 
     const { error } = await supabaseAdmin.from('groups').delete().eq('id', groupId);
     if (error) return res.status(500).json({ error: error.message });

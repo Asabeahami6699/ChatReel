@@ -1,12 +1,23 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { env } from '../config/env';
+import { archiveOldMessages } from '../jobs/archiveMessages';
+import { filterUsersNeedingMessagePush } from '../lib/activeChatFocus';
+import { withCdnMediaFields } from '../lib/mediaUrls';
+import { recordSendAckLatencyMs } from '../lib/sloMetrics';
+import { chatKeyFor, emitToChat, emitToUser } from '../realtime/wsGateway';
 import { supabaseAdmin } from '../lib/supabaseAdmin';
 import { asyncHandler, AuthedRequest, requireAuth } from '../middleware/auth';
+import { messageSendRateLimit } from '../middleware/rateLimit';
 import { sendPushToUserSafe, sendPushToUsersSafe } from '../services/push.service';
 
 const router = Router();
 
 const EDIT_WINDOW_MS = 15 * 60 * 1000;
+
+function mapMessageForClient(m: Record<string, unknown>) {
+  return withCdnMediaFields(m);
+}
 
 const messageSchema = z.object({
   content: z.string(),
@@ -26,6 +37,13 @@ const messageSchema = z.object({
   reply_to_id: z.string().uuid().optional(),
   expires_at: z.string().datetime().optional(),
   view_once: z.boolean().optional(),
+  /** Client-generated id for idempotent / offline retries (unique per sender). */
+  client_message_id: z
+    .string()
+    .min(8)
+    .max(128)
+    .regex(/^[a-zA-Z0-9:_-]+$/)
+    .optional(),
 });
 
 async function attachReactions(messageIds: string[]) {
@@ -122,11 +140,18 @@ router.get(
       return res.status(400).json({ error: 'chat_id query param is required' });
     }
 
-    const limit = Number(req.query.limit ?? 100);
+    const rawLimit = Number(req.query.limit ?? 50);
+    const limit = Math.min(
+      env.messagesListMaxLimit,
+      Math.max(1, Number.isFinite(rawLimit) ? rawLimit : 50)
+    );
     const before = req.query.before as string | undefined;
+    const fromArchive = req.query.archive === 'true';
 
     const buildListQuery = () => {
-      let q = supabaseAdmin.from('messages').select('*');
+      let q = supabaseAdmin
+        .from(fromArchive ? 'messages_archive' : 'messages')
+        .select('*');
 
       if (since) q = q.gt('created_at', since);
       if (before) q = q.lt('created_at', before);
@@ -186,29 +211,82 @@ router.get(
       }
     }
 
-    const enriched = messages.map((m) => ({
-      ...m,
-      delivered: true,
-      reactions: reactionMap[m.id] ?? [],
-      ...(readStats[m.id] ?? {}),
-      ...(isGroup && m.sender_id !== userId
-        ? { is_read: readByMeMap[m.id] ?? false }
-        : {}),
-    }));
+    const enriched = messages.map((m) =>
+      mapMessageForClient({
+        ...m,
+        delivered: true,
+        reactions: reactionMap[m.id] ?? [],
+        ...(readStats[m.id] ?? {}),
+        ...(isGroup && m.sender_id !== userId
+          ? { is_read: readByMeMap[m.id] ?? false }
+          : {}),
+        ...(fromArchive ? { archived: true } : {}),
+      })
+    );
 
-    return res.json({ messages: enriched });
+    return res.json({
+      messages: enriched,
+      hot: !fromArchive,
+      limit,
+    });
+  })
+);
+
+/** Manual archive batch (ops / cron). Safe to call repeatedly. */
+router.post(
+  '/archive/run',
+  requireAuth,
+  asyncHandler(async (_req: AuthedRequest, res) => {
+    const result = await archiveOldMessages();
+    if (result.error && !result.archived) {
+      return res.status(503).json({
+        error: result.error,
+        hint: 'Apply supabase/phase2/01_messages_archive.sql if the archive table is missing.',
+      });
+    }
+    return res.json(result);
   })
 );
 
 router.post(
   '/',
   requireAuth,
+  messageSendRateLimit,
   asyncHandler(async (req: AuthedRequest, res) => {
+    const started = Date.now();
     const body = messageSchema.parse(req.body);
     const userId = req.userId!;
 
     if (!body.receiver_id && !body.group_id) {
       return res.status(400).json({ error: 'receiver_id or group_id is required' });
+    }
+
+    if (
+      env.e2eMode === 'strict' &&
+      (body.message_type === 'text' || !body.message_type) &&
+      (body.receiver_id || body.group_id) &&
+      body.plaintext !== false
+    ) {
+      return res.status(400).json({
+        error: 'E2E_MODE=strict requires encrypted messages (plaintext:false + iv)',
+        code: 'E2E_REQUIRED',
+      });
+    }
+
+    // Idempotent send: retry / offline flush returns the original row.
+    if (body.client_message_id) {
+      const { data: existing } = await supabaseAdmin
+        .from('messages')
+        .select('*')
+        .eq('sender_id', userId)
+        .eq('client_message_id', body.client_message_id)
+        .maybeSingle();
+      if (existing) {
+        return res.status(200).json({
+          message: mapMessageForClient(existing as Record<string, unknown>),
+          duplicate: true,
+        });
+      }
     }
 
     const baseInsert: Record<string, unknown> = {
@@ -229,6 +307,9 @@ router.post(
       moment_id: body.moment_id ?? null,
       reply_to_id: body.reply_to_id ?? null,
     };
+    if (body.client_message_id) {
+      baseInsert.client_message_id = body.client_message_id;
+    }
 
     const disappearingInsert: Record<string, unknown> = {
       ...baseInsert,
@@ -251,7 +332,40 @@ router.post(
         .single());
     }
 
-    if (error) return res.status(500).json({ error: error.message });
+    // Older DBs without client_message_id column — retry without it.
+    if (error && /client_message_id/.test(error.message) && body.client_message_id) {
+      const { client_message_id: _omit, ...withoutClientId } = disappearingInsert as Record<
+        string,
+        unknown
+      > & { client_message_id?: string };
+      ({ data, error } = await supabaseAdmin
+        .from('messages')
+        .insert(withoutClientId)
+        .select()
+        .single());
+    }
+
+    // Race: another retry inserted the same client_message_id first.
+    if (error && body.client_message_id && /duplicate|unique/i.test(error.message)) {
+      const { data: raced } = await supabaseAdmin
+        .from('messages')
+        .select('*')
+        .eq('sender_id', userId)
+        .eq('client_message_id', body.client_message_id)
+        .maybeSingle();
+      if (raced) {
+        return res.status(200).json({ message: raced, duplicate: true });
+      }
+    }
+
+    if (error) {
+      const msg = error.message || 'Failed to send message';
+      // Client treats 5xx/network as queueable pending (not hard-fail).
+      if (/fetch failed|ENOTFOUND|ECONNREFUSED|timeout|network/i.test(msg)) {
+        return res.status(503).json({ error: msg });
+      }
+      return res.status(500).json({ error: msg });
+    }
 
     if (body.receiver_id && body.receiver_id !== userId) {
       const { data: senderProfile } = await supabaseAdmin
@@ -264,23 +378,34 @@ router.post(
         senderProfile?.display_name || senderProfile?.email?.split('@')[0] || 'New message';
       const preview =
         body.message_type === 'text'
-          ? body.content.slice(0, 120)
+          ? body.plaintext === false
+            ? 'New message'
+            : body.content.slice(0, 120)
           : body.message_type === 'reel'
             ? 'Shared a reel'
             : body.message_type === 'moment'
               ? 'Replied to your moment'
               : `Sent a ${body.message_type}`;
 
-      sendPushToUserSafe(body.receiver_id, {
-        title: senderName,
-        body: preview,
-        data: {
-          type: 'message',
-          chat_id: userId,
-          chat_type: 'individual',
-          message_id: data.id,
-        },
-      });
+      // Skip Expo when recipient already has this DM open (Realtime covers them).
+      const [needsPush] = filterUsersNeedingMessagePush(
+        [body.receiver_id],
+        userId,
+        'individual'
+      );
+      if (needsPush) {
+        sendPushToUserSafe(needsPush, {
+          title: senderName,
+          body: preview,
+          data: {
+            type: 'message',
+            chat_id: userId,
+            chat_type: 'individual',
+            chat_name: senderName,
+            message_id: data.id,
+          },
+        });
+      }
     } else if (body.group_id) {
       const [{ data: senderProfile }, { data: members }, { data: group }] = await Promise.all([
         supabaseAdmin
@@ -304,28 +429,63 @@ router.post(
               ? 'Shared a moment'
               : `Sent a ${body.message_type}`;
 
-      const recipientIds = [
-        ...new Set(
-          (members ?? [])
-            .map((m) => m.user_id as string)
-            .filter((uid) => uid && uid !== userId)
-        ),
-      ];
+      const recipientIds = filterUsersNeedingMessagePush(
+        [
+          ...new Set(
+            (members ?? [])
+              .map((m) => m.user_id as string)
+              .filter((uid) => uid && uid !== userId)
+          ),
+        ],
+        body.group_id,
+        'group'
+      );
 
-      sendPushToUsersSafe(recipientIds, {
-        title: groupName,
-        body: `${senderName}: ${preview}`,
-        data: {
-          type: 'message',
-          chat_id: body.group_id,
-          chat_type: 'group',
-          chat_name: groupName,
-          message_id: data.id,
-        },
-      });
+      if (recipientIds.length) {
+        sendPushToUsersSafe(recipientIds, {
+          title: groupName,
+          body: `${senderName}: ${preview}`,
+          data: {
+            type: 'message',
+            chat_id: body.group_id,
+            chat_type: 'group',
+            chat_name: groupName,
+            message_id: data.id,
+          },
+        });
+      }
     }
 
-    return res.status(201).json({ message: data });
+    const clientMessage = mapMessageForClient(data as Record<string, unknown>);
+    const key = body.group_id
+      ? chatKeyFor({ isGroup: true, chatId: body.group_id })
+      : chatKeyFor({
+          isGroup: false,
+          chatId: body.receiver_id!,
+          userA: userId,
+          userB: body.receiver_id!,
+        });
+
+    emitToChat(key, { type: 'message.created', chat_key: key, message: clientMessage });
+    if (body.receiver_id) {
+      emitToUser(body.receiver_id, {
+        type: 'message.created',
+        chat_key: key,
+        message: clientMessage,
+      });
+    }
+    emitToUser(userId, {
+      type: 'message.created',
+      chat_key: key,
+      message: clientMessage,
+      self: true,
+    });
+
+    recordSendAckLatencyMs(Date.now() - started, env.sloSendP95Ms);
+
+    return res.status(201).json({
+      message: clientMessage,
+    });
   })
 );
 
@@ -422,7 +582,14 @@ router.patch(
   asyncHandler(async (req: AuthedRequest, res) => {
     const userId = req.userId!;
     const messageId = z.string().uuid().parse(req.params.id);
-    const body = z.object({ content: z.string().min(1) }).parse(req.body);
+    const body = z
+      .object({
+        content: z.string().min(1),
+        plaintext: z.boolean().optional(),
+        iv: z.string().optional(),
+        ephemeral_public_key: z.string().optional(),
+      })
+      .parse(req.body);
 
     const { data: existing, error: fetchError } = await supabaseAdmin
       .from('messages')
@@ -442,15 +609,34 @@ router.patch(
       return res.status(400).json({ error: 'Edit window expired (15 minutes)' });
     }
 
+    const updateRow: Record<string, unknown> = {
+      content: body.content,
+      edited_at: new Date().toISOString(),
+    };
+    if (body.plaintext === false && body.iv && body.ephemeral_public_key) {
+      updateRow.plaintext = false;
+      updateRow.iv = body.iv;
+      updateRow.ephemeral_public_key = body.ephemeral_public_key;
+    } else if (body.plaintext === true || body.plaintext === undefined) {
+      // Plaintext edit clears prior E2E fields so clients don't try to decrypt.
+      if (body.plaintext === true || (!body.iv && !body.ephemeral_public_key)) {
+        updateRow.plaintext = true;
+        updateRow.iv = null;
+        updateRow.ephemeral_public_key = null;
+      }
+    }
+
     const { data, error } = await supabaseAdmin
       .from('messages')
-      .update({ content: body.content, edited_at: new Date().toISOString() })
+      .update(updateRow)
       .eq('id', messageId)
       .select()
       .single();
 
     if (error) return res.status(500).json({ error: error.message });
-    return res.json({ message: data });
+    return res.json({
+      message: mapMessageForClient(data as Record<string, unknown>),
+    });
   })
 );
 

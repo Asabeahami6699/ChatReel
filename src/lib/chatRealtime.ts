@@ -1,16 +1,8 @@
-import type { RealtimeChannel } from '@supabase/supabase-js';
-import { supabase } from './supabase';
-
 export type ChatRealtimeRow = Record<string, unknown> & {
   id?: string;
   sender_id?: string;
   receiver_id?: string;
   group_id?: string;
-};
-
-export type ChatRealtimeHandlers = {
-  onInsert: (row: ChatRealtimeRow) => void;
-  onUpdate: (row: ChatRealtimeRow) => void;
 };
 
 type MessageRowListener = (row: ChatRealtimeRow, event: 'INSERT' | 'UPDATE') => void;
@@ -22,8 +14,28 @@ export function subscribeToMessageRows(listener: MessageRowListener): () => void
   return () => messageRowListeners.delete(listener);
 }
 
-/** Called by realtimeHub when a messages row changes. */
+// INSERT dedupe: the same row can arrive from the Supabase hub AND the custom
+// chat WebSocket (which also emits per-chat and per-user copies). Bounded set
+// so memory stays flat over long sessions.
+const seenInsertIds = new Set<string>();
+const seenInsertOrder: string[] = [];
+const MAX_SEEN_INSERTS = 500;
+
+function markInsertSeen(id: string) {
+  seenInsertIds.add(id);
+  seenInsertOrder.push(id);
+  if (seenInsertOrder.length > MAX_SEEN_INSERTS) {
+    const oldest = seenInsertOrder.shift();
+    if (oldest) seenInsertIds.delete(oldest);
+  }
+}
+
+/** Called by realtimeHub / chat WebSocket when a messages row changes. */
 export function dispatchMessageRow(row: ChatRealtimeRow, event: 'INSERT' | 'UPDATE') {
+  if (event === 'INSERT' && typeof row.id === 'string') {
+    if (seenInsertIds.has(row.id)) return;
+    markInsertSeen(row.id);
+  }
   messageRowListeners.forEach((listener) => {
     try {
       listener(row, event);
@@ -33,81 +45,7 @@ export function dispatchMessageRow(row: ChatRealtimeRow, event: 'INSERT' | 'UPDA
   });
 }
 
-/**
- * Per-chat Supabase channel for live message INSERT/UPDATE in the open room.
- * Used alongside the global hub dispatch (subscribeToMessageRows).
- */
-export function subscribeToChatMessages(
-  chatId: string,
-  chatType: 'individual' | 'group',
-  authUserId: string,
-  handlers: ChatRealtimeHandlers
-): RealtimeChannel {
-  const channel = supabase.channel(
-    `chat-messages:${chatType}:${chatId}:${authUserId}`
-  );
-
-  // Flag flipped on by the consumer when it intentionally tears the channel down.
-  // We patch a small `_closeIntentional` marker so the subscribe callback can
-  // distinguish expected closes (navigation) from unexpected ones (auth/WS drop).
-  (channel as unknown as { _closeIntentional?: boolean })._closeIntentional = false;
-  const origUnsubscribe = channel.unsubscribe.bind(channel);
-  channel.unsubscribe = ((...args: Parameters<typeof origUnsubscribe>) => {
-    (channel as unknown as { _closeIntentional?: boolean })._closeIntentional = true;
-    return origUnsubscribe(...args);
-  }) as typeof channel.unsubscribe;
-
-  const belongsToChat = (row: ChatRealtimeRow): boolean => {
-    if (chatType === 'group') {
-      return row.group_id === chatId;
-    }
-    return (
-      (row.sender_id === authUserId && row.receiver_id === chatId) ||
-      (row.sender_id === chatId && row.receiver_id === authUserId)
-    );
-  };
-
-  channel.on(
-    'postgres_changes',
-    { event: '*', schema: 'public', table: 'messages' },
-    (payload) => {
-      const row = (payload.new ?? payload.old) as ChatRealtimeRow | null;
-      if (!row || !row.id) return;
-      if (!belongsToChat(row)) return;
-
-      if (payload.eventType === 'INSERT') {
-        handlers.onInsert(row);
-      } else if (payload.eventType === 'UPDATE') {
-        handlers.onUpdate(row);
-      }
-    }
-  );
-
-  let errorRetries = 0;
-  channel.subscribe(async (status, err) => {
-    if (status === 'SUBSCRIBED') {
-      errorRetries = 0;
-    } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-      console.error('[chatRealtime] channel status', status, err);
-      // Re-apply the auth token in case it's a JWT expiry / refresh race, then let
-      // supabase-js auto-reconnect. Cap retries to avoid log spam.
-      if (errorRetries < 3) {
-        errorRetries += 1;
-        try {
-          const { ensureSupabaseSession } = await import('./ensureSupabaseSession');
-          await ensureSupabaseSession();
-        } catch {
-          /* ignore */
-        }
-      }
-    } else if (status === 'CLOSED') {
-      const intentional = (channel as unknown as { _closeIntentional?: boolean })
-        ._closeIntentional;
-      if (!intentional) {
-        console.warn('[chatRealtime] channel closed unexpectedly', chatType, chatId);
-      }
-    }
-  });
-
-  return channel;
-}
+// NOTE: The former per-room `subscribeToChatMessages` channel was removed.
+// It duplicated the global realtime hub's broad `messages` binding (one extra
+// unfiltered postgres_changes subscription per open room). Rooms now rely on
+// the hub dispatch above plus the custom chat WebSocket and HTTP reconciliation.

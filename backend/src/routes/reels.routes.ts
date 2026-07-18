@@ -11,6 +11,8 @@ import {
   canViewReel,
   filterVisibleReels,
   enrichReels,
+  enrichPublicReels,
+  fetchPublicFeedReels,
   getAcceptedFriendIds,
   ReelRow,
   ReelVisibility,
@@ -22,7 +24,9 @@ import { assertReelSoundActive, createReelSound, deactivateReelSoundForUser, get
 import { extractSoundFromVideoUrl } from '../services/reelSoundExtract.service';
 import { resolveSoundFromReel } from '../services/reelSoundFromReel.service';
 import { buildWatermarkedReelDownload } from '../services/reelDownload.service';
+import { cleanupReelStorage, getReelMediaUrls } from '../services/reelStorage.service';
 import { probeVideoDimensionsFromUrl } from '../lib/videoProbe';
+import { publicReelsRateLimit } from '../middleware/rateLimit';
 
 const router = Router();
 
@@ -108,6 +112,104 @@ function assertReelsBucketUrl(url: string): void {
 }
 
 /* -------------------------------------------------------------------------- */
+/*  GET /feed/public — anonymous browse (approved public only)                */
+/* -------------------------------------------------------------------------- */
+router.get(
+  '/feed/public',
+  publicReelsRateLimit,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const limit = Math.min(Number(req.query.limit ?? 10), 30);
+    const cursor = req.query.cursor as string | undefined;
+
+    const { reels, nextCursor } = await fetchPublicFeedReels({ cursor, limit });
+    let page = reels;
+
+    // First page: light shuffle so guests don't always see the same FCFS order.
+    if (!cursor && page.length > 1) {
+      const mixed = [...page];
+      for (let i = mixed.length - 1; i > 0; i -= 1) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const tmp = mixed[i]!;
+        mixed[i] = mixed[j]!;
+        mixed[j] = tmp;
+      }
+      page = mixed;
+    }
+
+    const enriched = await enrichPublicReels(page);
+    return res.json({ reels: enriched, next_cursor: nextCursor });
+  })
+);
+
+/* -------------------------------------------------------------------------- */
+/*  GET /search/public — anonymous search (approved public only)              */
+/* -------------------------------------------------------------------------- */
+router.get(
+  '/search/public',
+  publicReelsRateLimit,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const q = String(req.query.q ?? '').trim();
+    if (!q) return res.json({ reels: [], profiles: [] });
+
+    const escaped = q.replace(/[%_]/g, '\\$&');
+    const captionFilter = `caption.ilike.%${escaped}%,caption.ilike.${escaped}%`;
+
+    const [reelsRes, profilesRes] = await Promise.all([
+      supabaseAdmin
+        .from('reels')
+        .select('*')
+        .eq('visibility', 'public')
+        .eq('moderation_status', 'approved')
+        .or(captionFilter)
+        .order('created_at', { ascending: false })
+        .limit(20),
+      supabaseAdmin
+        .from('profiles')
+        .select('id, display_name, avatar_url')
+        .or(`display_name.ilike.%${escaped}%`)
+        .limit(12),
+    ]);
+
+    if (reelsRes.error) return res.status(500).json({ error: reelsRes.error.message });
+    if (profilesRes.error) return res.status(500).json({ error: profilesRes.error.message });
+
+    const profileIds = (profilesRes.data ?? []).map((p) => p.id as string);
+    let authorReels: ReelRow[] = [];
+    if (profileIds.length) {
+      const { data: byAuthor, error: authorErr } = await supabaseAdmin
+        .from('reels')
+        .select('*')
+        .eq('visibility', 'public')
+        .eq('moderation_status', 'approved')
+        .in('author_id', profileIds)
+        .order('created_at', { ascending: false })
+        .limit(20);
+      if (authorErr) return res.status(500).json({ error: authorErr.message });
+      authorReels = (byAuthor ?? []) as ReelRow[];
+    }
+
+    const mergedById = new Map<string, ReelRow>();
+    for (const row of [...((reelsRes.data ?? []) as ReelRow[]), ...authorReels]) {
+      if (row.scheduled_publish_at && new Date(row.scheduled_publish_at).getTime() > Date.now()) {
+        continue;
+      }
+      mergedById.set(row.id, row);
+    }
+
+    const enriched = await enrichPublicReels(Array.from(mergedById.values()).slice(0, 24));
+    const profiles = (profilesRes.data ?? []).map((p) => ({
+      id: p.id as string,
+      user_id: '',
+      display_name: (p.display_name as string | null) ?? null,
+      email: null,
+      avatar_url: (p.avatar_url as string | null) ?? null,
+    }));
+
+    return res.json({ reels: enriched, profiles });
+  })
+);
+
+/* -------------------------------------------------------------------------- */
 /*  GET /feed — paginated, visibility-filtered reels                          */
 /* -------------------------------------------------------------------------- */
 router.get(
@@ -141,7 +243,7 @@ router.get(
 
     let page = ranked.slice(0, limit);
 
-    // First page: prepend newest approved reels so uploads appear quickly in For You.
+    // First page: sprinkle recent approved reels into a shuffled mix (not chronological FCFS).
     if (!cursor) {
       const fresh = await fetchFreshReelsForFeed({
         profileId,
@@ -152,7 +254,14 @@ router.get(
       });
       const onPage = new Set(page.map((r) => r.id));
       const inject = fresh.filter((r) => !onPage.has(r.id));
-      page = [...inject, ...page].slice(0, limit);
+      const mixed = [...inject, ...page];
+      for (let i = mixed.length - 1; i > 0; i -= 1) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const tmp = mixed[i]!;
+        mixed[i] = mixed[j]!;
+        mixed[j] = tmp;
+      }
+      page = mixed.slice(0, limit);
     }
 
     const enriched = await enrichReels(page, profileId);
@@ -1021,7 +1130,7 @@ router.delete(
 
     const { data: existing, error: getErr } = await supabaseAdmin
       .from('reels')
-      .select('id, author_id, video_url, thumbnail_url')
+      .select('id, author_id, video_url, thumbnail_url, hls_url')
       .eq('id', id)
       .maybeSingle();
 
@@ -1031,31 +1140,19 @@ router.delete(
       return res.status(403).json({ error: 'Only the author can delete' });
     }
 
+    // Capture every storage reference before the delete cascades reel_media away.
+    const mediaUrls = await getReelMediaUrls(id);
+
     const { error } = await supabaseAdmin.from('reels').delete().eq('id', id);
     if (error) return res.status(500).json({ error: error.message });
 
-    // best-effort storage cleanup (don't fail the request)
-    try {
-      const paths: string[] = [];
-      const extract = (url?: string | null) => {
-        if (!url) return;
-        const m = /\/storage\/v1\/object\/(?:public|sign)\/reels\/(.+?)(?:\?|$)/.exec(url);
-        if (m?.[1]) paths.push(m[1]);
-      };
-      extract(existing.video_url as string);
-      extract(existing.thumbnail_url as string | null);
-      if (paths.length > 0) {
-        await supabaseAdmin.storage.from('reels').remove(paths);
-      }
-      const { data: hlsFiles } = await supabaseAdmin.storage.from('reels').list(`hls/${id}`);
-      if (hlsFiles?.length) {
-        await supabaseAdmin.storage
-          .from('reels')
-          .remove(hlsFiles.map((f) => `hls/${id}/${f.name}`));
-      }
-    } catch (e) {
-      console.warn('[reels] storage cleanup failed:', (e as Error).message);
-    }
+    // best-effort storage cleanup (never fails the request)
+    await cleanupReelStorage(id, [
+      existing.video_url as string | null,
+      existing.thumbnail_url as string | null,
+      existing.hls_url as string | null,
+      ...mediaUrls,
+    ]);
 
     return res.json({ success: true });
   })
@@ -1432,14 +1529,25 @@ router.post(
         caption,
         visibility: 'friends',
         transcode_status: isImage ? 'skipped' : 'pending',
+        moderation_status: 'pending',
       })
       .select()
       .single();
 
     if (insertErr) return res.status(500).json({ error: insertErr.message });
 
-    if (!isImage) {
-      queueReelHlsTranscode(reelRow.id as string, videoUrl, {});
+    const reelId = reelRow.id as string;
+
+    // Mirror the normal create-reel flow: HLS transcode handles moderation for
+    // videos; images and HLS-disabled videos must schedule moderation directly
+    // or they stay pending forever.
+    if (isImage) {
+      scheduleReelModeration(reelId);
+    } else if (isReelHlsEnabled()) {
+      queueReelHlsTranscode(reelId, videoUrl, {});
+    } else {
+      await supabaseAdmin.from('reels').update({ transcode_status: 'skipped' }).eq('id', reelId);
+      scheduleReelModeration(reelId);
     }
 
     const [enriched] = await enrichReels([reelRow as ReelRow], profileId);

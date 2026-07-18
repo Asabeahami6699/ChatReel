@@ -43,8 +43,8 @@ export function rememberCallReturnPoint(tab?: MainTabName) {
 }
 
 /**
- * Leave ActiveCall / OutgoingCall and restore Main on the remembered tab
- * (fallback: Calls). No Close button required.
+ * Leave call UI and restore Main on the remembered tab (fallback: Calls).
+ * Clears return target. Does not clear call pip — callers should clearCallPip first when ending.
  */
 export function leaveCallScreen(
   fallbackTab: MainTabName = 'Calls',
@@ -67,4 +67,34 @@ export function leaveCallScreen(
       ],
     })
   );
+}
+
+/** Ensure stack is on Main so ActiveCallLayer can cover / shrink over it. */
+export function ensureMainUnderCallLayer(tab?: MainTabName) {
+  if (!rootNavigationRef.isReady()) return;
+  const preferredTab = tab ?? returnTarget?.tab ?? readFocusedMainTab();
+  const route = rootNavigationRef.getCurrentRoute();
+  if (route?.name === 'Main') return;
+
+  rootNavigationRef.dispatch(
+    CommonActions.reset({
+      index: 0,
+      routes: [
+        {
+          name: 'Main',
+          params: { screen: preferredTab },
+        },
+      ],
+    })
+  );
+}
+
+/** @deprecated Minimize no longer changes the stack — kept for any old callers. */
+export function focusMainUnderFloatingCall(tab?: MainTabName) {
+  ensureMainUnderCallLayer(tab);
+}
+
+/** @deprecated Expand only flips pip.minimized — ActiveCallLayer stays mounted. */
+export function focusActiveCallOverMain() {
+  /* no-op: callPipExpand updates minimized flag */
 }
