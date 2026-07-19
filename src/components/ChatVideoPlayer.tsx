@@ -37,16 +37,10 @@ export function ChatVideoPlayer({
     );
   }
 
-  return (
-    <View style={[styles.wrap, { width, height }]}>
-      <ReelPlayer
-        source={uri}
-        style={styles.video}
-        shouldPlay={playing}
-        nativeControls={playing}
-        isLooping={false}
-      />
-      {!playing && (
+  // Don't mount the player until tap — avoids slow init for every video bubble.
+  if (!playing) {
+    return (
+      <View style={[styles.wrap, { width, height }]}>
         <TouchableOpacity
           style={styles.overlay}
           activeOpacity={0.85}
@@ -54,12 +48,26 @@ export function ChatVideoPlayer({
         >
           {thumbnailUri ? (
             <Image source={{ uri: thumbnailUri }} style={styles.thumb} resizeMode="cover" />
-          ) : null}
+          ) : (
+            <View style={styles.thumbPlaceholder} />
+          )}
           <View style={styles.playBtn}>
             <MaterialIcons name="play-circle-filled" size={52} color="rgba(255,255,255,0.95)" />
           </View>
         </TouchableOpacity>
-      )}
+      </View>
+    );
+  }
+
+  return (
+    <View style={[styles.wrap, { width, height }]}>
+      <ReelPlayer
+        source={uri}
+        style={styles.video}
+        shouldPlay
+        nativeControls
+        isLooping={false}
+      />
     </View>
   );
 }
@@ -75,6 +83,10 @@ const styles = StyleSheet.create({
   },
   thumb: {
     ...StyleSheet.absoluteFillObject,
+  },
+  thumbPlaceholder: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#111',
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,

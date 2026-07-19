@@ -506,11 +506,17 @@ export const useGroupList = (searchQuery = '') => {
     fetchGroups(true);
   }, [isOnline, fetchGroups]);
 
+  const softRefresh = useCallback(() => {
+    if (!isOnline) return;
+    void fetchGroups(true, true);
+  }, [isOnline, fetchGroups]);
+
   return {
     groups: filtered,
     loading,
     refreshing,
     refresh,
+    softRefresh,
     isOnline,
     isDataStale,
     markGroupMessagesAsRead

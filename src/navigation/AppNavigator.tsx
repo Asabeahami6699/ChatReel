@@ -109,9 +109,9 @@ const ReelsWrapper = ({ navigation }: { navigation: any }) => {
   const [isInitialized, setIsInitialized] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
 
-  // Mount reels navigator in the background after idle so feed + video are warm before first tap.
+  // Mount reels navigator promptly so videos are ready when the tab is opened.
   React.useEffect(() => {
-    const idleTimer = setTimeout(() => setIsInitialized(true), 2200);
+    const idleTimer = setTimeout(() => setIsInitialized(true), 150);
     return () => clearTimeout(idleTimer);
   }, []);
 

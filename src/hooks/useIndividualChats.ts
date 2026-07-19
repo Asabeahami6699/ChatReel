@@ -355,6 +355,12 @@ export const useIndividualChats = (searchQuery: string = '') => {
     fetchChats(true);
   }, [fetchChats, isOnline]);
 
+  /** Focus / background catch-up — no pull-to-refresh spinner. */
+  const softRefresh = useCallback(() => {
+    if (!isOnline) return;
+    void fetchChats(true, true);
+  }, [fetchChats, isOnline]);
+
   const markMessagesAsRead = async (partnerUserId: string) => {
     if (!user?.id) return;
     try {
@@ -388,6 +394,7 @@ export const useIndividualChats = (searchQuery: string = '') => {
     loading,
     refreshing,
     refresh,
+    softRefresh,
     isOnline,
     isDataStale,
     markMessagesAsRead,

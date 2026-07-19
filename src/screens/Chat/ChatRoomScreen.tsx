@@ -92,12 +92,14 @@ import {
   decryptChatMessages,
   getMessageDisplayText,
   preserveSenderCleartext,
+  rememberDecryptedText,
   tryEncryptChatText,
 } from '../../lib/messageCrypto';
 import {
   ensureGroupSenderKeyDistributed,
   syncGroupSenderKeysForMe,
 } from '../../lib/groupSenderKeys';
+import { rememberChatThread, recallChatThread, clearChatThread } from '../../lib/chatThreadCache';
 
 export default function ChatRoomScreen() {
   const { user } = useAuth();
@@ -118,20 +120,23 @@ export default function ChatRoomScreen() {
   const insets = useSafeAreaInsets();
   const { theme } = useChatSettings();
 
+  const cachedThread = chatId ? recallChatThread<Message>(chatId) : null;
+  const [messages, setMessages] = useState<Message[]>(() => cachedThread ?? []);
+  const [loading, setLoading] = useState(() => !(cachedThread && cachedThread.length > 0));
+  const [loadingMore, setLoadingMore] = useState(false);
   // Header (70) + status bar height — keeps the FlatList aligned when keyboard slides in.
   const keyboardVerticalOffset =
     Platform.OS === 'ios' ? 70 + insets.top : 0;
 
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [isPlayingAudio, setIsPlayingAudio] = useState<string | null>(null);
   const [sound, setSound] = useState<AudioPlayer | null>(null);
   const [composerDraft, setComposerDraft] = useState('');
   const draftSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [syncing, setSyncing] = useState(false);
-  const [initialLoadComplete, setInitialLoadComplete] = useState(false);
+  const [initialLoadComplete, setInitialLoadComplete] = useState(
+    () => !!(cachedThread && cachedThread.length > 0)
+  );
   const [hasAudioPermission, setHasAudioPermission] = useState<boolean>(false);
   const [pendingAttachments, setPendingAttachments] = useState<AttachmentFile[]>([]);
   const [showAttachmentPreview, setShowAttachmentPreview] = useState(false);
@@ -254,6 +259,7 @@ export default function ChatRoomScreen() {
     (updater: (prev: Message[]) => Message[]) => {
       setMessages((prev) => {
         const next = deduplicateMessages(updater(prev));
+        rememberChatThread(chatId, next);
         void messageStorage.saveMessages(chatId, next);
         return next;
       });
@@ -608,7 +614,10 @@ export default function ChatRoomScreen() {
         });
 
         const decryptedServer = await decryptChatMessages(messagesWithProfiles, user.id);
-        const serverMessages = decryptedServer;
+        const serverMessages = decryptedServer.map((m) => {
+          if (m.decrypted) rememberDecryptedText(m.id, m.decrypted);
+          return m;
+        });
 
         let finalMessages: Message[];
 
@@ -633,10 +642,23 @@ export default function ChatRoomScreen() {
               !(m.client_message_id && serverClientIds.has(m.client_message_id))
           );
 
-          finalMessages = deduplicateMessages([...serverMessages, ...uniquePending]);
+          // Keep any previously decrypted cleartext when server rows lack it.
+          const localById = new Map(localMessages.map((m) => [m.id, m]));
+          const withKeptCleartext = serverMessages.map((m) => {
+            const local = localById.get(m.id);
+            const kept = m.decrypted || local?.decrypted;
+            if (kept && !m.decrypted) {
+              rememberDecryptedText(m.id, kept);
+              return { ...m, decrypted: kept };
+            }
+            return m;
+          });
+
+          finalMessages = deduplicateMessages([...withKeptCleartext, ...uniquePending]);
         }
 
         setMessages(finalMessages);
+        rememberChatThread(chatId, finalMessages);
         setHasMore(messagesData.length === 50);
 
         await messageStorage.saveMessages(chatId, finalMessages);
@@ -743,9 +765,13 @@ export default function ChatRoomScreen() {
       );
 
       const localReady = await decryptChatMessages(dedupedLocalMessages, user.id);
+      for (const m of localReady) {
+        if (m.decrypted) rememberDecryptedText(m.id, m.decrypted);
+      }
       
       if (!loadMore && localReady.length > 0) {
         setMessages(localReady);
+        rememberChatThread(chatId, localReady);
         setLoading(false);
       }
 
@@ -1245,14 +1271,10 @@ export default function ChatRoomScreen() {
           msg.id === tempId ? { ...msg, _status: 'pending' as const } : msg
         )
       );
-      showAppToast("Queued — will send when you're back online");
       return;
     }
 
-    const success = await sendMessageToServer(optimisticMessage);
-    if (!success) {
-      showAppToast('Message queued — will retry when the connection is stable');
-    }
+    await sendMessageToServer(optimisticMessage);
   };
 
   const sendVoiceMessage = async (audioUri: string, duration: number) => {
@@ -1325,7 +1347,6 @@ export default function ChatRoomScreen() {
           msg.id === tempId ? { ...msg, _status: 'pending' as const } : msg
         )
       );
-      showAppToast("Voice note saved locally — send when you're online");
       return;
     }
 
@@ -1424,7 +1445,6 @@ export default function ChatRoomScreen() {
             audioDuration: duration,
           },
         });
-        showAppToast('Voice note queued — will retry when online');
       } else {
         Alert.alert('Error', 'Failed to send voice message');
       }
@@ -1524,7 +1544,6 @@ export default function ChatRoomScreen() {
           m.id === tempId ? { ...m, _status: 'pending' as const } : m
         )
       );
-      showAppToast("Media saved locally — send when you're online");
       return;
     }
 
@@ -1613,7 +1632,6 @@ export default function ChatRoomScreen() {
             view_once: options?.viewOnce,
           },
         });
-        showAppToast('Media queued — will retry when online');
       } else {
         const errMsg = error instanceof Error ? error.message : 'Unknown error';
         Alert.alert('Upload Failed', `Could not send ${messageType}. ${errMsg}`);
@@ -2269,6 +2287,7 @@ export default function ChatRoomScreen() {
           setClearedAt(now);
           void api.chatSettings.update(chatType, chatId, { cleared_at: now }).catch(() => undefined);
           void messageStorage.clearMessages(chatId);
+          clearChatThread(chatId);
           setMessages([]);
         },
       },

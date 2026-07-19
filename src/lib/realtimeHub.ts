@@ -4,6 +4,8 @@ import { ensureSupabaseSession } from './ensureSupabaseSession';
 import { supabase } from './supabase';
 import { dispatchMessageRow } from './chatRealtime';
 import { createRealtimeTopic, type RealtimeTopic } from './realtimeTopic';
+import { requestIncomingCallResync } from './callIncomingBridge';
+import type { CallDTO } from './api';
 
 export const realtimeTopics = {
   friendships: createRealtimeTopic('friendships'),
@@ -254,8 +256,21 @@ function startAuxChannels(authUserId: string, _profileId: string | null) {
   );
 
   startAuxChannel('calls', authUserId, { event: '*', schema: 'public', table: 'calls' }, (payload) => {
-    const row = (payload.new ?? payload.old) as { caller_id?: string; callee_id?: string } | undefined;
-    if (row?.caller_id === authUserId || row?.callee_id === authUserId) {
+    const row = (payload.new ?? payload.old) as
+      | (Partial<CallDTO> & { caller_id?: string; callee_id?: string; id?: string })
+      | undefined;
+    if (!row) return;
+    if (row.caller_id === authUserId || row.callee_id === authUserId) {
+      // Push snapshot so incoming UI can paint before HTTP catch-up.
+      if (
+        row.id &&
+        row.callee_id === authUserId &&
+        (row.status === 'ringing' || row.status === 'accepted')
+      ) {
+        requestIncomingCallResync(row.id, row as CallDTO);
+      } else if (row.id) {
+        requestIncomingCallResync(row.id);
+      }
       // Immediate: caller must jump to ActiveCall as soon as callee accepts.
       realtimeTopics.calls.notifyImmediate();
     }

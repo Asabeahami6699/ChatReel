@@ -254,6 +254,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
     loading: individualLoading, 
     refreshing: individualRefreshing, 
     refresh: refreshIndividuals,
+    softRefresh: softRefreshIndividuals,
     isOnline: individualOnline,
     isDataStale: individualStale,
     markMessagesAsRead 
@@ -264,6 +265,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
     loading: groupsLoading,
     refreshing: groupsRefreshing,
     refresh: refreshGroups,
+    softRefresh: softRefreshGroups,
     isOnline: groupsOnline,
     isDataStale: groupsStale,
     markGroupMessagesAsRead
@@ -464,8 +466,8 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
 
   const refreshOnFocusRef = useRef<() => void>(() => {})
   refreshOnFocusRef.current = () => {
-    refreshIndividuals()
-    refreshGroups()
+    softRefreshIndividuals()
+    softRefreshGroups()
     void fetchFriends()
     void fetchIncomingRequests()
   }
@@ -795,7 +797,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
           activeOpacity={0.75}
         >
           <View style={styles.avatarContainer}>
-            <ChatListAvatar uri={request.avatar_url} name={request.display_name} />
+            <ChatListAvatar uri={request.avatar_url} name={request.display_name} previewOnPress />
             <View style={[styles.callTypeIcon, styles.requestIcon]}>
               <Ionicons name="person-add" size={12} color="#fff" />
             </View>

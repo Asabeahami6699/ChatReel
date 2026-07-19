@@ -4,6 +4,7 @@ import { api, type CallDTO } from '../lib/api';
 import {
   clearPendingIncomingCallId,
   peekPendingIncomingCallId,
+  peekPendingIncomingCallSnapshot,
   subscribeIncomingCallResync,
 } from '../lib/callIncomingBridge';
 import { useAuth } from './useAuth';
@@ -62,6 +63,11 @@ export function useIncomingCall(): CallDTO | null {
     lastPollAtRef.current = now;
 
     try {
+      const snapshot = peekPendingIncomingCallSnapshot();
+      if (snapshot && isValidIncoming(snapshot, myAuthId)) {
+        setIncoming(snapshot);
+      }
+
       const pendingId = peekPendingIncomingCallId();
       if (pendingId) {
         try {
@@ -72,7 +78,6 @@ export function useIncomingCall(): CallDTO | null {
             setIncoming(c);
             return true;
           }
-          // Stale / ended invite — drop so we don't retry forever.
           clearPendingIncomingCallId(pendingId);
         } catch {
           /* keep pending for next attempt; fall through to /incoming */
@@ -121,6 +126,11 @@ export function useIncomingCall(): CallDTO | null {
       }
     };
 
+    const snap = peekPendingIncomingCallSnapshot();
+    if (snap && isValidIncoming(snap, myAuthId)) {
+      setIncoming(snap);
+    }
+
     void tick();
 
     const onAppState = (state: string) => {
@@ -133,6 +143,10 @@ export function useIncomingCall(): CallDTO | null {
     };
     const sub = AppState.addEventListener('change', onAppState);
     const unsubBridge = subscribeIncomingCallResync(() => {
+      const live = peekPendingIncomingCallSnapshot();
+      if (live && isValidIncoming(live, myAuthId)) {
+        setIncoming(live);
+      }
       lastPollAtRef.current = 0;
       void fetchIncoming(true);
     });
@@ -146,9 +160,13 @@ export function useIncomingCall(): CallDTO | null {
   }, [myAuthId, fetchIncoming]);
 
   const onRealtimeCalls = useCallback(() => {
+    const live = peekPendingIncomingCallSnapshot();
+    if (live && myAuthId && isValidIncoming(live, myAuthId)) {
+      setIncoming(live);
+    }
     lastPollAtRef.current = 0;
     void fetchIncoming(true);
-  }, [fetchIncoming]);
+  }, [fetchIncoming, myAuthId]);
 
   useRealtimeTopic('calls', onRealtimeCalls);
   useRealtimeTopic('callParticipants', onRealtimeCalls);

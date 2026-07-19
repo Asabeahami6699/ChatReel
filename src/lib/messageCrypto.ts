@@ -41,6 +41,8 @@ export type DecryptableMessage = {
 };
 
 const identityPubCache = new Map<string, string>();
+/** Survives remounts within the session so reopening a chat doesn't flash ciphertext. */
+const decryptedByMessageId = new Map<string, string>();
 const IDENTITY_FETCH_MS = 2000;
 const GROUP_ENCRYPT_MS = 8000;
 
@@ -50,11 +52,24 @@ export function isEncryptedMessage(msg: DecryptableMessage): boolean {
   return Boolean(msg.iv && msg.ephemeral_public_key && msg.plaintext !== true);
 }
 
-/** UI text: prefer decrypted cache, else plaintext content, else placeholder. */
+export function rememberDecryptedText(messageId: string | undefined, cleartext: string | null | undefined) {
+  if (!messageId || !cleartext) return;
+  decryptedByMessageId.set(messageId, cleartext);
+}
+
+export function recallDecryptedText(messageId: string | undefined): string | undefined {
+  if (!messageId) return undefined;
+  return decryptedByMessageId.get(messageId);
+}
+
+/** UI text: prefer decrypted cache, else plaintext content, else soft placeholder. */
 export function getMessageDisplayText(msg: DecryptableMessage): string {
   if (msg.decrypted) return msg.decrypted;
+  const cached = recallDecryptedText(msg.id);
+  if (cached) return cached;
   if (!isEncryptedMessage(msg)) return msg.content ?? '';
-  return 'Encrypted message';
+  // Avoid scary "Encrypted message" flash while keys catch up.
+  return 'Message';
 }
 
 export async function loadMyIdentityPrivateKey(userId: string): Promise<string | null> {
@@ -227,7 +242,12 @@ export async function decryptChatMessage<T extends DecryptableMessage>(
   myUserId: string | undefined
 ): Promise<T> {
   if (!myUserId) return msg;
-  if (msg.decrypted) return msg;
+  if (msg.decrypted) {
+    rememberDecryptedText(msg.id, msg.decrypted);
+    return msg;
+  }
+  const remembered = recallDecryptedText(msg.id);
+  if (remembered) return { ...msg, decrypted: remembered };
   if (!isEncryptedMessage(msg)) return msg;
   if (!msg.content || !msg.iv || !msg.ephemeral_public_key) return msg;
 
@@ -242,7 +262,10 @@ export async function decryptChatMessage<T extends DecryptableMessage>(
         msg.content,
         msg.iv
       );
-      if (clear != null) return { ...msg, decrypted: clear };
+      if (clear != null) {
+        rememberDecryptedText(msg.id, clear);
+        return { ...msg, decrypted: clear };
+      }
       console.warn('[e2e] group decrypt failed for message', msg.id);
       return msg;
     }
@@ -256,7 +279,10 @@ export async function decryptChatMessage<T extends DecryptableMessage>(
         msg.content,
         msg.iv
       );
-      if (clear != null) return { ...msg, decrypted: clear };
+      if (clear != null) {
+        rememberDecryptedText(msg.id, clear);
+        return { ...msg, decrypted: clear };
+      }
     }
 
     const myPriv = await loadMyIdentityPrivateKey(myUserId);
@@ -271,7 +297,10 @@ export async function decryptChatMessage<T extends DecryptableMessage>(
         const peerPub = await fetchRecipientIdentityPublicKey(peerId);
         const shared = await deriveSharedSecret(myPriv, peerPub);
         const clear = await tryDecryptWithShared(msg, shared);
-        if (clear != null) return { ...msg, decrypted: clear };
+        if (clear != null) {
+          rememberDecryptedText(msg.id, clear);
+          return { ...msg, decrypted: clear };
+        }
       } catch {
         /* leave undecrypted */
       }
@@ -280,7 +309,10 @@ export async function decryptChatMessage<T extends DecryptableMessage>(
 
     const shared = await deriveSharedSecret(myPriv, msg.ephemeral_public_key);
     const clear = await tryDecryptWithShared(msg, shared);
-    if (clear != null) return { ...msg, decrypted: clear };
+    if (clear != null) {
+      rememberDecryptedText(msg.id, clear);
+      return { ...msg, decrypted: clear };
+    }
 
     console.warn(
       '[e2e] decrypt failed for message',
@@ -330,6 +362,7 @@ export function preserveSenderCleartext<T extends DecryptableMessage>(
       : undefined);
 
   if (!clear) return serverMsg;
+  rememberDecryptedText(serverMsg.id, clear);
   return { ...serverMsg, decrypted: clear };
 }
 

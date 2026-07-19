@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -17,6 +17,7 @@ import { confirmAction, showErrorAlert } from '../../lib/confirmAction';
 import { formatLastSeen } from './chatMessageUtils';
 import { chatTheme } from './chatTheme';
 import { useAuth } from '../../hooks/useAuth';
+import { usePeerProfileStore } from '../../stores/peerProfileStore';
 
 type RouteParams = {
   userId: string;
@@ -30,24 +31,14 @@ export default function ContactScreen() {
   const { user } = useAuth();
   const { userId, chatName, avatarUrl } = route.params as RouteParams;
 
-  const [profile, setProfile] = useState<Record<string, unknown> | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [muting, setMuting] = useState(false);
+  const profile = usePeerProfileStore((s) => s.byUserId[userId]?.profile ?? null);
+  const loading = usePeerProfileStore((s) => Boolean(s.loadingIds[userId]) && !s.byUserId[userId]);
+  const ensureLoaded = usePeerProfileStore((s) => s.ensureLoaded);
+  const [muting, setMuting] = React.useState(false);
 
   useEffect(() => {
-    let alive = true;
-    void api.profiles
-      .getByUserId(userId)
-      .then(({ profile: p }) => {
-        if (alive) setProfile(p);
-      })
-      .finally(() => {
-        if (alive) setLoading(false);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [userId]);
+    void ensureLoaded(userId);
+  }, [ensureLoaded, userId]);
 
   const displayName =
     (profile?.display_name as string) || chatName || (profile?.email as string) || 'Contact';
@@ -107,7 +98,7 @@ export default function ContactScreen() {
     })();
   }, [displayName, navigation, userId]);
 
-  if (loading) {
+  if (loading && !profile && !avatarUrl && !chatName) {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" color={chatTheme.primary} />

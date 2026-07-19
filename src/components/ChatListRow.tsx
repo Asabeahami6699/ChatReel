@@ -56,7 +56,7 @@ export const ChatListRow = memo(
         delayLongPress={400}
       >
         <View style={styles.avatarContainer}>
-          <ChatListAvatar uri={item.avatar_url} name={item.name} />
+          <ChatListAvatar uri={item.avatar_url} name={item.name} previewOnPress />
           {isGroup &&
             item.user_role &&
             (item.user_role === 'creator' || item.user_role === 'admin') && (

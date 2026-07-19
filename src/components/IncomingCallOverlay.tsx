@@ -51,6 +51,21 @@ export function IncomingCallOverlay() {
     }
     let alive = true;
     (async () => {
+      // Prefer Zustand peer cache for instant name/avatar on ring UI.
+      const { usePeerProfileStore } = await import('../stores/peerProfileStore');
+      const callerId =
+        activeIncoming.scope === 'direct' ? activeIncoming.caller_id : null;
+      if (callerId) {
+        const cached = usePeerProfileStore.getState().getCached(callerId);
+        if (cached && alive) {
+          setPeer({
+            display_name: cached.display_name ?? null,
+            avatar_url: cached.avatar_url ?? null,
+          });
+        }
+        void usePeerProfileStore.getState().ensureLoaded(callerId);
+      }
+
       const info = await fetchCallPeerInfo(activeIncoming, user?.id ?? null, {
         preferIncomingCaller: true,
       });
@@ -59,6 +74,10 @@ export function IncomingCallOverlay() {
         display_name: info.peerName,
         avatar_url: info.peerAvatar,
       });
+      if (callerId) {
+        // Warm cache for next time.
+        void usePeerProfileStore.getState().ensureLoaded(callerId);
+      }
     })();
     return () => {
       alive = false;
