@@ -46,6 +46,32 @@ const decryptedByMessageId = new Map<string, string>();
 const IDENTITY_FETCH_MS = 2000;
 const GROUP_ENCRYPT_MS = 8000;
 
+/**
+ * Wire format for DM ECDH:
+ *   legacy: "<senderPub>"
+ *   v2:     "<senderPub>|<recipientPub>"
+ * Recipient decrypts with ECDH(myPriv, senderPub).
+ * Sender re-reads with ECDH(myPriv, recipientPub) — needed for true bidirectional decrypt.
+ */
+export function packDmE2eWireKeys(senderPub: string, recipientPub: string): string {
+  return `${senderPub}|${recipientPub}`;
+}
+
+export function unpackDmE2eWireKeys(wire: string): {
+  senderPub: string;
+  recipientPub?: string;
+} {
+  const raw = wire.trim();
+  const idx = raw.indexOf('|');
+  if (idx <= 0 || idx === raw.length - 1) {
+    return { senderPub: raw };
+  }
+  return {
+    senderPub: raw.slice(0, idx),
+    recipientPub: raw.slice(idx + 1),
+  };
+}
+
 /** True when the row is marked encrypted (or has E2E fields). */
 export function isEncryptedMessage(msg: DecryptableMessage): boolean {
   if (msg.plaintext === false) return true;
@@ -147,6 +173,7 @@ export function clearIdentityPubCache(userId?: string) {
 
 /**
  * Encrypt cleartext for a DM recipient using mutual identity ECDH.
+ * Stores BOTH public keys on the wire so either party can decrypt later.
  */
 export async function encryptTextForRecipient(
   senderUserId: string,
@@ -161,7 +188,7 @@ export async function encryptTextForRecipient(
   return {
     content: ciphertext,
     iv,
-    ephemeral_public_key: myPub,
+    ephemeral_public_key: packDmE2eWireKeys(myPub, recipientPub),
     plaintext: false,
   };
 }
@@ -236,6 +263,9 @@ async function tryDecryptWithShared(
 
 /**
  * Decrypt a single message for the local user when possible.
+ * DM decrypt is bidirectional:
+ *  - recipient: ECDH(myPriv, senderPubFromWire)
+ *  - sender:    ECDH(myPriv, recipientPubFromWire | peer identity)
  */
 export async function decryptChatMessage<T extends DecryptableMessage>(
   msg: T,
@@ -288,37 +318,60 @@ export async function decryptChatMessage<T extends DecryptableMessage>(
     const myPriv = await loadMyIdentityPrivateKey(myUserId);
     if (!myPriv) return msg;
 
+    const { senderPub, recipientPub } = unpackDmE2eWireKeys(msg.ephemeral_public_key);
     const iAmSender = msg.sender_id === myUserId;
+    const peerId = iAmSender
+      ? msg.receiver_id || undefined
+      : msg.sender_id || undefined;
 
+    // Candidate peer pubs for ECDH(myPriv, peerPub). Never use my own pub first.
+    const peerPubs: string[] = [];
     if (iAmSender) {
-      const peerId = msg.receiver_id;
-      if (!peerId) return msg;
+      // Need the recipient pub that was used at encrypt time.
+      if (recipientPub) peerPubs.push(recipientPub);
+      if (peerId) {
+        try {
+          peerPubs.push(await fetchRecipientIdentityPublicKey(peerId));
+        } catch {
+          /* offline / missing */
+        }
+      }
+    } else {
+      // Recipient: shared = ECDH(myPriv, senderPub).
+      if (senderPub) peerPubs.push(senderPub);
+      // Legacy / mis-tagged rows: also try live peer identity.
+      if (peerId) {
+        try {
+          peerPubs.push(await fetchRecipientIdentityPublicKey(peerId));
+        } catch {
+          /* offline / missing */
+        }
+      }
+    }
+
+    const tried = new Set<string>();
+    for (const pub of peerPubs) {
+      if (!pub || tried.has(pub)) continue;
+      tried.add(pub);
       try {
-        const peerPub = await fetchRecipientIdentityPublicKey(peerId);
-        const shared = await deriveSharedSecret(myPriv, peerPub);
+        const shared = await deriveSharedSecret(myPriv, pub);
         const clear = await tryDecryptWithShared(msg, shared);
         if (clear != null) {
           rememberDecryptedText(msg.id, clear);
           return { ...msg, decrypted: clear };
         }
       } catch {
-        /* leave undecrypted */
+        /* try next peer pub */
       }
-      return msg;
-    }
-
-    const shared = await deriveSharedSecret(myPriv, msg.ephemeral_public_key);
-    const clear = await tryDecryptWithShared(msg, shared);
-    if (clear != null) {
-      rememberDecryptedText(msg.id, clear);
-      return { ...msg, decrypted: clear };
     }
 
     console.warn(
       '[e2e] decrypt failed for message',
       msg.id,
-      '(identity key mismatch — reload both apps to resync keys)'
+      iAmSender ? '(sender re-read failed)' : '(recipient decrypt failed — identity key mismatch?)'
     );
+    // Drop stale peer pub so the next open re-fetches.
+    if (peerId) identityPubCache.delete(peerId);
     return msg;
   } catch (err) {
     console.warn('[e2e] decrypt failed for message', msg.id, err);

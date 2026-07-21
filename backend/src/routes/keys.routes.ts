@@ -37,7 +37,7 @@ router.post(
 
     const userId = req.userId!;
 
-    // Keep exactly one key of this type. Skip rewrite when unchanged.
+    // Stable identity: update in place, never delete-then-insert (that races decrypt).
     if (body.type === 'identity' || body.type === 'signed_prekey') {
       const { data: existing } = await supabaseAdmin
         .from('public_keys')
@@ -49,6 +49,7 @@ router.post(
         .maybeSingle();
 
       if (existing?.public_key === body.public_key) {
+        // Drop any stale duplicates, keep the matched row.
         await supabaseAdmin
           .from('public_keys')
           .delete()
@@ -58,11 +59,25 @@ router.post(
         return res.status(200).json({ key: existing, unchanged: true });
       }
 
-      await supabaseAdmin
-        .from('public_keys')
-        .delete()
-        .eq('user_id', userId)
-        .eq('type', body.type);
+      if (existing?.id) {
+        const { data: updated, error: updateError } = await supabaseAdmin
+          .from('public_keys')
+          .update({ public_key: body.public_key })
+          .eq('id', existing.id)
+          .select()
+          .single();
+
+        if (updateError) return res.status(400).json({ error: updateError.message });
+
+        await supabaseAdmin
+          .from('public_keys')
+          .delete()
+          .eq('user_id', userId)
+          .eq('type', body.type)
+          .neq('id', existing.id);
+
+        return res.status(200).json({ key: updated, updated: true });
+      }
     }
 
     const { data, error } = await supabaseAdmin
