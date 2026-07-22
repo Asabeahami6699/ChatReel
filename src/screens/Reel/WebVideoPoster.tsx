@@ -17,7 +17,7 @@ export function WebVideoPoster({ uri, posterUri, style }: Props) {
   if (posterUri) {
     return (
       <View style={[styles.fill, style]} pointerEvents="none">
-        <Image source={{ uri: posterUri }} style={styles.img} resizeMode="cover" />
+        <Image source={{ uri: posterUri }} style={styles.img} resizeMode="contain" />
       </View>
     );
   }
@@ -32,7 +32,7 @@ export function WebVideoPoster({ uri, posterUri, style }: Props) {
         style: {
           width: '100%',
           height: '100%',
-          objectFit: 'cover',
+          objectFit: 'contain',
           display: 'block',
           backgroundColor: '#000',
         },

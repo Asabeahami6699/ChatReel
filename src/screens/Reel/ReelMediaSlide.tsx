@@ -82,7 +82,7 @@ export function ReelMediaSlide({
   return (
     <View style={[styles.shell, shellStyle]}>
       {showPoster && posterUri && (
-        <Image source={{ uri: posterUri }} style={styles.media} resizeMode="cover" />
+        <Image source={{ uri: posterUri }} style={styles.media} resizeMode="contain" />
       )}
       {!isReady && !showPoster && useWebStream && (
         <WebVideoPoster uri={playbackUri} posterUri={posterUri} style={styles.media} />
@@ -95,6 +95,7 @@ export function ReelMediaSlide({
           muted={isMuted}
           volume={volume}
           shouldPlay={isActiveSlide && isPlaying && isFocused}
+          contentFit="contain"
           onReady={() => onReady(slideKey)}
           onPlaybackStatusUpdate={(status) => onPlaybackStatus(slideKey, status, isActiveSlide)}
         />
@@ -103,7 +104,7 @@ export function ReelMediaSlide({
           ref={(ref) => onRef(slideKey, ref)}
           source={playbackUri}
           style={styles.media}
-          contentFit="cover"
+          contentFit="contain"
           shouldPlay={isActiveSlide && isPlaying && isFocused}
           isMuted={isMuted}
           volume={volume}

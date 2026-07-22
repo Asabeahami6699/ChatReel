@@ -99,7 +99,7 @@ export function ReelVideoSurface({
         <Image
           source={{ uri: posterUri! }}
           style={StyleSheet.absoluteFill}
-          resizeMode="cover"
+          resizeMode="contain"
         />
       )}
       {isNear ? (
@@ -109,6 +109,7 @@ export function ReelVideoSurface({
             style={StyleSheet.absoluteFill}
             muted={isMuted}
             shouldPlay={isCurrent && isPlaying && isFocused}
+            contentFit="contain"
             onReady={() => onReady(reel.id)}
             onPlaybackStatusUpdate={(status) => onPlaybackStatus(reel.id, status, isCurrent)}
           />
@@ -117,7 +118,7 @@ export function ReelVideoSurface({
             ref={(ref) => onRef(reel.id, ref)}
             source={videoUri}
             style={StyleSheet.absoluteFill}
-            contentFit="cover"
+            contentFit="contain"
             shouldPlay={isCurrent && isPlaying && isFocused}
             isMuted={isMuted}
             isLooping
@@ -131,7 +132,7 @@ export function ReelVideoSurface({
           <Image
             source={{ uri: posterUri }}
             style={StyleSheet.absoluteFill}
-            resizeMode="cover"
+            resizeMode="contain"
           />
         )
         )}

@@ -292,7 +292,7 @@ export function PostReelImageComposer({
         showsVerticalScrollIndicator={false}
       >
         <View style={[styles.previewWrap, { height: previewHeight }]}>
-          <Image source={{ uri: image.uri }} style={styles.previewImage} resizeMode="cover" />
+          <Image source={{ uri: image.uri }} style={styles.previewImage} resizeMode="contain" />
           {filterOverlay ? (
             <View style={[styles.filterOverlay, { backgroundColor: filterOverlay }]} pointerEvents="none" />
           ) : null}
@@ -511,7 +511,7 @@ export function PostReelImageComposer({
             </TouchableOpacity>
           </View>
           <View style={[styles.previewWrap, { flex: 1 }]}>
-            <Image source={{ uri: image.uri }} style={styles.previewImage} resizeMode="cover" />
+            <Image source={{ uri: image.uri }} style={styles.previewImage} resizeMode="contain" />
             {filterOverlay ? (
               <View style={[styles.filterOverlay, { backgroundColor: filterOverlay }]} pointerEvents="none" />
             ) : null}

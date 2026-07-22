@@ -354,7 +354,11 @@ export function PostReelVideoComposer({
                     }}
                     activeOpacity={0.85}
                   >
-                    <Image source={{ uri: previewUri }} style={styles.albumThumb} />
+                    <Image
+                      source={{ uri: previewUri }}
+                      style={styles.albumThumb}
+                      resizeMode="contain"
+                    />
                     <View style={styles.albumBadge}>
                       <Ionicons
                         name={item.mediaType === 'image' ? 'image' : 'videocam'}

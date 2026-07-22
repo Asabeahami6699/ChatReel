@@ -10,18 +10,21 @@ type Props = {
   muted: boolean;
   volume?: number;
   shouldPlay: boolean;
+  contentFit?: 'contain' | 'cover' | 'fill';
   onReady?: () => void;
   onPlaybackStatusUpdate?: (status: ReelPlaybackStatus) => void;
 };
 
-const VIDEO_CSS: React.CSSProperties = {
-  width: '100%',
-  height: '100%',
-  display: 'block',
-  backgroundColor: '#000',
-  objectFit: 'cover',
-  objectPosition: 'center',
-};
+function videoCss(contentFit: 'contain' | 'cover' | 'fill'): React.CSSProperties {
+  return {
+    width: '100%',
+    height: '100%',
+    display: 'block',
+    backgroundColor: '#000',
+    objectFit: contentFit,
+    objectPosition: 'center',
+  };
+}
 
 function isBenignPlayError(err: unknown): boolean {
   if (!(err instanceof DOMException)) return false;
@@ -42,6 +45,7 @@ export const WebHlsVideo = forwardRef<ReelPlayerHandle, Props>(function WebHlsVi
     muted,
     volume,
     shouldPlay,
+    contentFit = 'contain',
     onReady,
     onPlaybackStatusUpdate,
   },
@@ -256,7 +260,7 @@ export const WebHlsVideo = forwardRef<ReelPlayerHandle, Props>(function WebHlsVi
 
   return (
     <View style={style}>
-      <video ref={videoRef} style={VIDEO_CSS} playsInline muted={muted} preload="auto" />
+      <video ref={videoRef} style={videoCss(contentFit)} playsInline muted={muted} preload="auto" />
     </View>
   );
 });

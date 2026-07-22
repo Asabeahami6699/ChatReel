@@ -38,6 +38,7 @@ import { useCallRingtone } from '../../hooks/useCallRingtone';
 import { useCallScreenMessageAlerts } from '../../hooks/useCallScreenMessageAlerts';
 import { useRealtimeTopic } from '../../hooks/useRealtimeTopic';
 import { leaveCallScreen } from '../../navigation/callSessionNav';
+import { playCallEndTone, preloadCallEndTone } from '../../lib/playCallEndTone';
 import { showAppToast } from '../../lib/appToast';
 import { confirmAction, showErrorAlert } from '../../lib/confirmAction';
 import { confirmToast } from '../../lib/confirmToast';
@@ -177,6 +178,10 @@ export function ActiveCallContent(props: ActiveCallScreenProps) {
   useCallRingtone(isCallerRinging ? 'outgoing' : null);
 
   useEffect(() => {
+    preloadCallEndTone();
+  }, []);
+
+  useEffect(() => {
     if (!latestCall) return;
     const snap = getCallPipSnapshot();
     if (snap.callId === latestCall.id) {
@@ -199,8 +204,9 @@ export function ActiveCallContent(props: ActiveCallScreenProps) {
   // Peer (or local) ended the call — leave automatically; no Close tap required.
   useEffect(() => {
     if (!callTerminatedBeforeConnect) return;
+    playCallEndTone();
     clearCallPip();
-    const t = setTimeout(() => leaveCallScreen('Calls', 'Call ended'), 250);
+    const t = setTimeout(() => leaveCallScreen('Calls', 'Call ended', { playEndTone: false }), 50);
     return () => clearTimeout(t);
   }, [callTerminatedBeforeConnect, effectiveCall?.status]);
 
@@ -552,6 +558,7 @@ function WebCallRoom({
   const finishCall = async () => {
     if (callEnded) return;
     if (consumeCallHoldDisconnect()) return;
+    playCallEndTone();
     clearCallPip();
     const isGroup = call.scope === 'group';
     setCallEnded(true);
@@ -579,7 +586,7 @@ function WebCallRoom({
     } else {
       clearHeldCallSession();
     }
-    leaveCallScreen('Calls', isGroup ? 'Left the call' : 'Call ended');
+    leaveCallScreen('Calls', isGroup ? 'Left the call' : 'Call ended', { playEndTone: false });
   };
 
   const toggleMute = async () => {
@@ -1164,6 +1171,7 @@ function CallRoom({
     if (consumeCallHoldDisconnect()) {
       return;
     }
+    playCallEndTone();
     clearCallPip();
     setCallEnded(true);
     const held = getHeldCallSession();
@@ -1190,10 +1198,14 @@ function CallRoom({
       clearHeldCallSession();
     }
     if (!markEnded) {
-      navigateBackSafely('Call ended');
+      leaveCallScreen('Calls', 'Call ended', { playEndTone: false });
       return;
     }
-    navigateBackSafely(call.scope === 'group' ? 'Left the call' : 'Call ended');
+    leaveCallScreen(
+      'Calls',
+      call.scope === 'group' ? 'Left the call' : 'Call ended',
+      { playEndTone: false }
+    );
   };
 
   const setCallMinimized = (value: boolean) => {
@@ -1759,6 +1771,7 @@ function RoomBody(props: {
   };
 
   const hangup = async () => {
+    playCallEndTone();
     try {
       await room.disconnect();
     } finally {

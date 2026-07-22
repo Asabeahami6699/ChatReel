@@ -12,6 +12,7 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import Slider from '@react-native-community/slider';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -26,6 +27,7 @@ import {
 import { useCurrentProfileId } from '../../hooks/useCurrentProfileId';
 import { ReelPlayer, type ReelPlaybackStatus } from '../../components/ReelPlayer';
 import { ComposeVideoPreview } from '../../components/ComposeVideoPreview';
+import { fitMediaInBounds } from '../Reel/reelVideoLayout';
 import { ReelSoundPicker, soundLabel } from '../Reel/ReelSoundPicker';
 import { ReelSoundTrimTimeline } from '../Reel/ReelSoundTrimTimeline';
 import { defaultSoundRange, IMAGE_SOUND_CLIP_SEC, soundClipWindow, soundTrackDurationSec } from '../Reel/reelSoundUtils';
@@ -36,6 +38,8 @@ export type MomentDraftItem = {
   mediaType: 'image' | 'video' | 'text';
   fileName?: string;
   mime?: string;
+  width?: number;
+  height?: number;
   caption?: string;
   textBackground?: string;
   sound?: ReelSoundDTO | null;
@@ -94,6 +98,7 @@ export function MomentComposer({
   onUpdateItem,
 }: Props) {
   const insets = useSafeAreaInsets();
+  const { width: windowWidth } = useWindowDimensions();
   const myProfileId = useCurrentProfileId();
 
   const [durationMinutes, setDurationMinutes] = useState(1440);
@@ -125,6 +130,25 @@ export function MomentComposer({
     ? soundTrackDurationSec(selectedSound, clipLenSec)
     : clipLenSec;
   const soundClipLen = Math.min(clipLenSec, soundDuration);
+
+  const previewMaxWidth = Math.max(280, windowWidth - 28);
+  const previewMaxHeight = Math.min(560, Math.round(previewMaxWidth * 1.55));
+  const previewLayout = useMemo(() => {
+    if (
+      currentItem?.width &&
+      currentItem?.height &&
+      currentItem.width > 0 &&
+      currentItem.height > 0
+    ) {
+      return fitMediaInBounds(
+        currentItem.width,
+        currentItem.height,
+        previewMaxWidth,
+        previewMaxHeight
+      );
+    }
+    return { width: previewMaxWidth, height: previewMaxHeight };
+  }, [currentItem?.width, currentItem?.height, previewMaxWidth, previewMaxHeight]);
 
   const overlaySound = useMemo(
     () =>
@@ -240,12 +264,28 @@ export function MomentComposer({
     [clipLenSec, currentItem, onUpdateItem, previewIndex]
   );
 
-  const onVideoPlaybackStatus = useCallback((status: ReelPlaybackStatus) => {
-    if (!status.isLoaded) return;
-    if (status.durationMillis && status.durationMillis > 0) {
-      setVideoDurationSec(status.durationMillis / 1000);
-    }
-  }, []);
+  const onVideoPlaybackStatus = useCallback(
+    (status: ReelPlaybackStatus) => {
+      if (!status.isLoaded) return;
+      if (status.durationMillis && status.durationMillis > 0) {
+        setVideoDurationSec(status.durationMillis / 1000);
+      }
+      if (
+        status.videoWidth &&
+        status.videoHeight &&
+        status.videoWidth > 0 &&
+        status.videoHeight > 0 &&
+        currentItem &&
+        (!currentItem.width || !currentItem.height)
+      ) {
+        onUpdateItem(previewIndex, {
+          width: status.videoWidth,
+          height: status.videoHeight,
+        });
+      }
+    },
+    [currentItem, onUpdateItem, previewIndex]
+  );
 
   const handlePost = () => {
     if (!draft?.items.length) return;
@@ -325,7 +365,12 @@ export function MomentComposer({
           keyboardShouldPersistTaps="handled"
         >
           {/* Live preview */}
-          <ComposeVideoPreview style={styles.previewCard} bordered>
+          <ComposeVideoPreview
+            style={styles.previewCard}
+            bordered
+            width={previewLayout.width}
+            height={previewLayout.height}
+          >
             {currentItem.mediaType === 'text' ? (
               <LinearGradient
                 colors={[...getTextBackground(currentItem.textBackground).colors]}
@@ -370,7 +415,7 @@ export function MomentComposer({
                 key={currentItem.uri}
                 source={{ uri: currentItem.uri }}
                 style={styles.previewMedia}
-                resizeMode="cover"
+                resizeMode="contain"
               />
             ) : null}
             {items.length > 1 && (
@@ -728,9 +773,9 @@ const styles = StyleSheet.create({
   postBtnText: { color: '#fff', fontWeight: '800', fontSize: 15 },
 
   previewCard: {
-    margin: 14,
+    marginVertical: 14,
   },
-  previewMedia: { width: '100%', height: '100%' },
+  previewMedia: { width: '100%', height: '100%', backgroundColor: '#000' },
   previewGrad: { ...StyleSheet.absoluteFillObject },
   captionOverlay: {
     position: 'absolute',

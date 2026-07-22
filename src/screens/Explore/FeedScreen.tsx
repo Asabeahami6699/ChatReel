@@ -5,7 +5,6 @@ import {
   Image,
   Modal,
   Platform,
-  Pressable,
   RefreshControl,
   ScrollView,
   StatusBar,
@@ -299,12 +298,20 @@ export default function FeedScreen() {
     await action();
   }, []);
 
-  const assetToDraftItem = (asset: ImagePicker.ImagePickerAsset): MomentDraftItem => ({
-    uri: asset.uri,
-    mediaType: asset.type === 'video' ? 'video' : 'image',
-    fileName: asset.fileName ?? undefined,
-    mime: asset.mimeType ?? undefined,
-  });
+  const assetToDraftItem = (asset: ImagePicker.ImagePickerAsset): MomentDraftItem => {
+    const isVideo =
+      asset.type === 'video' ||
+      Boolean(asset.mimeType?.startsWith('video/')) ||
+      Boolean(asset.duration && asset.duration > 0);
+    return {
+      uri: asset.uri,
+      mediaType: isVideo ? 'video' : 'image',
+      fileName: asset.fileName ?? undefined,
+      mime: asset.mimeType ?? undefined,
+      width: asset.width || undefined,
+      height: asset.height || undefined,
+    };
+  };
 
   const pickFromGallery = useCallback(async () => {
     try {
@@ -317,8 +324,9 @@ export default function FeedScreen() {
         mediaTypes: ['images', 'videos'] as ImagePicker.MediaType[],
         allowsMultipleSelection: true,
         selectionLimit: 30,
-        quality: 0.9,
+        quality: 1,
         videoMaxDuration: 60,
+        allowsEditing: false,
       });
       if (result.canceled || !result.assets?.length) return;
       appendDraftItems(result.assets.map(assetToDraftItem));
@@ -340,9 +348,8 @@ export default function FeedScreen() {
       }
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ['images'] as ImagePicker.MediaType[],
-        allowsEditing: true,
-        aspect: [9, 16],
-        quality: 0.9,
+        allowsEditing: false,
+        quality: 1,
       });
       if (result.canceled || !result.assets?.[0]) return;
       appendDraftItems([assetToDraftItem(result.assets[0])]);
@@ -366,6 +373,7 @@ export default function FeedScreen() {
         mediaTypes: ['videos'] as ImagePicker.MediaType[],
         allowsEditing: false,
         videoMaxDuration: 60,
+        quality: 1,
       });
       if (result.canceled || !result.assets?.[0]) return;
       appendDraftItems([assetToDraftItem(result.assets[0])]);
@@ -620,7 +628,6 @@ export default function FeedScreen() {
             <View style={styles.stripCard}>
               <View style={styles.stripHead}>
                 <Text style={styles.stripTitle}>Moments</Text>
-                <Text style={styles.stripSub}>Tap to view · expires automatically</Text>
               </View>
               <ScrollView
                 horizontal
@@ -721,60 +728,60 @@ export default function FeedScreen() {
         onUpdateItem={updateDraftItem}
       />
 
-      <Modal visible={addMenuOpen} transparent animationType="fade" onRequestClose={() => setAddMenuOpen(false)}>
-        <View style={styles.addMenuRoot}>
-          <Pressable style={styles.addMenuBackdrop} onPress={() => setAddMenuOpen(false)} />
-          <View style={[styles.addMenuSheet, { paddingBottom: insets.bottom + 16 }]}>
-          <View style={styles.addMenuHandle} />
-          <Text style={styles.addMenuTitle}>Add to moment</Text>
-          <TouchableOpacity
-            style={styles.addMenuRow}
-            onPress={() => void runAddAction(recordVideo)}
-          >
-            <View style={[styles.addMenuIcon, { backgroundColor: '#e8f2ff' }]}>
-              <Ionicons name="videocam" size={22} color={C.primary} />
+      <Modal
+        visible={addMenuOpen}
+        animationType="slide"
+        statusBarTranslucent
+        onRequestClose={() => setAddMenuOpen(false)}
+      >
+        <View style={[styles.pickerRoot, { paddingTop: insets.top + 8 }]}>
+          <View style={styles.pickerHeader}>
+            <TouchableOpacity onPress={() => setAddMenuOpen(false)} hitSlop={8}>
+              <Ionicons name="arrow-back" size={26} color="#fff" />
+            </TouchableOpacity>
+            <Text style={styles.pickerHeaderTitle}>New moment</Text>
+            <View style={{ width: 26 }} />
+          </View>
+
+          <View style={styles.pickerBody}>
+            <View style={styles.pickerArea}>
+              <Ionicons name="images-outline" size={64} color="#666" />
+              <Text style={styles.pickerHint}>
+                Pick photos or videos (up to 30 at once). Videos max 60s.
+              </Text>
+              <View style={styles.pickerButtons}>
+                <TouchableOpacity
+                  style={styles.pickerButton}
+                  onPress={() => void runAddAction(pickFromGallery)}
+                >
+                  <Ionicons name="images" size={20} color="#fff" />
+                  <Text style={styles.pickerButtonText}>Gallery</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.pickerButton}
+                  onPress={() => void runAddAction(recordVideo)}
+                >
+                  <Ionicons name="videocam" size={20} color="#fff" />
+                  <Text style={styles.pickerButtonText}>Record</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={[styles.pickerButtons, { marginTop: 12 }]}>
+                <TouchableOpacity
+                  style={styles.pickerButtonSecondary}
+                  onPress={() => void runAddAction(takePhoto)}
+                >
+                  <Ionicons name="camera" size={18} color="#fff" />
+                  <Text style={styles.pickerButtonText}>Take photo</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.pickerButtonSecondary}
+                  onPress={() => void runAddAction(addTextMoment)}
+                >
+                  <Ionicons name="text" size={18} color="#fff" />
+                  <Text style={styles.pickerButtonText}>Words</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-            <View style={styles.addMenuText}>
-              <Text style={styles.addMenuLabel}>Record video</Text>
-              <Text style={styles.addMenuSub}>Opens camera to record</Text>
-            </View>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.addMenuRow}
-            onPress={() => void runAddAction(takePhoto)}
-          >
-            <View style={[styles.addMenuIcon, { backgroundColor: '#e8f2ff' }]}>
-              <Ionicons name="camera" size={22} color={C.primary} />
-            </View>
-            <View style={styles.addMenuText}>
-              <Text style={styles.addMenuLabel}>Take photo</Text>
-              <Text style={styles.addMenuSub}>Opens camera for a photo</Text>
-            </View>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.addMenuRow}
-            onPress={() => void runAddAction(pickFromGallery)}
-          >
-            <View style={[styles.addMenuIcon, { backgroundColor: '#e8f2ff' }]}>
-              <Ionicons name="images" size={22} color={C.primary} />
-            </View>
-            <View style={styles.addMenuText}>
-              <Text style={styles.addMenuLabel}>Gallery</Text>
-              <Text style={styles.addMenuSub}>Pick photos or videos (multi-select)</Text>
-            </View>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.addMenuRow}
-            onPress={() => void runAddAction(addTextMoment)}
-          >
-            <View style={[styles.addMenuIcon, { backgroundColor: '#e8f2ff' }]}>
-              <Ionicons name="text" size={22} color={C.primary} />
-            </View>
-            <View style={styles.addMenuText}>
-              <Text style={styles.addMenuLabel}>Words</Text>
-              <Text style={styles.addMenuSub}>Text moment with a background</Text>
-            </View>
-          </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -829,7 +836,6 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   stripTitle: { fontSize: 18, fontWeight: '800', color: C.text },
-  stripSub: { fontSize: 12, color: C.muted, fontWeight: '500' },
   stripScroll: { paddingHorizontal: 12, gap: 10 },
 
   bubbleWrap: { alignItems: 'center', width: BUBBLE_W + 8 },
@@ -1031,48 +1037,49 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 
-  addMenuRoot: { flex: 1, justifyContent: 'flex-end' },
-  addMenuBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-  },
-  addMenuSheet: {
-    backgroundColor: C.bg,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingHorizontal: 16,
-    paddingTop: 8,
-  },
-  addMenuHandle: {
-    alignSelf: 'center',
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: C.border,
-    marginBottom: 12,
-  },
-  addMenuTitle: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: C.text,
-    marginBottom: 12,
-    paddingHorizontal: 4,
-  },
-  addMenuRow: {
+  pickerRoot: { flex: 1, backgroundColor: '#000' },
+  pickerHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 4,
-    gap: 14,
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderColor: '#222',
   },
-  addMenuIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 14,
-    alignItems: 'center',
+  pickerHeaderTitle: { color: '#fff', fontSize: 17, fontWeight: '600' },
+  pickerBody: { flex: 1, padding: 16, justifyContent: 'center' },
+  pickerArea: {
+    minHeight: 360,
     justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#222',
+    borderRadius: 16,
+    borderStyle: 'dashed',
+    padding: 24,
   },
-  addMenuText: { flex: 1 },
-  addMenuLabel: { fontSize: 16, fontWeight: '700', color: C.text },
-  addMenuSub: { fontSize: 13, color: C.muted, marginTop: 2 },
+  pickerHint: { color: '#aaa', marginTop: 12, marginBottom: 24, textAlign: 'center' },
+  pickerButtons: { flexDirection: 'row', gap: 12 },
+  pickerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1976d2',
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: 22,
+    gap: 8,
+  },
+  pickerButtonSecondary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#2a2a2a',
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+    borderRadius: 22,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: '#3a3a3a',
+  },
+  pickerButtonText: { color: '#fff', fontWeight: '600' },
 });

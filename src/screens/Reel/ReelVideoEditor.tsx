@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -18,6 +17,7 @@ import {
   type AudioPlayer,
 } from '../../lib/appAudio';
 import { COMPOSE_PREVIEW_HEIGHT, ComposeVideoPreview } from '../../components/ComposeVideoPreview';
+import { fitMediaInBounds } from './reelVideoLayout';
 import { ReelTrimTimeline } from './ReelTrimTimeline';
 import {
   getReelFilterOverlay,
@@ -72,7 +72,7 @@ function mapSoundOffset(
 export function ReelVideoEditor({
   video,
   onChange,
-  onEditNative,
+  onEditNative: _onEditNative,
   onPickThumbnailFrame,
   overlaySound = null,
   immersive = false,
@@ -220,11 +220,16 @@ export function ReelVideoEditor({
     [trimStart, trimEnd, trimReady, isPlaying, seekTo, syncOverlaySound, onChange, video.width, video.height, video.trimStartSec, video.trimEndSec]
   );
 
-  const previewHeight = previewMode
-    ? undefined
+  const previewMaxWidth = Math.max(280, windowWidth - (immersive || previewMode ? 28 : 32));
+  const previewMaxHeight = previewMode
+    ? Math.max(320, windowWidth * 1.55)
     : immersive
-      ? COMPOSE_PREVIEW_HEIGHT
-      : Math.min(480, windowWidth * 1.35);
+      ? Math.min(COMPOSE_PREVIEW_HEIGHT, Math.round(previewMaxWidth * 1.55))
+      : Math.min(480, Math.round(previewMaxWidth * 1.35));
+  const mediaLayout =
+    video.width && video.height && video.width > 0 && video.height > 0
+      ? fitMediaInBounds(video.width, video.height, previewMaxWidth, previewMaxHeight)
+      : { width: previewMaxWidth, height: previewMaxHeight };
 
   const previewCard = (
     <View
@@ -232,11 +237,10 @@ export function ReelVideoEditor({
         styles.previewWrap,
         (immersive || previewMode) && styles.previewWrapImmersive,
         previewMode && styles.previewWrapFull,
-        !immersive && !previewMode && previewHeight != null
-          ? { width: windowWidth - 32, height: previewHeight }
-          : previewHeight != null
-            ? { height: previewHeight }
-            : null,
+        {
+          width: mediaLayout.width,
+          height: mediaLayout.height,
+        },
       ]}
     >
       <TouchableOpacity activeOpacity={1} onPress={() => void togglePlay()} style={styles.videoTap}>
@@ -244,7 +248,7 @@ export function ReelVideoEditor({
           ref={playerRef}
           source={video.uri}
           style={styles.preview}
-          contentFit={previewMode || immersive ? 'cover' : 'contain'}
+          contentFit="contain"
           isLooping={false}
           shouldPlay={isPlaying && !forcePaused}
           isMuted={overlaySound ? true : isMuted}
@@ -270,12 +274,6 @@ export function ReelVideoEditor({
             <Ionicons name={isMuted ? 'volume-mute' : 'volume-high'} size={18} color="#fff" />
           </TouchableOpacity>
         ) : null}
-        {Platform.OS !== 'web' && !immersive ? (
-          <TouchableOpacity style={styles.toolBtn} onPress={onEditNative}>
-            <Ionicons name="crop" size={18} color="#fff" />
-            <Text style={styles.toolBtnText}>Crop</Text>
-          </TouchableOpacity>
-        ) : null}
       </View>
     </View>
   );
@@ -291,7 +289,8 @@ export function ReelVideoEditor({
         </View>
       ) : immersive ? (
         <ComposeVideoPreview
-          height={previewHeight ?? COMPOSE_PREVIEW_HEIGHT}
+          height={mediaLayout.height}
+          width={mediaLayout.width}
           style={styles.composeCard}
         >
           {previewCard}
@@ -394,7 +393,7 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   videoTap: { width: '100%', height: '100%' },
-  preview: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
+  preview: { width: '100%', height: '100%' },
   filterOverlay: { ...StyleSheet.absoluteFillObject },
   playOverlay: {
     ...StyleSheet.absoluteFillObject,

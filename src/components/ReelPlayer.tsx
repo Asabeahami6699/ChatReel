@@ -171,9 +171,10 @@ export const ReelPlayer = forwardRef<ReelPlayerHandle, Props>(function ReelPlaye
     <View pointerEvents="none" style={style ? [styles.fill, style] : styles.fill}>
       <VideoView
         player={player}
-        style={StyleSheet.absoluteFill}
+        style={styles.video}
         contentFit={contentFit}
         nativeControls={nativeControls}
+        playsInline
         pointerEvents={nativeControls ? 'auto' : 'none'}
       />
     </View>
@@ -181,7 +182,9 @@ export const ReelPlayer = forwardRef<ReelPlayerHandle, Props>(function ReelPlaye
 });
 
 const styles = StyleSheet.create({
-  fill: { flex: 1 },
+  fill: { flex: 1, width: '100%', height: '100%', backgroundColor: '#000', overflow: 'hidden' },
+  /** Prefer % sizing over absoluteFill so web object-fit:contain letterboxes correctly. */
+  video: { width: '100%', height: '100%' },
 });
 
 export type { VideoPlayer as ReelVideoPlayer };

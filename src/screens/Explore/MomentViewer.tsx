@@ -11,6 +11,7 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -21,6 +22,7 @@ import { getTextBackground } from '../../lib/momentTextBackgrounds';
 import { isHlsUrl, isImageReelUrl } from '../../lib/reelPlayback';
 import { ReelPlayer, type ReelPlayerHandle } from '../../components/ReelPlayer';
 import { WebHlsVideo } from '../Reel/WebHlsVideo';
+import { getReelFrameDimensions } from '../Reel/reelVideoLayout';
 import {
   momentToSoundPlayback,
   reelNeedsOverlaySound,
@@ -102,7 +104,12 @@ export function MomentViewer({
   onSlideDeleted,
 }: Props) {
   const insets = useSafeAreaInsets();
-  const footerPad = insets.bottom + 12;
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const { frameWidth, frameHeight, usePhoneFrame } = useMemo(
+    () => getReelFrameDimensions(windowWidth, windowHeight),
+    [windowWidth, windowHeight]
+  );
+  const footerPad = usePhoneFrame ? 12 : insets.bottom + 12;
   const [composerMode, setComposerMode] = useState<ComposerMode>(null);
   const [composerText, setComposerText] = useState('');
   const [composerFocused, setComposerFocused] = useState(false);
@@ -435,304 +442,348 @@ export function MomentViewer({
 
   return (
     <Modal visible={visible} animationType="fade" statusBarTranslucent onRequestClose={onClose}>
-      <View style={styles.viewer}>
-        <View style={[styles.viewerProgressRow, { paddingTop: insets.top + 8 }]}>
-          {slides.map((s, i) => (
-            <View key={`${s.id}-${i}`} style={styles.viewerProgressTrack}>
-              <View
-                style={[
-                  styles.viewerProgressFill,
-                  {
-                    width: `${i < slideIndex ? 100 : i === slideIndex ? progress : 0}%`,
-                  },
-                ]}
-              />
-            </View>
-          ))}
-        </View>
-
-        <View style={styles.viewerHeader}>
-          <TouchableOpacity onPress={onClose} style={styles.viewerIconBtn}>
-            <Ionicons name="chevron-down" size={26} color="#fff" />
+      <View style={[styles.viewer, usePhoneFrame && styles.viewerDesktopShell]}>
+        {usePhoneFrame && !frozen ? (
+          <TouchableOpacity
+            style={[
+              styles.desktopChevron,
+              styles.desktopChevronLeft,
+              slideIndex <= 0 && styles.desktopChevronDisabled,
+            ]}
+            onPress={goPrev}
+            disabled={slideIndex <= 0}
+            accessibilityLabel="Previous moment"
+          >
+            <Ionicons name="chevron-back" size={28} color="#fff" />
           </TouchableOpacity>
-          <View style={styles.viewerUser}>
-            {author.author.avatar_url ? (
-              <Image source={{ uri: author.author.avatar_url }} style={styles.viewerAvatar} />
-            ) : (
-              <View style={[styles.viewerAvatar, styles.avatarFallback]}>
-                <Text style={styles.avatarLetter}>{authorName(author.author).charAt(0)}</Text>
+        ) : null}
+
+        <View
+          style={[
+            styles.viewerFrame,
+            usePhoneFrame && styles.viewerFramePhone,
+            usePhoneFrame && { width: frameWidth, height: frameHeight },
+          ]}
+        >
+          <View
+            style={[
+              styles.viewerProgressRow,
+              { paddingTop: usePhoneFrame ? 16 : insets.top + 8 },
+            ]}
+          >
+            {slides.map((s, i) => (
+              <View key={`${s.id}-${i}`} style={styles.viewerProgressTrack}>
+                <View
+                  style={[
+                    styles.viewerProgressFill,
+                    {
+                      width: `${i < slideIndex ? 100 : i === slideIndex ? progress : 0}%`,
+                    },
+                  ]}
+                />
               </View>
-            )}
-            <View>
-              <Text style={styles.viewerName}>{authorName(author.author)}</Text>
-              <Text style={styles.viewerTime}>
-                {formatTimeAgo(currentSlide.created_at)}
-                {slides.length > 1 ? ` · ${slideIndex + 1}/${slides.length}` : ''}
-              </Text>
-            </View>
+            ))}
           </View>
-          {isOwner ? (
-            <>
-              {canSaveAsReel ? (
+
+          <View style={styles.viewerHeader}>
+            <TouchableOpacity onPress={onClose} style={styles.viewerIconBtn}>
+              <Ionicons name="chevron-down" size={26} color="#fff" />
+            </TouchableOpacity>
+            <View style={styles.viewerUser}>
+              {author.author.avatar_url ? (
+                <Image source={{ uri: author.author.avatar_url }} style={styles.viewerAvatar} />
+              ) : (
+                <View style={[styles.viewerAvatar, styles.avatarFallback]}>
+                  <Text style={styles.avatarLetter}>{authorName(author.author).charAt(0)}</Text>
+                </View>
+              )}
+              <View>
+                <Text style={styles.viewerName}>{authorName(author.author)}</Text>
+                <Text style={styles.viewerTime}>
+                  {formatTimeAgo(currentSlide.created_at)}
+                  {slides.length > 1 ? ` · ${slideIndex + 1}/${slides.length}` : ''}
+                </Text>
+              </View>
+            </View>
+            {isOwner ? (
+              <>
+                {canSaveAsReel ? (
+                  <TouchableOpacity
+                    style={styles.viewerIconBtn}
+                    onPress={openReelCaptionModal}
+                    disabled={savingReel || deleting}
+                  >
+                    <Ionicons
+                      name={savingReel ? 'hourglass-outline' : 'film-outline'}
+                      size={22}
+                      color="#fff"
+                    />
+                  </TouchableOpacity>
+                ) : null}
                 <TouchableOpacity
                   style={styles.viewerIconBtn}
-                  onPress={openReelCaptionModal}
-                  disabled={savingReel || deleting}
+                  onPress={openDeleteConfirm}
+                  disabled={deleting || deleteConfirmOpen}
                 >
                   <Ionicons
-                    name={savingReel ? 'hourglass-outline' : 'film-outline'}
+                    name={deleting ? 'hourglass-outline' : 'trash-outline'}
                     size={22}
                     color="#fff"
                   />
                 </TouchableOpacity>
-              ) : null}
-              <TouchableOpacity
-                style={styles.viewerIconBtn}
-                onPress={openDeleteConfirm}
-                disabled={deleting || deleteConfirmOpen}
-              >
-                <Ionicons
-                  name={deleting ? 'hourglass-outline' : 'trash-outline'}
-                  size={22}
-                  color="#fff"
-                />
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.viewerIconBtn} onPress={openViewers}>
-              <Ionicons name="eye-outline" size={22} color="#fff" />
-              {(currentSlide.view_count ?? 0) > 0 && (
-                <View style={styles.viewCountBadge}>
-                  <Text style={styles.viewCountText}>
-                    {currentSlide.view_count! > 99 ? '99+' : currentSlide.view_count}
-                  </Text>
-                </View>
-              )}
-            </TouchableOpacity>
-            </>
-          ) : currentSlide.view_once ? (
-            <View style={styles.viewerOncePill}>
-              <Ionicons name="eye-off-outline" size={12} color="#fff" />
-            </View>
-          ) : (
-            <View style={styles.viewerIconBtn} />
-          )}
-        </View>
-
-        <Pressable
-          style={[styles.viewerBody, { paddingBottom: contentBottomPad }]}
-          onPress={() => {
-            if (frozen) return;
-            setPaused((p) => !p);
-          }}
-          onPressIn={() => {
-            if (!frozen) setHolding(true);
-          }}
-          onPressOut={() => setHolding(false)}
-        >
-          {currentSlide.media_type === 'text' ? (
-            <LinearGradient
-              colors={[...textBg.colors]}
-              style={styles.viewerMedia}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-            >
-              <Text
-                style={[
-                  styles.textMomentBody,
-                  textBg.darkText && styles.textMomentBodyDark,
-                ]}
-              >
-                {currentSlide.caption}
-              </Text>
-            </LinearGradient>
-          ) : isSlideVideo(currentSlide) && currentSlide.media_url && visible ? (
-            Platform.OS === 'web' && isHlsUrl(currentSlide.media_url) ? (
-              <WebHlsVideo
-                key={currentSlide.id}
-                uri={currentSlide.media_url}
-                style={styles.viewerMedia}
-                muted={overlaySoundActive}
-                shouldPlay={videoShouldPlay}
-              />
+                <TouchableOpacity style={styles.viewerIconBtn} onPress={openViewers}>
+                  <Ionicons name="eye-outline" size={22} color="#fff" />
+                  {(currentSlide.view_count ?? 0) > 0 && (
+                    <View style={styles.viewCountBadge}>
+                      <Text style={styles.viewCountText}>
+                        {currentSlide.view_count! > 99 ? '99+' : currentSlide.view_count}
+                      </Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              </>
+            ) : currentSlide.view_once ? (
+              <View style={styles.viewerOncePill}>
+                <Ionicons name="eye-off-outline" size={12} color="#fff" />
+              </View>
             ) : (
-              <ReelPlayer
-                key={currentSlide.id}
-                ref={videoRef}
-                source={currentSlide.media_url}
+              <View style={styles.viewerIconBtn} />
+            )}
+          </View>
+
+          <Pressable
+            style={[styles.viewerBody, { paddingBottom: contentBottomPad }]}
+            onPress={() => {
+              if (frozen) return;
+              setPaused((p) => !p);
+            }}
+            onPressIn={() => {
+              if (!frozen) setHolding(true);
+            }}
+            onPressOut={() => setHolding(false)}
+          >
+            {currentSlide.media_type === 'text' ? (
+              <LinearGradient
+                colors={[...textBg.colors]}
                 style={styles.viewerMedia}
-                contentFit="cover"
-                shouldPlay={videoShouldPlay}
-                isLooping={false}
-                isMuted={overlaySoundActive}
-                volume={overlaySoundActive ? videoVoiceVolume : 1}
-                progressUpdateIntervalMillis={100}
-                onPlaybackStatusUpdate={handleVideoStatus}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+              >
+                <Text
+                  style={[
+                    styles.textMomentBody,
+                    textBg.darkText && styles.textMomentBodyDark,
+                  ]}
+                >
+                  {currentSlide.caption}
+                </Text>
+              </LinearGradient>
+            ) : isSlideVideo(currentSlide) && currentSlide.media_url && visible ? (
+              Platform.OS === 'web' && isHlsUrl(currentSlide.media_url) ? (
+                <WebHlsVideo
+                  key={currentSlide.id}
+                  uri={currentSlide.media_url}
+                  style={styles.viewerMedia}
+                  muted={overlaySoundActive}
+                  shouldPlay={videoShouldPlay}
+                  contentFit="contain"
+                />
+              ) : (
+                <ReelPlayer
+                  key={currentSlide.id}
+                  ref={videoRef}
+                  source={currentSlide.media_url}
+                  style={styles.viewerMedia}
+                  contentFit="contain"
+                  shouldPlay={videoShouldPlay}
+                  isLooping={false}
+                  isMuted={overlaySoundActive}
+                  volume={overlaySoundActive ? videoVoiceVolume : 1}
+                  progressUpdateIntervalMillis={100}
+                  onPlaybackStatusUpdate={handleVideoStatus}
+                />
+              )
+            ) : currentSlide.media_url ? (
+              <Image
+                source={{ uri: currentSlide.media_url }}
+                style={styles.viewerMedia}
+                resizeMode="contain"
               />
-            )
-          ) : currentSlide.media_url ? (
-            <Image
-              source={{ uri: currentSlide.media_url }}
-              style={styles.viewerMedia}
-              resizeMode="cover"
-            />
-          ) : null}
+            ) : null}
 
-          {isPaused && !frozen && (
-            <View style={styles.pauseBadge}>
-              <Ionicons name="pause" size={36} color="#fff" />
-            </View>
-          )}
+            {isPaused && !frozen && (
+              <View style={styles.pauseBadge}>
+                <Ionicons name="pause" size={36} color="#fff" />
+              </View>
+            )}
 
-          {currentSlide.media_type === 'reel' && (currentSlide.reel_id || reelRef) ? (
-            <TouchableOpacity style={styles.reelLinkChip} onPress={openLinkedReel} activeOpacity={0.85}>
-              <Ionicons name="film-outline" size={16} color="#fff" />
-              <Text style={styles.reelLinkText} numberOfLines={1}>
-                {reelLinkLabel}
-              </Text>
-              <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.85)" />
-            </TouchableOpacity>
-          ) : null}
-        </Pressable>
-
-        {!frozen && (
-          <>
-            <TouchableOpacity
-              style={[styles.viewerTap, styles.viewerTapLeft, { bottom: contentBottomPad }]}
-              onPress={goPrev}
-              onLongPress={() => setHolding(true)}
-              onPressOut={() => setHolding(false)}
-              delayLongPress={120}
-            />
-            <TouchableOpacity
-              style={[styles.viewerTap, styles.viewerTapRight, { bottom: contentBottomPad }]}
-              onPress={goNext}
-              onLongPress={() => setHolding(true)}
-              onPressOut={() => setHolding(false)}
-              delayLongPress={120}
-            />
-          </>
-        )}
-
-        <View style={[styles.viewerFooter, { paddingBottom: footerPad, minHeight: footerHeight }]}>
-          {composerMode ? (
-            <>
-              <TouchableOpacity style={styles.viewerReplyClose} onPress={closeComposer}>
-                <Ionicons name="close" size={20} color="rgba(255,255,255,0.85)" />
+            {currentSlide.media_type === 'reel' && (currentSlide.reel_id || reelRef) ? (
+              <TouchableOpacity style={styles.reelLinkChip} onPress={openLinkedReel} activeOpacity={0.85}>
+                <Ionicons name="film-outline" size={16} color="#fff" />
+                <Text style={styles.reelLinkText} numberOfLines={1}>
+                  {reelLinkLabel}
+                </Text>
+                <Ionicons name="chevron-forward" size={16} color="rgba(255,255,255,0.85)" />
               </TouchableOpacity>
-              <TextInput
-                ref={composerInputRef}
-                style={styles.viewerReply}
-                placeholder="Reply…"
-                placeholderTextColor="rgba(255,255,255,0.6)"
-                value={composerText}
-                onChangeText={setComposerText}
-                onFocus={() => {
-                  setComposerFocused(true);
-                  setPaused(true);
-                }}
-                onBlur={() => setComposerFocused(false)}
-                onSubmitEditing={() => void sendComposer()}
-                editable={!sendingComposer}
+            ) : null}
+          </Pressable>
+
+          {!frozen && (
+            <>
+              <TouchableOpacity
+                style={[styles.viewerTap, styles.viewerTapLeft, { bottom: contentBottomPad }]}
+                onPress={goPrev}
+                onLongPress={() => setHolding(true)}
+                onPressOut={() => setHolding(false)}
+                delayLongPress={120}
               />
               <TouchableOpacity
-                style={styles.viewerReactBtn}
-                onPress={() => void sendComposer()}
-                disabled={!composerText.trim() || sendingComposer}
-              >
-                <Ionicons name="send" size={20} color="#fff" />
-              </TouchableOpacity>
+                style={[styles.viewerTap, styles.viewerTapRight, { bottom: contentBottomPad }]}
+                onPress={goNext}
+                onLongPress={() => setHolding(true)}
+                onPressOut={() => setHolding(false)}
+                delayLongPress={120}
+              />
             </>
-          ) : (
-            <>
-              <Text style={styles.footerCaption} numberOfLines={2}>
-                {footerCaption ?? ''}
-              </Text>
-              {canInteract ? (
-                <View style={styles.footerActions}>
+          )}
+
+          <View style={[styles.viewerFooter, { paddingBottom: footerPad, minHeight: footerHeight }]}>
+            {composerMode ? (
+              <>
+                <TouchableOpacity style={styles.viewerReplyClose} onPress={closeComposer}>
+                  <Ionicons name="close" size={20} color="rgba(255,255,255,0.85)" />
+                </TouchableOpacity>
+                <TextInput
+                  ref={composerInputRef}
+                  style={styles.viewerReply}
+                  placeholder="Reply…"
+                  placeholderTextColor="rgba(255,255,255,0.6)"
+                  value={composerText}
+                  onChangeText={setComposerText}
+                  onFocus={() => {
+                    setComposerFocused(true);
+                    setPaused(true);
+                  }}
+                  onBlur={() => setComposerFocused(false)}
+                  onSubmitEditing={() => void sendComposer()}
+                  editable={!sendingComposer}
+                />
+                <TouchableOpacity
+                  style={styles.viewerReactBtn}
+                  onPress={() => void sendComposer()}
+                  disabled={!composerText.trim() || sendingComposer}
+                >
+                  <Ionicons name="send" size={20} color="#fff" />
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <Text style={styles.footerCaption} numberOfLines={2}>
+                  {footerCaption ?? ''}
+                </Text>
+                {canInteract ? (
+                  <View style={styles.footerActions}>
+                    <TouchableOpacity
+                      style={styles.viewerReplyIconBtn}
+                      onPress={() => openActivitySheet('comments')}
+                      accessibilityLabel="View comments"
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Ionicons name="chatbubble-outline" size={22} color="#fff" />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.viewerReplyIconBtn}
+                      onPress={openReplyComposer}
+                      accessibilityLabel="Reply in chat"
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Ionicons name="arrow-undo-outline" size={22} color="#fff" />
+                    </TouchableOpacity>
+                  </View>
+                ) : (
                   <TouchableOpacity
                     style={styles.viewerReplyIconBtn}
                     onPress={() => openActivitySheet('comments')}
-                    accessibilityLabel="View comments"
+                    accessibilityLabel="View comments and views"
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   >
-                    <Ionicons name="chatbubble-outline" size={22} color="#fff" />
+                    <Ionicons name="chatbubbles-outline" size={22} color="#fff" />
+                  </TouchableOpacity>
+                )}
+              </>
+            )}
+          </View>
+
+          <CaptionChoiceModal
+            visible={reelCaptionOpen}
+            title="Caption for your reel"
+            originalCaption={currentSlide.caption}
+            onClose={closeReelCaptionModal}
+            onConfirm={(result) => void saveAsReel(result)}
+          />
+
+          <MomentViewersSheet
+            visible={activityOpen}
+            momentId={currentSlide.id}
+            isOwner={isOwner}
+            initialTab={activityTab}
+            onClose={closeActivity}
+          />
+
+          {deleteConfirmOpen ? (
+            <View style={styles.deleteConfirmRoot} pointerEvents="box-none">
+              <Pressable
+                style={styles.deleteConfirmScrim}
+                onPress={() => {
+                  if (!deleting) closeDeleteConfirm(true);
+                }}
+              />
+              <View
+                style={[
+                  styles.deleteConfirmToast,
+                  { paddingBottom: (usePhoneFrame ? 12 : Math.max(insets.bottom, 12)) + 8 },
+                ]}
+              >
+                <Text style={styles.deleteConfirmTitle}>Delete this moment?</Text>
+                <Text style={styles.deleteConfirmSub}>It will be removed for everyone.</Text>
+                <View style={styles.deleteConfirmActions}>
+                  <TouchableOpacity
+                    style={styles.deleteCancelBtn}
+                    onPress={() => closeDeleteConfirm(true)}
+                    disabled={deleting}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.deleteCancelText}>Cancel</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    style={styles.viewerReplyIconBtn}
-                    onPress={openReplyComposer}
-                    accessibilityLabel="Reply in chat"
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    style={[styles.deleteConfirmBtn, deleting && { opacity: 0.7 }]}
+                    onPress={() => void confirmDeleteMoment()}
+                    disabled={deleting}
+                    activeOpacity={0.85}
                   >
-                    <Ionicons name="arrow-undo-outline" size={22} color="#fff" />
+                    {deleting ? (
+                      <Text style={styles.deleteConfirmText}>Deleting…</Text>
+                    ) : (
+                      <>
+                        <Ionicons name="trash" size={15} color="#fff" />
+                        <Text style={styles.deleteConfirmText}>Delete</Text>
+                      </>
+                    )}
                   </TouchableOpacity>
                 </View>
-              ) : (
-                <TouchableOpacity
-                  style={styles.viewerReplyIconBtn}
-                  onPress={() => openActivitySheet('comments')}
-                  accessibilityLabel="View comments and views"
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                >
-                  <Ionicons name="chatbubbles-outline" size={22} color="#fff" />
-                </TouchableOpacity>
-              )}
-            </>
-          )}
-        </View>
-
-        <CaptionChoiceModal
-          visible={reelCaptionOpen}
-          title="Caption for your reel"
-          originalCaption={currentSlide.caption}
-          onClose={closeReelCaptionModal}
-          onConfirm={(result) => void saveAsReel(result)}
-        />
-
-        <MomentViewersSheet
-          visible={activityOpen}
-          momentId={currentSlide.id}
-          isOwner={isOwner}
-          initialTab={activityTab}
-          onClose={closeActivity}
-        />
-
-        {deleteConfirmOpen ? (
-          <View style={styles.deleteConfirmRoot} pointerEvents="box-none">
-            <Pressable
-              style={styles.deleteConfirmScrim}
-              onPress={() => {
-                if (!deleting) closeDeleteConfirm(true);
-              }}
-            />
-            <View style={[styles.deleteConfirmToast, { paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
-              <Text style={styles.deleteConfirmTitle}>Delete this moment?</Text>
-              <Text style={styles.deleteConfirmSub}>It will be removed for everyone.</Text>
-              <View style={styles.deleteConfirmActions}>
-                <TouchableOpacity
-                  style={styles.deleteCancelBtn}
-                  onPress={() => closeDeleteConfirm(true)}
-                  disabled={deleting}
-                  activeOpacity={0.85}
-                >
-                  <Text style={styles.deleteCancelText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.deleteConfirmBtn, deleting && { opacity: 0.7 }]}
-                  onPress={() => void confirmDeleteMoment()}
-                  disabled={deleting}
-                  activeOpacity={0.85}
-                >
-                  {deleting ? (
-                    <Text style={styles.deleteConfirmText}>Deleting…</Text>
-                  ) : (
-                    <>
-                      <Ionicons name="trash" size={15} color="#fff" />
-                      <Text style={styles.deleteConfirmText}>Delete</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
               </View>
             </View>
-          </View>
+          ) : null}
+        </View>
+
+        {usePhoneFrame && !frozen ? (
+          <TouchableOpacity
+            style={[styles.desktopChevron, styles.desktopChevronRight]}
+            onPress={goNext}
+            accessibilityLabel="Next moment"
+          >
+            <Ionicons name="chevron-forward" size={28} color="#fff" />
+          </TouchableOpacity>
         ) : null}
       </View>
     </Modal>
@@ -741,6 +792,40 @@ export function MomentViewer({
 
 const styles = StyleSheet.create({
   viewer: { flex: 1, backgroundColor: '#000' },
+  viewerDesktopShell: {
+    backgroundColor: '#0a0a0a',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  desktopChevron: {
+    position: 'absolute',
+    top: '50%',
+    marginTop: -28,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: 'rgba(255,255,255,0.14)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.22)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 40,
+  },
+  desktopChevronLeft: { left: 24 },
+  desktopChevronRight: { right: 24 },
+  desktopChevronDisabled: { opacity: 0.35 },
+  viewerFrame: {
+    flex: 1,
+    backgroundColor: '#000',
+    overflow: 'hidden',
+    alignSelf: 'stretch',
+  },
+  viewerFramePhone: {
+    flex: undefined,
+    alignSelf: 'center',
+    maxWidth: '100%',
+    borderRadius: 16,
+  },
   viewerProgressRow: {
     flexDirection: 'row',
     gap: 4,

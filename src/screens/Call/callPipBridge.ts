@@ -8,6 +8,7 @@ import type { CallDTO } from '../../lib/api';
 import { api } from '../../lib/api';
 import { leaveCallScreen } from '../../navigation/callSessionNav';
 import { showAppToast } from '../../lib/appToast';
+import { playCallEndTone, preloadCallEndTone } from '../../lib/playCallEndTone';
 
 export type CallPipSnapshot = {
   active: boolean;
@@ -84,6 +85,7 @@ export function openCallSession(params: {
   peerName?: string;
   peerAvatar?: string | null;
 }) {
+  preloadCallEndTone();
   snapshot = {
     ...snapshot,
     active: true,
@@ -142,6 +144,7 @@ export async function callPipEnd() {
     handlers.onEnd();
     return;
   }
+  playCallEndTone();
   const callId = snapshot.callId;
   clearCallPip();
   if (callId) {
@@ -152,5 +155,5 @@ export async function callPipEnd() {
     }
   }
   showAppToast('Call ended');
-  leaveCallScreen('Calls');
+  leaveCallScreen('Calls', null, { playEndTone: false });
 }

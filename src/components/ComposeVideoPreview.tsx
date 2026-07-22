@@ -1,21 +1,23 @@
 import React from 'react';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 
-export const COMPOSE_PREVIEW_HEIGHT = 380;
+export const COMPOSE_PREVIEW_HEIGHT = 480;
 
 type Props = {
   children: React.ReactNode;
   style?: StyleProp<ViewStyle>;
   height?: number;
+  width?: number;
   /** Light-theme border (moments). Omit on dark reel composer. */
   bordered?: boolean;
 };
 
-/** Rounded card used for moment / reel compose video previews (cover, fixed height). */
+/** Rounded card for moment / reel compose previews — letterbox media with contain, never crop. */
 export function ComposeVideoPreview({
   children,
   style,
   height = COMPOSE_PREVIEW_HEIGHT,
+  width,
   bordered = false,
 }: Props) {
   return (
@@ -24,6 +26,7 @@ export function ComposeVideoPreview({
         styles.card,
         bordered && styles.cardBordered,
         { height },
+        width != null ? { width, alignSelf: 'center' } : null,
         style,
       ]}
     >

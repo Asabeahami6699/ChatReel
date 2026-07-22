@@ -7,6 +7,7 @@ type Props = {
   muted: boolean;
   volume?: number;
   shouldPlay: boolean;
+  contentFit?: 'contain' | 'cover' | 'fill';
   onReady?: () => void;
   onPlaybackStatusUpdate?: (status: ReelPlaybackStatus) => void;
 };

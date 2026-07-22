@@ -44,7 +44,7 @@ function MediaTilePreview({ item }: { item: MediaDraft }) {
       <ReelPlayer
         source={item.uri}
         style={StyleSheet.absoluteFill}
-        contentFit="cover"
+        contentFit="contain"
         shouldPlay
         isLooping
         isMuted
@@ -327,6 +327,7 @@ export default function PostReelScreen() {
       allowsMultipleSelection: true,
       selectionLimit: MAX_SELECTION,
       videoMaxDuration: MAX_DURATION_SECONDS,
+      allowsEditing: false,
     });
     if (result.canceled || !result.assets?.length) return;
 
@@ -357,6 +358,7 @@ export default function PostReelScreen() {
       mediaTypes: ['videos'] as ImagePicker.MediaType[],
       videoMaxDuration: MAX_DURATION_SECONDS,
       quality: 1,
+      allowsEditing: false,
     });
     if (result.canceled || !result.assets?.[0]) return;
     const draft = await assetToDraft(result.assets[0]);
