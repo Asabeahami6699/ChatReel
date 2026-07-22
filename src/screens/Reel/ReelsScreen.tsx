@@ -33,6 +33,7 @@ import {
 } from '../../navigation/chatNavigationBridge';
 import { navigateMainTab } from '../../navigation/rootNavigation';
 import { openPostReelCompose, registerReelFeedPauseHandler, useReelPlaybackGateActive } from '../../lib/reelPlaybackBridge';
+import { stopAllReelOverlaySounds } from '../../hooks/useReelSoundPlayback';
 import ReelCommentSheet from './ReelCommentSheet';
 import ReelShareSheet from './ReelShareSheet';
 import ReelProfileSheet from './ReelProfileSheet';
@@ -215,6 +216,7 @@ export default function ReelsScreen() {
   }, []);
 
   const pauseAllVideos = useCallback(async () => {
+    stopAllReelOverlaySounds();
     await pausePlayers();
     setIsPlaying(false);
   }, [pausePlayers]);
@@ -683,13 +685,14 @@ export default function ReelsScreen() {
   // Pause when screen blurs, a sheet opens, or a global gate is active.
   useEffect(() => {
     if (!isFocused || sheetOpen || gateActive) {
-      void pausePlayers();
+      void pauseAllVideos();
       return;
     }
-    if (isPlaying && activeReelIdRef.current) {
+    setIsPlaying(true);
+    if (activeReelIdRef.current) {
       void playActiveReel(activeReelIdRef.current);
     }
-  }, [isFocused, sheetOpen, gateActive, isPlaying, pausePlayers, playActiveReel]);
+  }, [isFocused, sheetOpen, gateActive, pauseAllVideos, playActiveReel]);
 
   // Keep playback in sync when play state toggles.
   useEffect(() => {

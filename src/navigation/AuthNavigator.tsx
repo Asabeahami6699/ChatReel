@@ -15,10 +15,10 @@ const Stack = createNativeStackNavigator<AuthStackParamList>()
 export const AuthNavigator = () => {
   return (
     <SafeAreaView
-      style={{ flex: 1, backgroundColor: '#fff' }}
+      style={{ flex: 1, backgroundColor: '#f8f9fa' }}
       edges={Platform.OS === 'web' ? undefined : ['top', 'left', 'right', 'bottom']}
     >
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Navigator screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#f8f9fa' } }}>
         <Stack.Screen name="Login" component={LoginScreen} />
         <Stack.Screen name="Register" component={RegisterScreen} />
       </Stack.Navigator>

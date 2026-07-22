@@ -171,7 +171,16 @@ export default function ChatSettingsScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: theme.listBg }]}>
-      <View style={[styles.header, { paddingTop: insets.top + 8, backgroundColor: theme.headerBg }]}>
+      <View
+        style={[
+          styles.header,
+          {
+            marginTop: -insets.top,
+            paddingTop: insets.top + 8,
+            backgroundColor: theme.headerBg,
+          },
+        ]}
+      >
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Ionicons name="chevron-back" size={24} color={theme.headerText} />
         </TouchableOpacity>

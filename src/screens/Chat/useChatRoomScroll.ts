@@ -25,6 +25,7 @@ export function useChatRoomScroll({
 
   const [showScrollDown, setShowScrollDown] = useState(false);
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   loadMoreRef.current = onLoadMore;
 
@@ -132,14 +133,16 @@ export function useChatRoomScroll({
     const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
 
-    const showSub = Keyboard.addListener(showEvt, () => {
+    const showSub = Keyboard.addListener(showEvt, (e) => {
       setIsKeyboardVisible(true);
+      setKeyboardHeight(e.endCoordinates?.height ?? 0);
       shouldStickToBottomRef.current = true;
       requestAnimationFrame(() => scrollToBottom(true));
       setTimeout(() => scrollToBottom(true), 250);
     });
     const hideSub = Keyboard.addListener(hideEvt, () => {
       setIsKeyboardVisible(false);
+      setKeyboardHeight(0);
     });
 
     return () => {
@@ -152,6 +155,7 @@ export function useChatRoomScroll({
     flatListRef,
     showScrollDown,
     isKeyboardVisible,
+    keyboardHeight,
     shouldStickToBottomRef,
     scrollToBottom,
     scrollToBottomAndStick,

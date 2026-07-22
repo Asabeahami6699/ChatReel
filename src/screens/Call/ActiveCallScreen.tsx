@@ -1147,6 +1147,10 @@ function CallRoom({
     useRoomContext: () => { disconnect: () => Promise<void> };
   };
 
+  if (!Track?.Source?.Camera) {
+    return <FallbackError message="LiveKit Track.Source failed to load" />;
+  }
+
   useEffect(() => {
     if (Platform.OS !== 'web') {
       void (async () => {
@@ -1668,7 +1672,7 @@ function RoomBody(props: {
     })();
   }, [props.AudioSession, sharedVideo, videoEnabled]);
 
-  const cameraTracks = useTracks([Track.Source.Camera]);
+  const cameraTracks = useTracks([Track?.Source?.Camera].filter(Boolean));
   const remoteTracks = cameraTracks.filter((t) => !t.participant.isLocal);
   const localVideo = cameraTracks.find((t) => t.participant.isLocal);
   const remoteVideo = remoteTracks[0];
@@ -1744,6 +1748,7 @@ function RoomBody(props: {
   };
 
   const flipCamera = async () => {
+    if (!Track?.Source?.Camera) return;
     const next = await flipLocalCameraFacing(
       localParticipant,
       Track.Source.Camera,

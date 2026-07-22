@@ -345,7 +345,7 @@ export default function AddFriendsListScreen() {
         colors={['#0d47a1', '#1976d2', '#42a5f5']}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
-        style={[styles.hero, { paddingTop: insets.top + 8 }]}
+        style={[styles.hero, { marginTop: -insets.top, paddingTop: insets.top + 8 }]}
       >
         <View style={styles.heroTop}>
           <TouchableOpacity

@@ -45,7 +45,7 @@ export const WebHlsVideo = forwardRef<ReelPlayerHandle, Props>(function WebHlsVi
     muted,
     volume,
     shouldPlay,
-    contentFit = 'contain',
+    contentFit = 'cover',
     onReady,
     onPlaybackStatusUpdate,
   },

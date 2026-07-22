@@ -3,7 +3,7 @@ import type { Session, User } from '@supabase/supabase-js';
 import { api, onAuthExpired } from '../lib/api';
 import { sessionStorage } from '../lib/sessionStorage';
 import { ensureSupabaseSession } from '../lib/ensureSupabaseSession';
-import { clearSupabaseSession } from '../lib/supabase';
+import { clearSupabaseSession, setSupabaseSession } from '../lib/supabase';
 import { clearUserLocalCaches } from '../lib/clearUserLocalCaches';
 
 type AuthResult = {
@@ -49,10 +49,17 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     const restoreSession = async () => {
       try {
-        const session = await ensureSupabaseSession();
-        if (session?.user) {
-          setUser(session.user);
-          setSession(session);
+        // Paint the app from local storage first so splash is not held by network refresh.
+        const stored = await sessionStorage.load();
+        if (stored?.user && stored.access_token && stored.refresh_token) {
+          await setSupabaseSession(stored.access_token, stored.refresh_token);
+          setUser(stored.user);
+          setSession({
+            access_token: stored.access_token,
+            refresh_token: stored.refresh_token,
+            expires_at: stored.expires_at,
+            user: stored.user,
+          } as Session);
           setIsGuest(false);
         }
       } catch (err) {
@@ -60,6 +67,24 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         await sessionStorage.clear();
       } finally {
         setLoading(false);
+      }
+
+      // Refresh JWT / Realtime token in the background after first paint.
+      try {
+        const session = await ensureSupabaseSession();
+        if (session?.user) {
+          setUser(session.user);
+          setSession(session);
+          setIsGuest(false);
+        } else if (session === null) {
+          const stored = await sessionStorage.load();
+          if (!stored?.access_token) {
+            setUser(null);
+            setSession(null);
+          }
+        }
+      } catch (err) {
+        console.error('[Auth] background session refresh failed:', err);
       }
     };
 

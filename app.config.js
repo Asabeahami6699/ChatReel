@@ -58,6 +58,12 @@ module.exports = {
       foregroundImage: './assets/favIconChat.png',
       backgroundColor: '#4f46e5',
     },
+    statusBar: {
+      backgroundColor: '#f8f9fa',
+      barStyle: 'dark-content',
+    },
+    /** We pad chat composer manually; pan avoids double-resize fights with SafeArea shell. */
+    softwareKeyboardLayoutMode: 'pan',
     permissions: [
       'CAMERA',
       'RECORD_AUDIO',

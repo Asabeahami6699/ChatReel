@@ -74,8 +74,15 @@ export const RootNavigator = () => {
 
   if (loading) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator size="large" color="#0066cc" />
+      <View
+        style={{
+          flex: 1,
+          justifyContent: 'center',
+          alignItems: 'center',
+          backgroundColor: '#1a2f7a',
+        }}
+      >
+        <ActivityIndicator size="large" color="#ffffff" />
       </View>
     );
   }

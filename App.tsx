@@ -1,6 +1,5 @@
 // App.tsx
 import React from 'react';
-import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -60,7 +59,6 @@ export default function App() {
               <ConfirmToastHost />
               <AppToastHost />
             </RealtimeProvider>
-            <StatusBar style="auto" />
           </ChatSettingsProvider>
           </AuthProvider>
         </PaperProvider>

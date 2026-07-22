@@ -6,8 +6,18 @@ const projectRoot = __dirname;
 require('@expo/env').load(projectRoot);
 
 const { getDefaultConfig } = require('expo/metro-config');
+const { FileStore } = require('metro-cache');
 
 const config = getDefaultConfig(projectRoot);
+
+// Prefer a single FileStore under the project — BinaryFileStore in %TEMP% hits
+// Windows EMFILE (too many open files) during HMR on large apps.
+config.cacheStores = [
+  new FileStore({
+    root: path.join(projectRoot, 'node_modules', '.cache', 'metro-file-store'),
+  }),
+];
+
 config.transformer = {
   ...config.transformer,
   babelTransformerPath: require.resolve('react-native-svg-transformer'),

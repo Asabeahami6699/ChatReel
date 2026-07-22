@@ -82,6 +82,19 @@ type Options = {
   masterVolume?: number;
 };
 
+const overlayStopHandlers = new Set<() => void>();
+
+/** Hard-stop every overlay music player (leave Reels / open chat / background). */
+export function stopAllReelOverlaySounds(): void {
+  overlayStopHandlers.forEach((stop) => {
+    try {
+      stop();
+    } catch {
+      /* ignore */
+    }
+  });
+}
+
 /**
  * Plays attached music for image reels and video reels awaiting server mux.
  * Also used for moments via momentToSoundPlayback().
@@ -92,6 +105,9 @@ export function useReelSoundPlayback(
 ): void {
   const playerRef = useRef<AudioPlayer | null>(null);
   const watchRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const genRef = useRef(0);
+  const optsRef = useRef(opts);
+  optsRef.current = opts;
 
   useEffect(() => {
     const stopWatch = () => {
@@ -101,11 +117,15 @@ export function useReelSoundPlayback(
       }
     };
 
-    const stopPlayer = async () => {
+    const stopPlayer = () => {
       stopWatch();
-      await releasePlayer(playerRef.current);
+      const p = playerRef.current;
       playerRef.current = null;
+      if (p) void releasePlayer(p);
     };
+
+    overlayStopHandlers.add(stopPlayer);
+    const myGen = ++genRef.current;
 
     const shouldPlay =
       Boolean(item) &&
@@ -116,8 +136,12 @@ export function useReelSoundPlayback(
       !opts.muted;
 
     if (!shouldPlay || !item?.sound) {
-      void stopPlayer();
-      return;
+      stopPlayer();
+      return () => {
+        overlayStopHandlers.delete(stopPlayer);
+        genRef.current += 1;
+        stopPlayer();
+      };
     }
 
     const sound = item.sound;
@@ -130,13 +154,16 @@ export function useReelSoundPlayback(
     const url = sound.preview_url ?? sound.audio_url;
     const musicVol = (item.sound_volume ?? 0.45) * (opts.masterVolume ?? 1);
 
-    let alive = true;
-
     void (async () => {
-      await stopPlayer();
-      if (!alive) return;
+      stopPlayer();
+      if (myGen !== genRef.current) return;
       await configurePlaybackAudio();
+      if (myGen !== genRef.current) return;
       const player = createPlaybackPlayer(url);
+      if (myGen !== genRef.current) {
+        void releasePlayer(player);
+        return;
+      }
       try {
         player.volume = musicVol;
       } catch {
@@ -144,13 +171,23 @@ export function useReelSoundPlayback(
       }
       playerRef.current = player;
       await seekPlaybackPlayer(player, startSec);
+      if (myGen !== genRef.current) {
+        void releasePlayer(player);
+        if (playerRef.current === player) playerRef.current = null;
+        return;
+      }
       player.play();
 
       watchRef.current = setInterval(() => {
         const p = playerRef.current;
         if (!p) return;
-        if (opts.muted || !opts.playing || !opts.focused) {
-          p.pause();
+        const live = optsRef.current;
+        if (live.muted || !live.playing || !live.focused || !live.active) {
+          try {
+            p.pause();
+          } catch {
+            /* ignore */
+          }
           return;
         }
         try {
@@ -160,14 +197,17 @@ export function useReelSoundPlayback(
         }
         const t = p.currentTime ?? 0;
         if (t >= endSec - 0.08) {
-          void seekPlaybackPlayer(p, startSec).then(() => p.play());
+          void seekPlaybackPlayer(p, startSec).then(() => {
+            if (myGen === genRef.current) p.play();
+          });
         }
       }, 120);
     })();
 
     return () => {
-      alive = false;
-      void stopPlayer();
+      overlayStopHandlers.delete(stopPlayer);
+      genRef.current += 1;
+      stopPlayer();
     };
   }, [
     item,

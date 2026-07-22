@@ -45,14 +45,8 @@ export function upsertCallsPrefetchCache(
   };
 }
 
-function warmLiveKitModule() {
-  void import('../screens/Call/liveKitClient').then((mod) => {
-    mod.getLiveKit();
-  });
-}
-
 /**
- * Prefetch call history, friends, and LiveKit after idle so the Calls tab opens instantly.
+ * Prefetch call history and friends after idle so the Calls tab opens faster.
  */
 export function scheduleCallsPrefetch(delayMs = 400) {
   if (prefetchPromise) return prefetchPromise;
@@ -64,7 +58,7 @@ export function scheduleCallsPrefetch(delayMs = 400) {
           const session = await sessionStorage.load();
           if (!session?.access_token) return;
 
-          warmLiveKitModule();
+          // Don't load LiveKit at cold start — it is heavy; Calls tab / call start will import it.
 
           const [configRes, historyRes, friendsRes, profileRes] = await Promise.allSettled([
             api.calls.config(),

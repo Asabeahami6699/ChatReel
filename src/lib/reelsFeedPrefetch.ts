@@ -34,7 +34,7 @@ export function upsertReelsFeedCache(key: ReelsFeedCacheKey, reels: ReelDTO[], n
 }
 
 function warmFirstReels(reels: ReelDTO[]) {
-  for (const reel of reels.slice(0, 3)) {
+  for (const reel of reels.slice(0, 2)) {
     void prefetchReelNow(reel, () => undefined);
   }
 }

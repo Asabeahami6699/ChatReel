@@ -7,10 +7,11 @@ import {
   Image,
   ScrollView,
   ActivityIndicator,
+  StatusBar,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '../../lib/api';
 import { showAppToast } from '../../lib/appToast';
 import { confirmAction, showErrorAlert } from '../../lib/confirmAction';
@@ -28,6 +29,7 @@ type RouteParams = {
 export default function ContactScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
+  const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const { userId, chatName, avatarUrl } = route.params as RouteParams;
 
@@ -107,8 +109,18 @@ export default function ContactScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-      <View style={styles.header}>
+    <SafeAreaView style={styles.container} edges={['left', 'right']}>
+      <StatusBar barStyle="light-content" backgroundColor={chatTheme.headerBg} />
+      <View
+        style={[
+          styles.header,
+          {
+            // Pull header into the shell top inset so blue fills the status area (no double pad).
+            marginTop: -insets.top,
+            paddingTop: insets.top + 14,
+          },
+        ]}
+      >
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <Ionicons name="arrow-back" size={24} color="#fff" />
         </TouchableOpacity>
@@ -162,7 +174,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     backgroundColor: chatTheme.headerBg,
     paddingHorizontal: 12,
-    paddingVertical: 14,
+    paddingBottom: 14,
   },
   headerTitle: { color: '#fff', fontSize: 18, fontWeight: '700' },
   content: { alignItems: 'center', padding: 24 },

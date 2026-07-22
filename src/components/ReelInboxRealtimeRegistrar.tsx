@@ -9,7 +9,7 @@ export function ReelInboxRealtimeRegistrar() {
 
   useEffect(() => {
     if (!user) return;
-    void scheduleReelInboxPrefetch(0);
+    void scheduleReelInboxPrefetch(3200);
   }, [user]);
 
   useRealtimeTopic('reelLikes', () => {

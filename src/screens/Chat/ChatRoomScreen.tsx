@@ -17,6 +17,7 @@ import {
   Alert,
   ActivityIndicator,
   FlatList,
+  StatusBar,
 } from 'react-native';
 import { IconButton } from 'react-native-paper';
 import { useAuth } from '../../hooks/useAuth';
@@ -236,6 +237,7 @@ export default function ChatRoomScreen() {
     flatListRef,
     showScrollDown,
     isKeyboardVisible,
+    keyboardHeight,
     shouldStickToBottomRef: shouldScrollToBottomRef,
     scrollToBottom,
     scrollToBottomAndStick,
@@ -2543,7 +2545,18 @@ export default function ChatRoomScreen() {
       style={[styles.container, { backgroundColor: chatBgColor }]}
       edges={['left', 'right']}
     >
-      <View style={[styles.header, { backgroundColor: theme.headerBg }]}>
+      <StatusBar barStyle="light-content" backgroundColor={theme.headerBg} />
+      <View
+        style={[
+          styles.header,
+          {
+            backgroundColor: theme.headerBg,
+            marginTop: -insets.top,
+            paddingTop: insets.top,
+            height: 70 + insets.top,
+          },
+        ]}
+      >
         <View style={styles.headerLeft}>
           <IconButton 
             icon="arrow-left" 
@@ -2603,7 +2616,12 @@ export default function ChatRoomScreen() {
       )}
 
       <KeyboardAvoidingView
-        style={{ flex: 1 }}
+        style={{
+          flex: 1,
+          // Android SoftInput often doesn't resize under our root SafeArea shell — pad manually.
+          paddingBottom:
+            Platform.OS === 'android' && keyboardHeight > 0 ? keyboardHeight : 0,
+        }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={keyboardVerticalOffset}
       >

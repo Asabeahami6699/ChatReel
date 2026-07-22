@@ -93,8 +93,20 @@ function handlePushOpen(data: PushData | undefined) {
   }
 }
 
+let androidChannelsReady = false;
+
 async function ensureAndroidChannels() {
-  if (Platform.OS !== 'android') return;
+  if (Platform.OS !== 'android' || androidChannelsReady) return;
+  // One-shot migrate: older builds used sound: "default" (missing raw asset).
+  const channelIds = ['default', 'reel_inbox', 'calls'] as const;
+  for (const id of channelIds) {
+    try {
+      await Notifications.deleteNotificationChannelAsync(id);
+    } catch {
+      /* channel may not exist yet */
+    }
+  }
+  // Omit `sound` so Android uses the system default notification sound.
   await Notifications.setNotificationChannelAsync('default', {
     name: 'Messages & friends',
     importance: Notifications.AndroidImportance.MAX,
@@ -102,15 +114,14 @@ async function ensureAndroidChannels() {
   await Notifications.setNotificationChannelAsync('reel_inbox', {
     name: 'Reel activity',
     importance: Notifications.AndroidImportance.HIGH,
-    sound: 'default',
   });
   await Notifications.setNotificationChannelAsync('calls', {
     name: 'Incoming calls',
     importance: Notifications.AndroidImportance.MAX,
-    sound: 'default',
     vibrationPattern: [0, 400, 200, 400],
     bypassDnd: true,
   });
+  androidChannelsReady = true;
 }
 
 async function registerExpoToken(userId: string): Promise<string | null> {
@@ -123,15 +134,29 @@ async function registerExpoToken(userId: string): Promise<string | null> {
   if (finalStatus !== 'granted') return null;
 
   const projectId = getExpoProjectId();
-  const tokenResult = projectId
-    ? await Notifications.getExpoPushTokenAsync({ projectId })
-    : await Notifications.getExpoPushTokenAsync();
-
-  const token = tokenResult.data;
-  if (!token) return null;
-
-  await api.notifications.registerToken({ token, platform: Platform.OS });
-  return token;
+  try {
+    const tokenResult = projectId
+      ? await Notifications.getExpoPushTokenAsync({ projectId })
+      : await Notifications.getExpoPushTokenAsync();
+    const token = tokenResult.data;
+    if (!token) return null;
+    await api.notifications.registerToken({ token, platform: Platform.OS });
+    return token;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // Local debug builds often omit google-services.json — push is optional.
+    if (
+      /FirebaseApp is not initialized|googleServicesFile|Firebase Messaging/i.test(msg)
+    ) {
+      if (__DEV__) {
+        console.log(
+          '[push] Skipping Expo push token (Firebase / google-services.json not configured). App works without it.'
+        );
+      }
+      return null;
+    }
+    throw err;
+  }
 }
 
 export function usePushNotifications(userId: string | undefined) {
@@ -172,6 +197,13 @@ export function usePushNotifications(userId: string | undefined) {
         if (!active || !token) return;
         registeredToken.current = token;
       } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/FirebaseApp is not initialized|googleServicesFile|Firebase Messaging/i.test(msg)) {
+          if (__DEV__) {
+            console.log('[push] Push unavailable in this build (no Firebase). Continuing without it.');
+          }
+          return;
+        }
         console.warn('[push] registration failed:', err);
       }
     };

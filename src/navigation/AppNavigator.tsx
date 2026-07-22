@@ -109,12 +109,6 @@ const ReelsWrapper = ({ navigation }: { navigation: any }) => {
   const [isInitialized, setIsInitialized] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
 
-  // Mount reels navigator promptly so videos are ready when the tab is opened.
-  React.useEffect(() => {
-    const idleTimer = setTimeout(() => setIsInitialized(true), 150);
-    return () => clearTimeout(idleTimer);
-  }, []);
-
   React.useEffect(() => {
     const unsubscribeFocus = navigation.addListener('focus', () => {
       setIsFocused(true);
@@ -220,6 +214,7 @@ const MainTabNavigator = () => {
         name="Calls"
         component={CallsScreen}
         options={{
+          lazy: false,
           tabBarIcon: ({ color }) => (
             <Ionicons name="call-outline" size={22} color={color} />
           ),
@@ -378,21 +373,29 @@ function MainShell() {
 
 export const AppNavigator = () => {
   const { width } = useWindowDimensions();
+  const { theme } = useChatSettings();
   const isWebDesktop = Platform.OS === 'web' && width >= MOBILE_BREAKPOINT;
+  const shellBg = theme.listHeaderBg;
 
   return (
     <SafeAreaView
-      style={isWebDesktop ? styles.webSafeArea : styles.safeArea}
+      style={[
+        isWebDesktop ? styles.webSafeArea : styles.safeArea,
+        !isWebDesktop && { backgroundColor: shellBg },
+      ]}
       edges={isWebDesktop ? undefined : ['top', 'left', 'right']}
     >
-      <StatusBar barStyle="dark-content" backgroundColor="#fff" />
+      <StatusBar
+        barStyle={theme.isDark ? 'light-content' : 'dark-content'}
+        backgroundColor={shellBg}
+      />
       <View style={styles.appShell}>
         <Stack.Navigator
-          detachInactiveScreens={false}
+          detachInactiveScreens
           screenOptions={{
             headerShown: false,
-            contentStyle: { backgroundColor: '#fff' },
-            freezeOnBlur: false,
+            contentStyle: { backgroundColor: theme.listBg },
+            freezeOnBlur: true,
           }}
         >
           <Stack.Screen name="Main" component={MainShell} />
@@ -499,10 +502,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#fafafa' 
   },
 
-  // Mobile styles
-  safeArea: { 
-    flex: 1, 
-    backgroundColor: '#fff'
+  // Mobile styles — backgroundColor overridden by theme in AppNavigator
+  safeArea: {
+    flex: 1,
   },
   appShell: {
     flex: 1,

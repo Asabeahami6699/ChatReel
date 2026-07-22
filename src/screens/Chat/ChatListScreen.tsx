@@ -465,7 +465,11 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
   }
 
   const refreshOnFocusRef = useRef<() => void>(() => {})
+  const lastFocusRefreshAt = useRef(0)
   refreshOnFocusRef.current = () => {
+    const now = Date.now()
+    if (now - lastFocusRefreshAt.current < 4000) return
+    lastFocusRefreshAt.current = now
     softRefreshIndividuals()
     softRefreshGroups()
     void fetchFriends()
@@ -613,17 +617,6 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
       setHiddenChatKeys(await unhideChatFromList(kind, chatId))
     }
 
-    if (!isGroup && item.unread_count > 0) {
-      await markMessagesAsRead(item.user_id)
-      // Update local state immediately for better UX
-      setIndividualUnreadCount(prev => Math.max(0, prev - item.unread_count))
-    }
-    if (isGroup && item.unread_count > 0) {
-      await markGroupMessagesAsRead(item.id)
-      // Update local state immediately for better UX
-      setGroupUnreadCount(prev => Math.max(0, prev - item.unread_count))
-    }
-    
     const params = {
       chatId: isGroup ? item.id : item.user_id,
       chatType: isGroup ? 'group' : 'individual',
@@ -631,12 +624,21 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
       avatarUrl: item.avatar_url,
     }
 
+    // Navigate immediately — mark-read must not block the tap.
     if (setSelectedChat) {
       setSelectedChat(params)
-      return
+    } else {
+      navigation.navigate('ChatRoom', params)
     }
 
-    navigation.navigate('ChatRoom', params)
+    if (!isGroup && item.unread_count > 0) {
+      setIndividualUnreadCount((prev) => Math.max(0, prev - item.unread_count))
+      void markMessagesAsRead(item.user_id)
+    }
+    if (isGroup && item.unread_count > 0) {
+      setGroupUnreadCount((prev) => Math.max(0, prev - item.unread_count))
+      void markGroupMessagesAsRead(item.id)
+    }
   }
 
   const handleHideChat = useCallback(
@@ -1081,7 +1083,12 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
         style={[
           styles.navbar,
           isNarrow && styles.navbarNarrow,
-          { backgroundColor: theme.listHeaderBg, borderBottomColor: theme.listBorder },
+          {
+            backgroundColor: theme.listHeaderBg,
+            borderBottomColor: theme.listBorder,
+            marginTop: -insets.top,
+            paddingTop: insets.top,
+          },
         ]}
       >
         <View style={styles.brandRow}>
