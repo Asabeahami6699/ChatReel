@@ -4,6 +4,7 @@ import {
   rootNavigationRef,
 } from './rootNavigation';
 import { showAppToast } from '../lib/appToast';
+import { playCallEndTone } from '../lib/playCallEndTone';
 
 type CallReturnTarget = {
   tab: MainTabName;
@@ -45,11 +46,16 @@ export function rememberCallReturnPoint(tab?: MainTabName) {
 /**
  * Leave call UI and restore Main on the remembered tab (fallback: Calls).
  * Clears return target. Does not clear call pip — callers should clearCallPip first when ending.
+ * Plays the call-ended tone so both sides hear it when either party hangs up.
  */
 export function leaveCallScreen(
   fallbackTab: MainTabName = 'Calls',
-  toastMessage?: string | null
+  toastMessage?: string | null,
+  opts?: { playEndTone?: boolean }
 ) {
+  if (opts?.playEndTone !== false) {
+    playCallEndTone();
+  }
   if (toastMessage) showAppToast(toastMessage);
   const tab = returnTarget?.tab ?? fallbackTab;
   returnTarget = null;
