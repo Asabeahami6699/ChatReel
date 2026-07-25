@@ -36,7 +36,7 @@ import * as VideoThumbnails from 'expo-video-thumbnails';
 import AttachmentPreview from '../../components/AttachmentPreview'; // Adjust the path as necessary
 import { USE_NATIVE_DRIVER } from '../../lib/animation';
 import { mergeVoiceSegments } from '../../lib/mergeVoiceSegments';
-import { chatTheme } from './chatTheme';
+import { useChatSettings } from '../../context/ChatSettingsContext';
 
 type ChatInputProps = {
   onSend?: (text: string) => void;
@@ -129,6 +129,7 @@ const ChatInput = forwardRef<TextInput, ChatInputProps>(({
   onDraftChange,
   mentionMembers = [],
 }, ref) => {
+  const { theme } = useChatSettings();
   const [text, setText] = useState('');
   const isDraftControlled = onDraftChange != null;
   const inputText = isDraftControlled ? (draft ?? '') : text;
@@ -656,14 +657,21 @@ const ChatInput = forwardRef<TextInput, ChatInputProps>(({
         <TouchableWithoutFeedback onPress={() => setShowAttachmentMenu(false)}>
           <View style={styles.attachmentMenuOverlay}>
             <TouchableWithoutFeedback>
-              <View style={styles.attachmentMenuContainer}>
-                <View style={styles.attachmentMenuHeader}>
-                  <Text style={styles.attachmentMenuTitle}>Attach File</Text>
+              <View
+                style={[
+                  styles.attachmentMenuContainer,
+                  { backgroundColor: theme.listCardBg },
+                ]}
+              >
+                <View style={[styles.attachmentMenuHeader, { borderBottomColor: theme.listBorder }]}>
+                  <Text style={[styles.attachmentMenuTitle, { color: theme.listPrimaryText }]}>
+                    Attach File
+                  </Text>
                   <TouchableOpacity
                     style={styles.attachmentCloseButton}
                     onPress={() => setShowAttachmentMenu(false)}
                   >
-                    <Ionicons name="close" size={24} color="#333" />
+                    <Ionicons name="close" size={24} color={theme.listPrimaryText} />
                   </TouchableOpacity>
                 </View>
                 
@@ -678,8 +686,12 @@ const ChatInput = forwardRef<TextInput, ChatInputProps>(({
                       <View style={[styles.attachmentIconContainer, { backgroundColor: option.color }]}>
                         <Ionicons name={option.icon as any} size={22} color="#fff" />
                       </View>
-                      <Text style={styles.attachmentOptionTitle}>{option.title}</Text>
-                      <Text style={styles.attachmentOptionSubtitle}>{option.subtitle}</Text>
+                      <Text style={[styles.attachmentOptionTitle, { color: theme.listPrimaryText }]}>
+                        {option.title}
+                      </Text>
+                      <Text style={[styles.attachmentOptionSubtitle, { color: theme.listSecondaryText }]}>
+                        {option.subtitle}
+                      </Text>
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -1060,7 +1072,7 @@ const formatDuration = (seconds: number) => {
               <Ionicons
                 name={isPlaying ? 'pause-circle' : 'play-circle'}
                 size={28}
-                color={chatTheme.primary}
+                color={theme.primary}
               />
               <Text style={styles.previewTime}>{formatDuration(displayTime)}</Text>
               {!isPlaying && (
@@ -1085,7 +1097,7 @@ const formatDuration = (seconds: number) => {
               onPress={resumeRecording}
               accessibilityLabel="Continue recording"
             >
-              <Ionicons name="mic-circle" size={28} color={chatTheme.primary} />
+              <Ionicons name="mic-circle" size={28} color={theme.primary} />
             </TouchableOpacity>
           )}
           <TouchableOpacity
@@ -1122,14 +1134,23 @@ const formatDuration = (seconds: number) => {
     return (
       <>
         {mentionSuggestions.length > 0 && (
-          <ScrollView horizontal style={styles.mentionBar} keyboardShouldPersistTaps="handled">
+          <ScrollView
+            horizontal
+            style={[
+              styles.mentionBar,
+              { backgroundColor: theme.listCardBg, borderBottomColor: theme.composerBorder },
+            ]}
+            keyboardShouldPersistTaps="handled"
+          >
             {mentionSuggestions.map((m) => (
               <TouchableOpacity
                 key={m.user_id ?? m.display_name}
                 style={styles.mentionChip}
                 onPress={() => insertMention(m.display_name)}
               >
-                <Text style={styles.mentionChipText}>@{m.display_name}</Text>
+                <Text style={[styles.mentionChipText, { color: theme.primary }]}>
+                  @{m.display_name}
+                </Text>
               </TouchableOpacity>
             ))}
           </ScrollView>
@@ -1143,7 +1164,7 @@ const formatDuration = (seconds: number) => {
               inputRef.current?.blur();
             }}
           >
-            <Ionicons name="happy-outline" size={22} />
+            <Ionicons name="happy-outline" size={22} color={theme.listPrimaryText} />
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.iconButton}
@@ -1155,7 +1176,7 @@ const formatDuration = (seconds: number) => {
               }
             }}
           >
-            <Ionicons name="attach-outline" size={22} />
+            <Ionicons name="attach-outline" size={22} color={theme.listPrimaryText} />
           </TouchableOpacity>
         </View>
         
@@ -1163,6 +1184,10 @@ const formatDuration = (seconds: number) => {
         <View
           style={[
             styles.inputWrap,
+            {
+              backgroundColor: theme.inputFieldBg,
+              borderColor: theme.composerBorder,
+            },
             inputFocused && styles.inputWrapFocused,
             { height: Math.max(MIN_INPUT_HEIGHT, inputHeight) },
           ]}
@@ -1180,24 +1205,34 @@ const formatDuration = (seconds: number) => {
             onContentSizeChange={handleContentSizeChange}
             onFocus={() => setInputFocused(true)}
             onBlur={() => setInputFocused(false)}
-            style={[styles.textInput, { height: Math.max(MIN_INPUT_HEIGHT - 8, inputHeight - 8) }]}
+            style={[
+              styles.textInput,
+              {
+                height: Math.max(MIN_INPUT_HEIGHT - 8, inputHeight - 8),
+                color: theme.listPrimaryText,
+              },
+            ]}
             underlineColorAndroid="transparent"
-            autoCorrect
-            spellCheck
+            autoCorrect={true}
+            spellCheck={true}
             autoCapitalize="sentences"
             keyboardType="default"
-            textContentType="none"
-            placeholderTextColor="#8b8b8b"
+            placeholderTextColor={theme.searchPlaceholder}
             maxLength={5000}
             blurOnSubmit={false}
             returnKeyType="default"
             onSelectionChange={(e) => setSelection(e.nativeEvent.selection)}
             selection={selection}
             textAlignVertical="top"
-            selectionColor={chatTheme.primary}
-            cursorColor={chatTheme.primary}
+            selectionColor={theme.primary}
+            cursorColor={theme.primary}
             {...(Platform.OS === 'web'
-              ? ({ outlineStyle: 'none', outlineWidth: 0 } as object)
+              ? ({
+                  outlineStyle: 'none',
+                  outlineWidth: 0,
+                  autoCorrect: 'on',
+                  spellCheck: true,
+                } as object)
               : {})}
           />
         </View>
@@ -1209,6 +1244,7 @@ const formatDuration = (seconds: number) => {
             style={[
               styles.sendButton,
               sendButtonEnabled ? styles.sendButtonActive : styles.micButton,
+              { backgroundColor: theme.primary },
             ]}
             onPress={() => {
               if (disabled) return;
@@ -1234,14 +1270,14 @@ const formatDuration = (seconds: number) => {
 
   const renderEmojiPicker = () => {
     return (
-      <View style={styles.emojiPickerContainer}>
-        <View style={styles.emojiPickerHeader}>
-          <Text style={styles.emojiPickerTitle}>Emoji</Text>
+      <View style={[styles.emojiPickerContainer, { backgroundColor: theme.listBg }]}>
+        <View style={[styles.emojiPickerHeader, { borderBottomColor: theme.listBorder }]}>
+          <Text style={[styles.emojiPickerTitle, { color: theme.listPrimaryText }]}>Emoji</Text>
           <TouchableOpacity
             style={styles.closeButton}
             onPress={() => setShowEmojiPicker(false)}
           >
-            <Ionicons name="close" size={24} color="#000" />
+            <Ionicons name="close" size={24} color={theme.listPrimaryText} />
           </TouchableOpacity>
         </View>
         <View style={styles.emojiGrid}>
@@ -1260,8 +1296,17 @@ const formatDuration = (seconds: number) => {
   };
 
   return (
-    <View style={[styles.wrapper, style]}>
-      <View style={styles.container}>
+    <View
+      style={[
+        styles.wrapper,
+        {
+          backgroundColor: theme.inputBarBg,
+          borderTopColor: theme.composerBorder,
+        },
+        style,
+      ]}
+    >
+      <View style={[styles.container, { backgroundColor: theme.inputBarBg }]}>
         {mode === 'text' ? renderTextInputUI() : renderRecordingUI()}
       </View>
 
@@ -1313,9 +1358,9 @@ const formatDuration = (seconds: number) => {
 const styles = StyleSheet.create({
   wrapper: {
     width: '100%',
-    backgroundColor: chatTheme.inputBarBg,
+    backgroundColor: '#f0f0f0',
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: chatTheme.composerBorder,
+    borderTopColor: '#e0e0e0',
   },
   mentionBar: {
     maxHeight: 40,
@@ -1323,7 +1368,7 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     backgroundColor: '#fff',
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: chatTheme.composerBorder,
+    borderBottomColor: '#e0e0e0',
   },
   mentionChip: {
     backgroundColor: 'rgba(0,122,255,0.1)',
@@ -1332,13 +1377,13 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     marginRight: 8,
   },
-  mentionChipText: { color: chatTheme.primary, fontSize: 13, fontWeight: '600' },
+  mentionChipText: { color: '#007AFF', fontSize: 13, fontWeight: '600' },
   container: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     paddingHorizontal: 8,
     paddingVertical: 6,
-    backgroundColor: chatTheme.inputBarBg,
+    backgroundColor: '#f0f0f0',
     minHeight: 56,
   },
   leftIcons: {
@@ -1354,13 +1399,13 @@ const styles = StyleSheet.create({
   },
   inputWrap: {
     flex: 1,
-    backgroundColor: chatTheme.inputFieldBg,
+    backgroundColor: '#FFFFFF',
     borderRadius: 22,
     paddingHorizontal: 14,
     paddingVertical: 4,
     justifyContent: 'center',
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: chatTheme.composerBorder,
+    borderColor: '#e0e0e0',
     marginRight: 6,
     overflow: 'hidden',
   },
@@ -1394,13 +1439,13 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   sendButtonActive: {
-    backgroundColor: chatTheme.primary,
+    backgroundColor: '#007AFF',
   },
   sendButtonMuted: {
     backgroundColor: '#b0b0b0',
   },
   micButton: {
-    backgroundColor: chatTheme.primary,
+    backgroundColor: '#007AFF',
   },
   // Recording mode — WhatsApp-style tap to record, pause, preview, send
   recordingContainer: {
@@ -1480,7 +1525,7 @@ const styles = StyleSheet.create({
   },
   waveBar: {
     width: 3,
-    backgroundColor: chatTheme.primary,
+    backgroundColor: '#007AFF',
     marginHorizontal: 2,
     borderRadius: 1.5,
   },

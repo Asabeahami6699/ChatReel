@@ -12,6 +12,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { REACTION_EMOJIS } from './chatMessageUtils';
 import type { ChatListMessage } from './chatListModel';
+import { useChatSettings } from '../../context/ChatSettingsContext';
 
 export type MessageAction =
   | 'reply'
@@ -47,6 +48,7 @@ export function MessageActionSheet({
   onClose,
   onAction,
 }: Props) {
+  const { theme } = useChatSettings();
   useEffect(() => {
     if (!visible || Platform.OS !== 'web') return;
     const el = document.activeElement as HTMLElement | null;
@@ -91,8 +93,8 @@ export function MessageActionSheet({
       <TouchableWithoutFeedback onPress={onClose}>
         <View style={styles.overlay}>
           <TouchableWithoutFeedback>
-            <View style={styles.sheet}>
-              <View style={styles.reactions}>
+            <View style={[styles.sheet, { backgroundColor: theme.listCardBg }]}>
+              <View style={[styles.reactions, { borderBottomColor: theme.listBorder }]}>
                 {REACTION_EMOJIS.map((emoji) => (
                   <TouchableOpacity
                     key={emoji}
@@ -110,7 +112,7 @@ export function MessageActionSheet({
                 {actions.map((a) => (
                   <TouchableOpacity
                     key={a.key}
-                    style={styles.actionRow}
+                    style={[styles.actionRow, { borderBottomColor: theme.listBorder }]}
                     onPress={() => {
                       onAction(a.key);
                       onClose();
@@ -119,9 +121,15 @@ export function MessageActionSheet({
                     <Ionicons
                       name={a.icon as any}
                       size={20}
-                      color={a.destructive ? '#FF3B30' : '#444'}
+                      color={a.destructive ? '#FF3B30' : theme.listPrimaryText}
                     />
-                    <Text style={[styles.actionText, a.destructive && styles.destructive]}>
+                    <Text
+                      style={[
+                        styles.actionText,
+                        { color: theme.listPrimaryText },
+                        a.destructive && styles.destructive,
+                      ]}
+                    >
                       {a.label}
                     </Text>
                   </TouchableOpacity>

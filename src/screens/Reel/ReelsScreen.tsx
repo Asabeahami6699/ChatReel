@@ -21,6 +21,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused, useFocusEffect, useNavigation } from '@react-navigation/native';
 import { USE_NATIVE_DRIVER } from '../../lib/animation';
 import { api, ApiError, type ReelDTO } from '../../lib/api';
+import { showAppToast } from '../../lib/appToast';
 import { scheduleGiftCatalogPrefetch } from '../../lib/giftCatalogPrefetch';
 import { scheduleReelInboxPrefetch } from '../../lib/reelInboxPrefetch';
 import { useReelsFeed } from '../../hooks/useReelsFeed';
@@ -450,6 +451,7 @@ export default function ReelsScreen() {
   const heartOpacity = useRef(new Animated.Value(0)).current;
   const tapCount = useRef(0);
   const lastTap = useRef(0);
+  const likeInFlightRef = useRef<Set<string>>(new Set());
 
   const animateHeart = useCallback(() => {
     heartScale.setValue(0);
@@ -485,18 +487,31 @@ export default function ReelsScreen() {
 
   const toggleLike = useCallback(
     async (reel: ReelDTO, viaDoubleTap = false) => {
+      if (!reel?.id) return;
       if (!requireAuth('Sign in to like this reel.')) return;
+      // Rapid taps would otherwise fire overlapping like/unlike calls and the
+      // loser of the race rolls the heart back.
+      if (likeInFlightRef.current.has(reel.id)) {
+        if (viaDoubleTap) animateHeart();
+        return;
+      }
+      likeInFlightRef.current.add(reel.id);
       const next = !reel.liked_by_me;
-      // Optimistic
       applyLocalLikeChange(reel.id, next);
       if (next || viaDoubleTap) animateHeart();
       try {
         if (next) await api.reels.like(reel.id);
         else await api.reels.unlike(reel.id);
       } catch (e) {
+        const status = e instanceof ApiError ? e.status : 0;
+        // 409/422 means the server already agrees with the optimistic state.
+        if (status === 409 || status === 422) return;
         applyLocalLikeChange(reel.id, !next);
-        const message = e instanceof ApiError ? e.message : 'Failed to update like';
-        Alert.alert('Reels', message);
+        showAppToast(e instanceof ApiError ? e.message : 'Could not update like', {
+          isError: true,
+        });
+      } finally {
+        likeInFlightRef.current.delete(reel.id);
       }
     },
     [applyLocalLikeChange, animateHeart, requireAuth]

@@ -19,6 +19,7 @@ import { useRealtimeTopic } from '../hooks/useRealtimeTopic';
 import Portal from './Portal';
 import { USE_NATIVE_DRIVER } from '../lib/animation';
 import { promptSignIn } from '../lib/requireSignedIn';
+import { useChatSettings } from '../context/ChatSettingsContext';
 
 interface DropdownMenuProps {
   triggerIcon?: 'ellipsis-horizontal' | 'ellipsis-vertical';
@@ -34,6 +35,7 @@ export default function DropdownMenu({ triggerIcon = 'ellipsis-vertical' }: Drop
   const [visible, setVisible] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
   const { user, signOut, isGuest, exitGuest } = useAuth();
+  const { theme } = useChatSettings();
   const navigation = useNavigation<any>(); // Using any for now, adjust later based on type
 
   const scaleAnim = useRef(new Animated.Value(0.8)).current;
@@ -148,7 +150,7 @@ export default function DropdownMenu({ triggerIcon = 'ellipsis-vertical' }: Drop
     <>
       {/* Trigger */}
       <TouchableOpacity onPress={toggleMenu} style={styles.trigger}>
-        <Ionicons name={triggerIcon} size={24} color="#000" />
+        <Ionicons name={triggerIcon} size={24} color={theme.listHeaderText} />
       </TouchableOpacity>
 
       {/* PORTAL: Always on top */}
@@ -163,7 +165,18 @@ export default function DropdownMenu({ triggerIcon = 'ellipsis-vertical' }: Drop
 
             {/* Dropdown */}
             <Animated.View
-              style={[styles.dropdown, { opacity: opacityAnim, transform: [{ scale: scaleAnim }], top: Platform.OS === 'web' ? 70 : 60, right: Platform.OS === 'web' ? 16 : 10 }]}
+              style={[
+                styles.dropdown,
+                {
+                  opacity: opacityAnim,
+                  transform: [{ scale: scaleAnim }],
+                  top: Platform.OS === 'web' ? 70 : 60,
+                  right: Platform.OS === 'web' ? 16 : 10,
+                  backgroundColor: theme.listCardBg,
+                  borderColor: theme.listBorder,
+                  borderWidth: theme.isDark ? 1 : 0,
+                },
+              ]}
             >
               {/* User Info */}
               <View style={styles.userInfo}>
@@ -174,16 +187,16 @@ export default function DropdownMenu({ triggerIcon = 'ellipsis-vertical' }: Drop
                   style={styles.avatar}
                 />
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.displayName} numberOfLines={1}>
+                  <Text style={[styles.displayName, { color: theme.listPrimaryText }]} numberOfLines={1}>
                     {profile?.display_name || 'User'}
                   </Text>
-                  <Text style={styles.email} numberOfLines={1}>
+                  <Text style={[styles.email, { color: theme.listSecondaryText }]} numberOfLines={1}>
                     {profile?.email || 'user@example.com'}
                   </Text>
                 </View>
               </View>
 
-              <View style={styles.separator} />
+              <View style={[styles.separator, { backgroundColor: theme.listBorder }]} />
 
               {/* Menu Items */}
               {menuItems.map((item, index) => (
@@ -198,9 +211,15 @@ export default function DropdownMenu({ triggerIcon = 'ellipsis-vertical' }: Drop
                   <Ionicons
                     name={item.icon as any}
                     size={20}
-                    color={item.danger ? '#ff3b30' : '#000'}
+                    color={item.danger ? '#ff3b30' : theme.listPrimaryText}
                   />
-                  <Text style={[styles.menuText, item.danger && styles.dangerText]}>
+                  <Text
+                    style={[
+                      styles.menuText,
+                      { color: theme.listPrimaryText },
+                      item.danger && styles.dangerText,
+                    ]}
+                  >
                     {item.title}
                   </Text>
                 </TouchableOpacity>

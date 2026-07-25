@@ -16,6 +16,7 @@ import { FAB, IconButton } from 'react-native-paper'
 import { Ionicons } from '@expo/vector-icons'
 import { OfflineAvatar } from '../../components/OfflineAvatar'
 import { useGroupList, type Group } from '../../hooks/useGroupList'
+import { useChatSettings } from '../../context/ChatSettingsContext'
 
 type Props = {
   setSelectedChat?: (chat: any) => void
@@ -29,6 +30,7 @@ const roleLabel = (role?: Group['user_role']) => {
 
 export default function GroupsListScreen({ setSelectedChat }: Props) {
   const navigation = useNavigation<any>()
+  const { theme } = useChatSettings()
   const [searchQuery, setSearchQuery] = useState('')
   const { groups, loading, refreshing, refresh, isOnline } = useGroupList(searchQuery)
 
@@ -71,12 +73,14 @@ export default function GroupsListScreen({ setSelectedChat }: Props) {
 
   const renderRow = ({ item }: { item: Row }) => {
     if (item.kind === 'header') {
-      return <Text style={styles.sectionHeader}>{item.title}</Text>
+      return (
+        <Text style={[styles.sectionHeader, { color: theme.sectionLabel }]}>{item.title}</Text>
+      )
     }
     const group = item.group
     return (
       <TouchableOpacity
-        style={styles.groupItem}
+        style={[styles.groupItem, { borderBottomColor: theme.listBorder }]}
         onPress={() => handleOpenGroup(group)}
         activeOpacity={0.7}
       >
@@ -87,34 +91,41 @@ export default function GroupsListScreen({ setSelectedChat }: Props) {
           style={styles.groupAvatar}
         />
         <View style={styles.groupInfo}>
-          <Text style={styles.groupName} numberOfLines={1}>
+          <Text style={[styles.groupName, { color: theme.listPrimaryText }]} numberOfLines={1}>
             {group.name}
           </Text>
-          <Text style={styles.groupMeta} numberOfLines={1}>
+          <Text style={[styles.groupMeta, { color: theme.listSecondaryText }]} numberOfLines={1}>
             {group.member_count} member{group.member_count !== 1 ? 's' : ''} · {roleLabel(group.user_role)}
           </Text>
         </View>
-        <Ionicons name="chevron-forward" size={18} color="#c4c4c4" />
+        <Ionicons name="chevron-forward" size={18} color={theme.listSecondaryText} />
       </TouchableOpacity>
     )
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
-      <View style={styles.header}>
-        <IconButton icon="arrow-left" size={24} onPress={() => navigation.goBack()} />
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.listBg }]} edges={['left', 'right', 'bottom']}>
+      <View style={[styles.header, { borderBottomColor: theme.listBorder }]}>
+        <IconButton
+          icon="arrow-left"
+          size={24}
+          iconColor={theme.listPrimaryText}
+          onPress={() => navigation.goBack()}
+        />
         <View style={styles.headerTitleContainer}>
-          <Text style={styles.title}>Groups</Text>
-          <Text style={styles.subtitle}>Groups you created or joined</Text>
+          <Text style={[styles.title, { color: theme.listPrimaryText }]}>Groups</Text>
+          <Text style={[styles.subtitle, { color: theme.listSecondaryText }]}>
+            Groups you created or joined
+          </Text>
         </View>
       </View>
 
-      <View style={styles.searchContainer}>
-        <Ionicons name="search" size={20} color="#666" style={styles.searchIcon} />
+      <View style={[styles.searchContainer, { backgroundColor: theme.searchBg }]}>
+        <Ionicons name="search" size={20} color={theme.searchPlaceholder} style={styles.searchIcon} />
         <TextInput
-          style={styles.searchInput}
+          style={[styles.searchInput, { color: theme.searchText }]}
           placeholder="Search groups..."
-          placeholderTextColor="#999"
+          placeholderTextColor={theme.searchPlaceholder}
           value={searchQuery}
           onChangeText={setSearchQuery}
         />
@@ -122,7 +133,7 @@ export default function GroupsListScreen({ setSelectedChat }: Props) {
 
       {loading ? (
         <View style={styles.loading}>
-          <ActivityIndicator size="large" color="#007AFF" />
+          <ActivityIndicator size="large" color={theme.primary} />
         </View>
       ) : (
         <FlatList
@@ -134,8 +145,10 @@ export default function GroupsListScreen({ setSelectedChat }: Props) {
           onRefresh={isOnline ? refresh : undefined}
           ListEmptyComponent={
             <View style={styles.empty}>
-              <Text style={styles.emptyText}>No groups yet.</Text>
-              <Text style={styles.emptySubtext}>Create a group or join one with an invite link</Text>
+              <Text style={[styles.emptyText, { color: theme.listPrimaryText }]}>No groups yet.</Text>
+              <Text style={[styles.emptySubtext, { color: theme.listSecondaryText }]}>
+                Create a group or join one with an invite link
+              </Text>
             </View>
           }
         />

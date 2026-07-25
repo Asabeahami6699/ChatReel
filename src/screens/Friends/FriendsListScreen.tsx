@@ -21,6 +21,7 @@ import { useFriendshipsRealtime } from '../../hooks/useFriendshipsRealtime'
 import { FAB, IconButton, Button, Portal, Snackbar } from 'react-native-paper'
 import { Ionicons } from '@expo/vector-icons'
 import { FloatingActionMenu } from '../../components/FloatingActionMenu'
+import { useChatSettings } from '../../context/ChatSettingsContext'
 
 type Friend = {
   id: string
@@ -36,6 +37,7 @@ type Props = {
 
 export default function FriendsListScreen({ setSelectedChat }: Props) {
   const { user } = useAuth()
+  const { theme } = useChatSettings()
   const navigation = useNavigation()
   const route = useRoute<any>()
 
@@ -195,7 +197,8 @@ export default function FriendsListScreen({ setSelectedChat }: Props) {
       <TouchableOpacity
         style={[
           styles.friendItem,
-          isSelected && styles.friendItemSelected,
+          { borderBottomColor: theme.listBorder },
+          isSelected && { backgroundColor: theme.isDark ? '#0d2137' : '#E3F2FD' },
           isDisabled && styles.friendItemDisabled,
         ]}
         onPress={() => handleOpenChat(item)}
@@ -210,11 +213,19 @@ export default function FriendsListScreen({ setSelectedChat }: Props) {
           {item.avatar_url ? (
             <Image source={{ uri: item.avatar_url }} style={styles.friendAvatar} />
           ) : (
-            <View style={[styles.friendAvatar, { backgroundColor: '#ddd' }]} />
+            <View style={[styles.friendAvatar, { backgroundColor: theme.listBorder }]} />
           )}
           <View style={styles.friendInfo}>
             <View style={styles.friendNameRow}>
-              <Text style={[styles.friendName, isDisabled && styles.disabledText]}>{item.name}</Text>
+              <Text
+                style={[
+                  styles.friendName,
+                  { color: theme.listPrimaryText },
+                  isDisabled && styles.disabledText,
+                ]}
+              >
+                {item.name}
+              </Text>
               {isAlreadyMember && (
                 <View style={styles.alreadyMemberBadge}>
                   <Text style={styles.alreadyMemberText}>Already in group</Text>
@@ -222,7 +233,15 @@ export default function FriendsListScreen({ setSelectedChat }: Props) {
               )}
             </View>
             {item.email && (
-              <Text style={[styles.friendEmail, isDisabled && styles.disabledText]}>{item.email}</Text>
+              <Text
+                style={[
+                  styles.friendEmail,
+                  { color: theme.listSecondaryText },
+                  isDisabled && styles.disabledText,
+                ]}
+              >
+                {item.email}
+              </Text>
             )}
           </View>
         </View>
@@ -237,15 +256,22 @@ export default function FriendsListScreen({ setSelectedChat }: Props) {
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
-      <View style={styles.header}>
-        <IconButton icon="arrow-left" size={24} onPress={() => navigation.goBack()} />
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.listBg }]} edges={['left', 'right', 'bottom']}>
+      <View style={[styles.header, { borderBottomColor: theme.listBorder }]}>
+        <IconButton
+          icon="arrow-left"
+          size={24}
+          iconColor={theme.listPrimaryText}
+          onPress={() => navigation.goBack()}
+        />
         <View style={styles.headerTitleContainer}>
-          <Text style={styles.title}>
+          <Text style={[styles.title, { color: theme.listPrimaryText }]}>
             {isSelectionMode ? `Add to ${groupName || 'Group'}` : 'Accepted Friends'}
           </Text>
           {isSelectionMode && (
-            <Text style={styles.subtitle}>Select friends to add to the group</Text>
+            <Text style={[styles.subtitle, { color: theme.listSecondaryText }]}>
+              Select friends to add to the group
+            </Text>
           )}
         </View>
         {isSelectionMode && selectedFriends.length > 0 && (
@@ -261,12 +287,12 @@ export default function FriendsListScreen({ setSelectedChat }: Props) {
         )}
       </View>
 
-      <View style={styles.searchContainer}>
-        <Ionicons name="search" size={20} color="#666" style={styles.searchIcon} />
+      <View style={[styles.searchContainer, { backgroundColor: theme.searchBg }]}>
+        <Ionicons name="search" size={20} color={theme.searchPlaceholder} style={styles.searchIcon} />
         <TextInput
-          style={styles.searchInput}
+          style={[styles.searchInput, { color: theme.searchText }]}
           placeholder="Search friends..."
-          placeholderTextColor="#999"
+          placeholderTextColor={theme.searchPlaceholder}
           value={searchQuery}
           onChangeText={setSearchQuery}
         />
@@ -295,8 +321,12 @@ export default function FriendsListScreen({ setSelectedChat }: Props) {
           contentContainerStyle={styles.list}
           ListEmptyComponent={
             <View style={styles.empty}>
-              <Text style={styles.emptyText}>No accepted friends found.</Text>
-              <Text style={styles.emptySubtext}>Add friends first to invite them to groups</Text>
+              <Text style={[styles.emptyText, { color: theme.listPrimaryText }]}>
+                No accepted friends found.
+              </Text>
+              <Text style={[styles.emptySubtext, { color: theme.listSecondaryText }]}>
+                Add friends first to invite them to groups
+              </Text>
             </View>
           }
         />

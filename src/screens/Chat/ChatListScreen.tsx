@@ -34,6 +34,7 @@ import { useCurrentProfileId } from '../../hooks/useCurrentProfileId'
 import { useFriendshipsRealtime } from '../../hooks/useFriendshipsRealtime'
 import { useChatSettings } from '../../context/ChatSettingsContext'
 import { api } from '../../lib/api'
+import { scheduleChatThreadsPrefetch } from '../../lib/chatThreadsPrefetch'
 import FriendRequestsScreen from './FriendRequestsScreen'
 import {
   registerMobileChatOpener,
@@ -460,6 +461,47 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
     // setRequestsUnreadCount(/* calculate from friend requests */)
   }, [individualChats, groupChats])
 
+  // After the list has painted, quietly warm the top unread/recent threads.
+  const chatPrefetchKey = useMemo(() => {
+    const ind = visibleIndividualChats
+      .map((c) => `${c.user_id}:${c.unread_count || 0}:${c.last_message_at || ''}`)
+      .join(',')
+    const grp = visibleGroupChats
+      .map((g) => `${g.id}:${g.unread_count || 0}:${g.last_message_at || ''}`)
+      .join(',')
+    return `${ind}|${grp}`
+  }, [visibleIndividualChats, visibleGroupChats])
+
+  useEffect(() => {
+    if (individualLoading || groupsLoading) return
+    if (!user?.id) return
+    if (!chatPrefetchKey || chatPrefetchKey === '|') return
+
+    const targets = [
+      ...visibleIndividualChats.map((c) => ({
+        chatId: c.user_id,
+        chatType: 'individual' as const,
+        lastMessageAt: c.last_message_at,
+        unreadCount: c.unread_count || 0,
+      })),
+      ...visibleGroupChats.map((g) => ({
+        chatId: g.id,
+        chatType: 'group' as const,
+        lastMessageAt: g.last_message_at,
+        unreadCount: g.unread_count || 0,
+      })),
+    ]
+
+    scheduleChatThreadsPrefetch(targets, 1200)
+  }, [
+    chatPrefetchKey,
+    individualLoading,
+    groupsLoading,
+    user?.id,
+    visibleGroupChats,
+    visibleIndividualChats,
+  ])
+
   const handleTabPress = (newIndex: number) => {
     setIndex(newIndex)
   }
@@ -719,7 +761,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
     if (!items.length) return null
     return (
       <View style={styles.suggestionSection}>
-        <Text style={styles.suggestionSectionTitle}>{title}</Text>
+        <Text style={[styles.suggestionSectionTitle, { color: theme.listSecondaryText }]}>{title}</Text>
         {items.map((item) => (
           <TouchableOpacity
             key={item.key}
@@ -739,14 +781,14 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
               )}
             </View>
             <View style={styles.suggestionMeta}>
-              <Text style={styles.suggestionName} numberOfLines={1}>
+              <Text style={[styles.suggestionName, { color: theme.listPrimaryText }]} numberOfLines={1}>
                 {item.name}
               </Text>
-              <Text style={styles.suggestionSubtitle} numberOfLines={1}>
+              <Text style={[styles.suggestionSubtitle, { color: theme.listSecondaryText }]} numberOfLines={1}>
                 {item.subtitle}
               </Text>
             </View>
-            <Ionicons name={suggestionIcon(item.kind)} size={16} color="#9ca3af" />
+            <Ionicons name={suggestionIcon(item.kind)} size={16} color={theme.listSecondaryText} />
           </TouchableOpacity>
         ))}
       </View>
@@ -982,11 +1024,25 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
           return (
             <TouchableOpacity
               key={route.key}
-              style={[styles.tabStripItem, focused && { borderBottomColor: theme.primary }]}
+              style={[
+                styles.tabStripItem,
+                {
+                  backgroundColor: theme.isDark ? '#1a1a1a' : '#eef2f7',
+                  borderWidth: theme.isDark ? 1 : 0,
+                  borderColor: theme.listBorder,
+                },
+                focused && { backgroundColor: theme.primary, borderColor: theme.primary },
+              ]}
               onPress={() => handleTabPress(routeIndex)}
               activeOpacity={0.85}
             >
-              <Text style={[styles.tabStripLabel, { color: theme.listSecondaryText }, focused && { color: theme.primary, fontWeight: '700' }]}>
+              <Text
+                style={[
+                  styles.tabStripLabel,
+                  { color: theme.listSecondaryText },
+                  focused && { color: '#fff', fontWeight: '700' },
+                ]}
+              >
                 {route.title}
               </Text>
               {badge > 0 ? (
@@ -1037,14 +1093,19 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
             ]}
           >
             <TouchableOpacity
-              style={styles.fabActionLabel}
+              style={[
+                styles.fabActionLabel,
+                { backgroundColor: theme.listCardBg, borderColor: theme.listBorder, borderWidth: theme.isDark ? 1 : 0 },
+              ]}
               onPress={() => runFabAction(action.route)}
               activeOpacity={0.85}
               disabled={!isOnline}
               accessibilityRole="button"
               accessibilityLabel={action.label}
             >
-              <Text style={styles.fabActionLabelText}>{action.label}</Text>
+              <Text style={[styles.fabActionLabelText, { color: theme.listPrimaryText }]}>
+                {action.label}
+              </Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.fabMini, !isOnline && styles.fabMiniDisabled]}
@@ -1101,7 +1162,15 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
         <TouchableOpacity
           style={[
             styles.searchToggle,
-            (searchOpen || searchQuery.length > 0) && styles.searchToggleActive,
+            {
+              backgroundColor: theme.isDark ? '#1a1a1a' : '#eef2f7',
+              borderWidth: theme.isDark ? 1 : 0,
+              borderColor: theme.listBorder,
+            },
+            (searchOpen || searchQuery.length > 0) && {
+              backgroundColor: theme.isDark ? '#1a2a3a' : '#e8f2ff',
+              borderColor: theme.primary,
+            },
           ]}
           onPress={toggleSearch}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -1175,18 +1244,22 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
                   {renderSuggestionSection('Friends', searchSuggestions.friends)}
                 </>
               ) : (
-                <Text style={styles.searchHistoryEmpty}>No chats or friends found</Text>
+                <Text style={[styles.searchHistoryEmpty, { color: theme.listSecondaryText }]}>
+                  No chats or friends found
+                </Text>
               )
             ) : (
               <>
                 <View style={styles.searchHistoryHeader}>
-                  <Text style={styles.searchHistoryTitle}>Recent searches</Text>
+                  <Text style={[styles.searchHistoryTitle, { color: theme.listPrimaryText }]}>
+                    Recent searches
+                  </Text>
                   {searchHistory.length > 0 ? (
                     <TouchableOpacity
                       onPress={clearSearchHistory}
                       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                     >
-                      <Text style={styles.searchHistoryClear}>Clear all</Text>
+                      <Text style={[styles.searchHistoryClear, { color: theme.primary }]}>Clear all</Text>
                     </TouchableOpacity>
                   ) : null}
                 </View>
@@ -1198,8 +1271,11 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
                         onPress={() => applyHistorySearch(item)}
                         activeOpacity={0.7}
                       >
-                        <Ionicons name="time-outline" size={18} color="#8e8e93" />
-                        <Text style={styles.searchHistoryText} numberOfLines={1}>
+                        <Ionicons name="time-outline" size={18} color={theme.listSecondaryText} />
+                        <Text
+                          style={[styles.searchHistoryText, { color: theme.listPrimaryText }]}
+                          numberOfLines={1}
+                        >
                           {item}
                         </Text>
                       </TouchableOpacity>
@@ -1208,12 +1284,12 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                         accessibilityLabel={`Remove ${item}`}
                       >
-                        <Ionicons name="close" size={18} color="#b0b7c3" />
+                        <Ionicons name="close" size={18} color={theme.listSecondaryText} />
                       </TouchableOpacity>
                     </View>
                   ))
                 ) : (
-                  <Text style={styles.searchHistoryEmpty}>
+                  <Text style={[styles.searchHistoryEmpty, { color: theme.listSecondaryText }]}>
                     Start typing to search chats and friends
                   </Text>
                 )}

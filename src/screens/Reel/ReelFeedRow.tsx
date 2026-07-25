@@ -157,6 +157,8 @@ function ReelFeedRowComponent({
               paddingRight: usePhoneFrame ? 8 : REEL_ACTION_RAIL_WIDTH + 8,
             },
           ]}
+          // Empty caption space must pass vertical drags to the pager.
+          pointerEvents="box-none"
         >
           <View style={styles.userInfo}>
             <TouchableOpacity onPress={() => onOpenProfile(item)}>

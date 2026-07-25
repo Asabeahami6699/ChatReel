@@ -11,11 +11,13 @@ import {
   Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useChatSettings } from '../../context/ChatSettingsContext';
 
 const { width } = Dimensions.get('window');
 
 export default function ProductDetailScreen({ route, navigation }) {
   const { product } = route.params;
+  const { theme } = useChatSettings();
   const [selectedImage, setSelectedImage] = useState(0);
   const [quantity, setQuantity] = useState(1);
   const [selectedColor, setSelectedColor] = useState('');
@@ -53,7 +55,7 @@ export default function ProductDetailScreen({ route, navigation }) {
   // Order Confirmation View
   if (orderConfirmed) {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, { backgroundColor: theme.listBg }]}>
         <ScrollView contentContainerStyle={styles.confirmationContent}>
           {/* Success Icon */}
           <View style={styles.successIcon}>
@@ -61,20 +63,20 @@ export default function ProductDetailScreen({ route, navigation }) {
           </View>
 
           {/* Success Message */}
-          <Text style={styles.successTitle}>Order Confirmed!</Text>
-          <Text style={styles.successMessage}>
+          <Text style={[styles.successTitle, { color: theme.listPrimaryText }]}>Order Confirmed!</Text>
+          <Text style={[styles.successMessage, { color: theme.listSecondaryText }]}>
             Thank you for your purchase. Your order has been confirmed and will be shipped soon.
           </Text>
 
           {/* Order ID */}
-          <View style={styles.orderIdContainer}>
-            <Text style={styles.orderIdLabel}>Order ID:</Text>
-            <Text style={styles.orderId}>{orderId}</Text>
+          <View style={[styles.orderIdContainer, { backgroundColor: theme.listCardBg }]}>
+            <Text style={[styles.orderIdLabel, { color: theme.listSecondaryText }]}>Order ID:</Text>
+            <Text style={[styles.orderId, { color: theme.listPrimaryText }]}>{orderId}</Text>
           </View>
 
           {/* Order Summary */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Order Details</Text>
+          <View style={[styles.section, { backgroundColor: theme.listCardBg }]}>
+            <Text style={[styles.sectionTitle, { color: theme.listPrimaryText }]}>Order Details</Text>
             <View style={styles.orderItem}>
               <Text style={styles.orderDate}>Order Date: {new Date().toLocaleDateString()}</Text>
               <Text style={styles.deliveryDate}>
@@ -134,19 +136,19 @@ export default function ProductDetailScreen({ route, navigation }) {
 
   // Product Detail View
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: theme.listBg }]}>
       {/* Header - Hide this when in stack navigator to avoid double header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { backgroundColor: theme.listHeaderBg, borderBottomColor: theme.listBorder }]}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={24} color="#000000ff" />
+          <Ionicons name="arrow-back" size={24} color={theme.listPrimaryText} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Product Details</Text>
+        <Text style={[styles.headerTitle, { color: theme.listPrimaryText }]}>Product Details</Text>
         <View style={styles.headerIcons}>
           <TouchableOpacity style={styles.iconButton}>
-            <Ionicons name="heart-outline" size={24} color="#333" />
+            <Ionicons name="heart-outline" size={24} color={theme.listPrimaryText} />
           </TouchableOpacity>
           <TouchableOpacity style={styles.iconButton}>
-            <Ionicons name="share-outline" size={24} color="#333" />
+            <Ionicons name="share-outline" size={24} color={theme.listPrimaryText} />
           </TouchableOpacity>
         </View>
       </View>
@@ -172,9 +174,9 @@ export default function ProductDetailScreen({ route, navigation }) {
         </View>
 
         {/* Product Info */}
-        <View style={styles.infoSection}>
+        <View style={[styles.infoSection, { backgroundColor: theme.listCardBg }]}>
           <View style={styles.priceRow}>
-            <Text style={styles.price}>{product.price}</Text>
+            <Text style={[styles.price, { color: theme.listPrimaryText }]}>{product.price}</Text>
             {product.originalPrice && (
               <Text style={styles.originalPrice}>{product.originalPrice}</Text>
             )}
@@ -185,8 +187,8 @@ export default function ProductDetailScreen({ route, navigation }) {
             )}
           </View>
 
-          <Text style={styles.productTitle}>{product.title}</Text>
-          <Text style={styles.productSubtitle}>{product.subtitle}</Text>
+          <Text style={[styles.productTitle, { color: theme.listPrimaryText }]}>{product.title}</Text>
+          <Text style={[styles.productSubtitle, { color: theme.listSecondaryText }]}>{product.subtitle}</Text>
 
           {/* Rating */}
           <View style={styles.ratingContainer}>
@@ -200,28 +202,28 @@ export default function ProductDetailScreen({ route, navigation }) {
                 />
               ))}
             </View>
-            <Text style={styles.ratingText}>({product.reviews} reviews)</Text>
+            <Text style={[styles.ratingText, { color: theme.listSecondaryText }]}>({product.reviews} reviews)</Text>
           </View>
 
           {/* Seller Info */}
           <View style={styles.sellerInfo}>
-            <Text style={styles.sellerLabel}>Sold by:</Text>
-            <Text style={styles.sellerName}>{product.seller}</Text>
-            <Ionicons name="location-outline" size={16} color="#666" />
-            <Text style={styles.sellerLocation}>{product.location}</Text>
+            <Text style={[styles.sellerLabel, { color: theme.listSecondaryText }]}>Sold by:</Text>
+            <Text style={[styles.sellerName, { color: theme.listPrimaryText }]}>{product.seller}</Text>
+            <Ionicons name="location-outline" size={16} color={theme.listSecondaryText} />
+            <Text style={[styles.sellerLocation, { color: theme.listSecondaryText }]}>{product.location}</Text>
           </View>
 
           {/* Description */}
           <View style={styles.descriptionSection}>
-            <Text style={styles.sectionTitle}>Description</Text>
-            <Text style={styles.descriptionText}>
+            <Text style={[styles.sectionTitle, { color: theme.listPrimaryText }]}>Description</Text>
+            <Text style={[styles.descriptionText, { color: theme.listSecondaryText }]}>
               {product.description || 'No description available for this product.'}
             </Text>
           </View>
 
           {/* Color Selection */}
           <View style={styles.selectionSection}>
-            <Text style={styles.sectionTitle}>Color</Text>
+            <Text style={[styles.sectionTitle, { color: theme.listPrimaryText }]}>Color</Text>
             <View style={styles.optionsContainer}>
               {colors.map((color) => (
                 <TouchableOpacity
@@ -245,7 +247,7 @@ export default function ProductDetailScreen({ route, navigation }) {
 
           {/* Size Selection */}
           <View style={styles.selectionSection}>
-            <Text style={styles.sectionTitle}>Size</Text>
+            <Text style={[styles.sectionTitle, { color: theme.listPrimaryText }]}>Size</Text>
             <View style={styles.optionsContainer}>
               {sizes.map((size) => (
                 <TouchableOpacity
@@ -269,7 +271,7 @@ export default function ProductDetailScreen({ route, navigation }) {
 
           {/* Quantity Selector */}
           <View style={styles.quantitySection}>
-            <Text style={styles.sectionTitle}>Quantity</Text>
+            <Text style={[styles.sectionTitle, { color: theme.listPrimaryText }]}>Quantity</Text>
             <View style={styles.quantityContainer}>
               <TouchableOpacity
                 style={styles.quantityButton}
@@ -290,7 +292,7 @@ export default function ProductDetailScreen({ route, navigation }) {
           {/* Features */}
           {product.features && (
             <View style={styles.featuresSection}>
-              <Text style={styles.sectionTitle}>Features</Text>
+              <Text style={[styles.sectionTitle, { color: theme.listPrimaryText }]}>Features</Text>
               {product.features.map((feature, index) => (
                 <View key={index} style={styles.featureItem}>
                   <Ionicons name="checkmark-circle" size={16} color="#4CAF50" />

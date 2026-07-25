@@ -13,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Controller, type Control, type FieldValues, type Path } from 'react-hook-form';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { labelForOption, type SelectOption } from '../lib/profileLocaleOptions';
+import { useChatSettings } from '../context/ChatSettingsContext';
 
 /** Plain CSS for the native `<select>` on web — not valid in StyleSheet.create. */
 const WEB_SELECT_STYLE: React.CSSProperties = {
@@ -48,11 +49,16 @@ export function FormSelectField<T extends FieldValues>({
   error,
 }: Props<T>) {
   const insets = useSafeAreaInsets();
+  const { theme } = useChatSettings();
   const [open, setOpen] = useState(false);
+  const webSelectStyle = {
+    ...WEB_SELECT_STYLE,
+    color: theme.listPrimaryText,
+  };
 
   return (
     <View style={styles.field}>
-      <Text style={styles.label}>{label}</Text>
+      <Text style={[styles.label, { color: theme.listPrimaryText }]}>{label}</Text>
       <Controller
         control={control}
         name={name}
@@ -63,12 +69,21 @@ export function FormSelectField<T extends FieldValues>({
           if (Platform.OS === 'web') {
             return (
               <>
-                <View style={[styles.selectWrap, error && styles.inputError]}>
+                <View
+                  style={[
+                    styles.selectWrap,
+                    {
+                      backgroundColor: theme.searchBg,
+                      borderColor: theme.listBorder,
+                    },
+                    error && styles.inputError,
+                  ]}
+                >
                   <select
                     value={field.value || ''}
                     onChange={(e) => field.onChange(e.target.value)}
                     onBlur={field.onBlur}
-                    style={WEB_SELECT_STYLE}
+                    style={webSelectStyle}
                   >
                     <option value="">{placeholder}</option>
                     {options.map((opt) => (
@@ -77,7 +92,12 @@ export function FormSelectField<T extends FieldValues>({
                       </option>
                     ))}
                   </select>
-                  <Ionicons name="chevron-down" size={18} color="#666" style={styles.webChevron} />
+                  <Ionicons
+                    name="chevron-down"
+                    size={18}
+                    color={theme.listSecondaryText}
+                    style={styles.webChevron}
+                  />
                 </View>
                 {error?.message ? <Text style={styles.errorText}>{error.message}</Text> : null}
               </>
@@ -87,24 +107,44 @@ export function FormSelectField<T extends FieldValues>({
           return (
             <>
               <TouchableOpacity
-                style={[styles.selectBtn, error && styles.inputError]}
+                style={[
+                  styles.selectBtn,
+                  {
+                    backgroundColor: theme.searchBg,
+                    borderColor: theme.listBorder,
+                  },
+                  error && styles.inputError,
+                ]}
                 onPress={() => setOpen(true)}
                 activeOpacity={0.85}
               >
-                <Text style={[styles.selectText, !hasValue && styles.placeholderText]} numberOfLines={1}>
+                <Text
+                  style={[
+                    styles.selectText,
+                    { color: theme.listPrimaryText },
+                    !hasValue && { color: theme.searchPlaceholder },
+                  ]}
+                  numberOfLines={1}
+                >
                   {display}
                 </Text>
-                <Ionicons name="chevron-down" size={18} color="#666" />
+                <Ionicons name="chevron-down" size={18} color={theme.listSecondaryText} />
               </TouchableOpacity>
 
               <Modal visible={open} transparent animationType="slide" onRequestClose={() => setOpen(false)}>
                 <Pressable style={styles.backdrop} onPress={() => setOpen(false)}>
                   <Pressable
-                    style={[styles.sheet, { paddingBottom: insets.bottom + 12 }]}
+                    style={[
+                      styles.sheet,
+                      {
+                        paddingBottom: insets.bottom + 12,
+                        backgroundColor: theme.listCardBg,
+                      },
+                    ]}
                     onPress={() => undefined}
                   >
-                    <View style={styles.sheetHandle} />
-                    <Text style={styles.sheetTitle}>{label}</Text>
+                    <View style={[styles.sheetHandle, { backgroundColor: theme.listBorder }]} />
+                    <Text style={[styles.sheetTitle, { color: theme.listPrimaryText }]}>{label}</Text>
                     <ScrollView style={styles.optionList} keyboardShouldPersistTaps="handled">
                       <TouchableOpacity
                         style={[styles.optionRow, !field.value && styles.optionRowActive]}
@@ -114,10 +154,16 @@ export function FormSelectField<T extends FieldValues>({
                           setOpen(false);
                         }}
                       >
-                        <Text style={[styles.optionText, !field.value && styles.optionTextActive]}>
+                        <Text
+                          style={[
+                            styles.optionText,
+                            { color: theme.listPrimaryText },
+                            !field.value && styles.optionTextActive,
+                          ]}
+                        >
                           {placeholder}
                         </Text>
-                        {!field.value ? <Ionicons name="checkmark" size={18} color="#0066cc" /> : null}
+                        {!field.value ? <Ionicons name="checkmark" size={18} color={theme.primary} /> : null}
                       </TouchableOpacity>
                       {options.map((opt) => {
                         const active = field.value === opt.value;
@@ -131,10 +177,16 @@ export function FormSelectField<T extends FieldValues>({
                               setOpen(false);
                             }}
                           >
-                            <Text style={[styles.optionText, active && styles.optionTextActive]}>
+                            <Text
+                              style={[
+                                styles.optionText,
+                                { color: theme.listPrimaryText },
+                                active && styles.optionTextActive,
+                              ]}
+                            >
                               {opt.label}
                             </Text>
-                            {active ? <Ionicons name="checkmark" size={18} color="#0066cc" /> : null}
+                            {active ? <Ionicons name="checkmark" size={18} color={theme.primary} /> : null}
                           </TouchableOpacity>
                         );
                       })}

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Image,
   Platform,
@@ -109,6 +109,15 @@ function useCallPeer(call: CallDTO | undefined, myAuthId: string | null) {
 function navigateBackSafely(toastMessage = 'Call ended') {
   leaveCallScreen('Calls', toastMessage);
 }
+
+/**
+ * Incremented on every room mount. A room that unmounts only tears the session
+ * down if no newer room took its place, so a re-render that remounts the room
+ * (lazy native module, prop churn) can't blank the call UI.
+ */
+let roomMountGeneration = 0;
+/** Give LiveKit this long to reach the SFU before a pre-connect failure ends the call. */
+const PRECONNECT_GRACE_MS = 25_000;
 
 function normalizeToken(input: unknown): string {
   if (typeof input === 'string') return input;
@@ -1098,6 +1107,9 @@ function CallRoom({
   const [minimized, setMinimized] = useState(layerMinimized);
   const myAuthId = user?.id ?? null;
   const peerAuthId = resolveCallPeerAuthId(call, myAuthId);
+  const connectedRef = useRef(false);
+  const preconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const finishRef = useRef<(markEnded?: boolean) => void>(() => undefined);
 
   useEffect(() => {
     if (ringing) {
@@ -1268,11 +1280,33 @@ function CallRoom({
     });
   }, [minimized, duration, muted, peerName, peerAvatar, call.id]);
 
+  finishRef.current = finishCall;
+
   useEffect(() => {
+    const generation = ++roomMountGeneration;
     return () => {
-      if (!getCallPipSnapshot().minimized) clearCallPip();
+      if (preconnectTimerRef.current) clearTimeout(preconnectTimerRef.current);
+      // Defer: a remount bumps the generation and cancels this teardown.
+      setTimeout(() => {
+        if (roomMountGeneration !== generation) return;
+        if (!getCallPipSnapshot().minimized) clearCallPip();
+      }, 300);
     };
   }, []);
+
+  /**
+   * Pre-connect drops are common on mobile networks while the callee is still
+   * ringing. Keep the call UI up and let LiveKit retry instead of tearing down.
+   */
+  const handlePreConnectFailure = (message?: string) => {
+    if (preconnectTimerRef.current) return;
+    preconnectTimerRef.current = setTimeout(() => {
+      preconnectTimerRef.current = null;
+      if (connectedRef.current) return;
+      showAppToast(message || 'Could not reach the call server', { isError: true });
+      finishRef.current(false);
+    }, PRECONNECT_GRACE_MS);
+  };
 
   const blockPeer = async () => {
     if (!peerAuthId) return;
@@ -1308,11 +1342,21 @@ function CallRoom({
         token={token}
         audio
         video
-        onConnected={() => undefined}
+        onConnected={() => {
+          connectedRef.current = true;
+          if (preconnectTimerRef.current) {
+            clearTimeout(preconnectTimerRef.current);
+            preconnectTimerRef.current = null;
+          }
+        }}
         onDisconnected={() => {
           if (consumeCallHoldDisconnect()) return;
           const pip = getCallPipSnapshot();
           if (pip.minimized && pip.callId === call.id) return;
+          if (!connectedRef.current) {
+            handlePreConnectFailure();
+            return;
+          }
           void finishCall(false);
         }}
         onError={(err: Error) => {
@@ -1320,6 +1364,10 @@ function CallRoom({
           const msg = /unexpected token|not valid JSON|JSON/i.test(raw)
             ? 'Call media server returned an invalid response. Check LIVEKIT_URL on Render.'
             : raw;
+          if (!connectedRef.current) {
+            handlePreConnectFailure(msg);
+            return;
+          }
           showAppToast(msg, { isError: true });
           void finishCall(false);
         }}

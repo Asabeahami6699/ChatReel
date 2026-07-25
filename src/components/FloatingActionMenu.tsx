@@ -8,6 +8,7 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
+import { useChatSettings } from '../context/ChatSettingsContext';
 
 export type FloatingMenuAction = {
   key: string;
@@ -26,6 +27,7 @@ type Props = {
 
 export function FloatingActionMenu({ visible, x, y, actions, onClose }: Props) {
   const { width } = useWindowDimensions();
+  const { theme } = useChatSettings();
   const menuWidth = 168;
   const left = Math.max(12, Math.min(x, width - menuWidth - 12));
   const top = Math.max(80, y);
@@ -33,18 +35,41 @@ export function FloatingActionMenu({ visible, x, y, actions, onClose }: Props) {
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose} />
-      <View style={[styles.menu, { top, left, width: menuWidth }]}>
+      <View
+        style={[
+          styles.menu,
+          {
+            top,
+            left,
+            width: menuWidth,
+            backgroundColor: theme.listCardBg,
+            borderColor: theme.listBorder,
+            borderWidth: theme.isDark ? 1 : 0,
+          },
+        ]}
+      >
         {actions.map((action, index) => (
           <TouchableOpacity
             key={action.key}
-            style={[styles.row, index < actions.length - 1 && styles.rowBorder]}
+            style={[
+              styles.row,
+              index < actions.length - 1 && [styles.rowBorder, { borderBottomColor: theme.listBorder }],
+            ]}
             onPress={() => {
               onClose();
               action.onPress();
             }}
             activeOpacity={0.75}
           >
-            <Text style={[styles.label, action.destructive && styles.destructive]}>{action.label}</Text>
+            <Text
+              style={[
+                styles.label,
+                { color: theme.listPrimaryText },
+                action.destructive && styles.destructive,
+              ]}
+            >
+              {action.label}
+            </Text>
           </TouchableOpacity>
         ))}
       </View>

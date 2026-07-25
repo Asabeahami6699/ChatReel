@@ -183,19 +183,28 @@ export default function FriendRequestsScreen() {
   };
 
   const renderRequestCard = (request: any, isIncoming: boolean) => (
-    <Card style={styles.requestCard}>
+    <Card
+      style={[
+        styles.requestCard,
+        { backgroundColor: theme.listCardBg, borderColor: theme.listBorder, borderWidth: 1 },
+      ]}
+    >
       <Card.Content>
         <View style={styles.cardHeader}>
           {request.avatar_url ? (
             <Image source={{ uri: request.avatar_url }} style={styles.avatar} />
           ) : (
-            <View style={[styles.avatar, { backgroundColor: '#ddd' }]} />
+            <View style={[styles.avatar, { backgroundColor: theme.listBorder }]} />
           )}
           <View style={styles.userInfo}>
-            <Title style={styles.requestName}>{request.display_name}</Title>
-            <Paragraph style={styles.requestEmail}>{request.email}</Paragraph>
-            <Text style={styles.requestTime}>
-              {new Date(request.created_at).toLocaleDateString()} • 
+            <Title style={[styles.requestName, { color: theme.listPrimaryText }]}>
+              {request.display_name}
+            </Title>
+            <Paragraph style={[styles.requestEmail, { color: theme.listSecondaryText }]}>
+              {request.email}
+            </Paragraph>
+            <Text style={[styles.requestTime, { color: theme.listSecondaryText }]}>
+              {new Date(request.created_at).toLocaleDateString()} •
               {isIncoming ? ' Incoming' : ' Outgoing'}
             </Text>
           </View>
@@ -218,7 +227,7 @@ export default function FriendRequestsScreen() {
                 mode="outlined"
                 onPress={() => handleReject(request.friendshipId)}
                 textColor="#F44336"
-                style={styles.rejectButton}
+                style={[styles.rejectButton, { borderColor: theme.listBorder }]}
                 labelStyle={styles.buttonLabel}
                 disabled={!isOnline}
               >
@@ -229,8 +238,8 @@ export default function FriendRequestsScreen() {
             <Button
               mode="outlined"
               onPress={() => handleCancel(request.friendshipId)}
-              textColor="#757575"
-              style={styles.cancelButton}
+              textColor={theme.listSecondaryText}
+              style={[styles.cancelButton, { borderColor: theme.listBorder }]}
               labelStyle={styles.buttonLabel}
               disabled={!isOnline}
             >
@@ -252,8 +261,10 @@ export default function FriendRequestsScreen() {
     <SafeAreaView style={[styles.container, { backgroundColor: theme.listBg }]} edges={['left', 'right', 'bottom']}>
       {loading ? (
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#007AFF" />
-          <Text style={styles.loadingText}>Loading requests...</Text>
+          <ActivityIndicator size="large" color={theme.primary} />
+          <Text style={[styles.loadingText, { color: theme.listSecondaryText }]}>
+            Loading requests...
+          </Text>
         </View>
       ) : (
         <FlatList
@@ -261,7 +272,9 @@ export default function FriendRequestsScreen() {
           renderItem={({ item, index }) => (
             <View key={item.friendshipId}>
               {renderRequestCard(item, incomingRequests.some(r => r.id === item.id))}
-              {index < allRequests.length - 1 && <Divider />}
+              {index < allRequests.length - 1 && (
+                <Divider style={{ backgroundColor: theme.listBorder }} />
+              )}
             </View>
           )}
           keyExtractor={(item) => item.friendshipId}
@@ -270,13 +283,16 @@ export default function FriendRequestsScreen() {
               refreshing={refreshing} 
               onRefresh={onRefresh}
               enabled={isOnline}
+              tintColor={theme.primary}
             />
           }
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
               <Text style={styles.emptyIcon}>👥</Text>
-              <Text style={styles.emptyTitle}>No pending requests</Text>
-              <Text style={styles.emptySubtitle}>
+              <Text style={[styles.emptyTitle, { color: theme.listPrimaryText }]}>
+                No pending requests
+              </Text>
+              <Text style={[styles.emptySubtitle, { color: theme.listSecondaryText }]}>
                 {!isOnline 
                   ? "You're offline. Cannot load new requests."
                   : "You'll see friend requests here when someone sends one to you."}

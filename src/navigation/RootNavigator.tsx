@@ -1,10 +1,12 @@
 // src/navigation/RootNavigator.tsx
-import React, { useCallback, useEffect } from 'react';
+import React, { useCallback, useEffect, useMemo } from 'react';
 import { View, ActivityIndicator } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
 import * as SplashScreen from 'expo-splash-screen';
 import { useAuth } from '../hooks/useAuth';
+import { useChatSettings } from '../context/ChatSettingsContext';
+import { buildNavigationTheme } from '../theme/buildAppTheme';
 import { AuthNavigator } from './AuthNavigator';
 import { AppNavigator } from './AppNavigator';
 import { GuestNavigator } from './GuestNavigator';
@@ -38,6 +40,8 @@ const linking = {
 
 export const RootNavigator = () => {
   const { loading, isGuest, isAuthenticated } = useAuth();
+  const { theme } = useChatSettings();
+  const navigationTheme = useMemo(() => buildNavigationTheme(theme), [theme]);
 
   const handleInviteUrl = useCallback(
     (url: string | null | undefined) => {
@@ -79,16 +83,20 @@ export const RootNavigator = () => {
           flex: 1,
           justifyContent: 'center',
           alignItems: 'center',
-          backgroundColor: '#1a2f7a',
+          backgroundColor: theme.listBg,
         }}
       >
-        <ActivityIndicator size="large" color="#ffffff" />
+        <ActivityIndicator size="large" color={theme.primary} />
       </View>
     );
   }
 
   return (
-    <NavigationContainer ref={rootNavigationRef} linking={linking}>
+    <NavigationContainer
+      ref={rootNavigationRef}
+      linking={linking}
+      theme={navigationTheme}
+    >
       {isAuthenticated ? <AppNavigator /> : isGuest ? <GuestNavigator /> : <AuthNavigator />}
     </NavigationContainer>
   );

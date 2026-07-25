@@ -27,6 +27,7 @@ import { useCurrentProfileId } from '../../hooks/useCurrentProfileId';
 import { useFriendshipsRealtime } from '../../hooks/useFriendshipsRealtime';
 import { notifyRealtimeTopic } from '../../lib/realtimeHub';
 import { buildGroupInviteLink, INVITE_SCHEME } from '../../lib/groupInviteLinks';
+import { useChatSettings } from '../../context/ChatSettingsContext';
 
 export type Friend = {
   id: string;
@@ -86,6 +87,7 @@ const useAcceptedFriends = () => {
 const NewGroupScreen = ({ navigation }: Props) => {
   const { friends, loading: friendsLoading } = useAcceptedFriends();
   const { user } = useAuth();
+  const { theme } = useChatSettings();
   const insets = useSafeAreaInsets();
 
   const [groupName, setGroupName] = useState('');
@@ -149,13 +151,46 @@ const NewGroupScreen = ({ navigation }: Props) => {
   const renderChip = ({ item }: { item: Friend }) => {
     const isSel = selectedIds.includes(item.id);
     return (
-      <TouchableOpacity style={[styles.chip, isSel && styles.chipSel]} onPress={() => toggleSelect(item.id)}>
+      <TouchableOpacity
+        style={[
+          styles.chip,
+          {
+            backgroundColor: theme.listCardBg,
+            borderColor: theme.listBorder,
+            borderWidth: 1,
+          },
+          isSel && styles.chipSel,
+        ]}
+        onPress={() => toggleSelect(item.id)}
+      >
         <OfflineAvatar uri={item.avatar_url} name={item.name} size={36} style={styles.chipAvatar} />
         <View style={styles.chipInfo}>
-          <Text style={[styles.chipName, isSel && styles.chipNameSel]}>{item.name}</Text>
-          {item.email && <Text style={[styles.chipEmail, isSel && styles.chipEmailSel]}>{item.email}</Text>}
+          <Text
+            style={[
+              styles.chipName,
+              { color: theme.listPrimaryText },
+              isSel && styles.chipNameSel,
+            ]}
+          >
+            {item.name}
+          </Text>
+          {item.email && (
+            <Text
+              style={[
+                styles.chipEmail,
+                { color: theme.listSecondaryText },
+                isSel && styles.chipEmailSel,
+              ]}
+            >
+              {item.email}
+            </Text>
+          )}
         </View>
-        {isSel && <View style={styles.blueCheck}><Ionicons name="checkmark" size={14} color="#fff" /></View>}
+        {isSel && (
+          <View style={styles.blueCheck}>
+            <Ionicons name="checkmark" size={14} color="#fff" />
+          </View>
+        )}
       </TouchableOpacity>
     );
   };
@@ -225,8 +260,8 @@ const NewGroupScreen = ({ navigation }: Props) => {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
-      <View style={styles.header}>
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.listBg }]} edges={['left', 'right', 'bottom']}>
+      <View style={[styles.header, { backgroundColor: theme.headerBg }]}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <Ionicons name="arrow-back" size={28} color="#fff" />
         </TouchableOpacity>
@@ -235,46 +270,82 @@ const NewGroupScreen = ({ navigation }: Props) => {
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll}>
-        <View style={styles.card}>
+        <View
+          style={[
+            styles.card,
+            {
+              backgroundColor: theme.listCardBg,
+              borderColor: theme.listBorder,
+              borderWidth: theme.isDark ? 1 : 0,
+            },
+          ]}
+        >
           <TouchableOpacity onPress={pickAvatar} style={styles.avatarPicker}>
-            <View style={styles.gradientBorder}>
+            <View
+              style={[
+                styles.gradientBorder,
+                { backgroundColor: theme.listCardBg, borderColor: theme.primary },
+              ]}
+            >
               {avatarUri ? (
                 <Image source={{ uri: avatarUri }} style={styles.avatar} />
               ) : (
-                <View style={styles.placeholder}>
-                  <Text style={styles.placeholderTxt}>+</Text>
+                <View
+                  style={[
+                    styles.placeholder,
+                    { backgroundColor: theme.isDark ? '#1a2a3a' : '#e3f2fd' },
+                  ]}
+                >
+                  <Text style={[styles.placeholderTxt, { color: theme.primary }]}>+</Text>
                 </View>
               )}
             </View>
           </TouchableOpacity>
           <TextInput
             placeholder="Group Name"
-            style={styles.input}
+            style={[
+              styles.input,
+              {
+                backgroundColor: theme.searchBg,
+                borderColor: theme.listBorder,
+                color: theme.listPrimaryText,
+              },
+            ]}
             value={groupName}
             onChangeText={setGroupName}
-            placeholderTextColor="#999"
+            placeholderTextColor={theme.searchPlaceholder}
           />
         </View>
 
-        <View style={styles.searchBox}>
-          <Ionicons name="search" size={20} color="#999" style={{ marginRight: 8 }} />
+        <View
+          style={[
+            styles.searchBox,
+            {
+              backgroundColor: theme.searchBg,
+              borderColor: theme.listBorder,
+            },
+          ]}
+        >
+          <Ionicons name="search" size={20} color={theme.searchPlaceholder} style={{ marginRight: 8 }} />
           <TextInput
-            style={styles.searchInput}
+            style={[styles.searchInput, { color: theme.searchText }]}
             placeholder="Search friends..."
             value={searchQuery}
             onChangeText={setSearchQuery}
-            placeholderTextColor="#999"
+            placeholderTextColor={theme.searchPlaceholder}
           />
         </View>
 
         {selectedIds.length > 0 && (
           <View style={styles.countBadge}>
-            <Text style={styles.countTxt}>{selectedIds.length} selected</Text>
+            <Text style={[styles.countTxt, { color: theme.primary }]}>
+              {selectedIds.length} selected
+            </Text>
           </View>
         )}
 
         {friendsLoading ? (
-          <ActivityIndicator size="large" color="#0066cc" style={{ marginTop: 30 }} />
+          <ActivityIndicator size="large" color={theme.primary} style={{ marginTop: 30 }} />
         ) : (
           <FlatList
             data={filteredFriends}
@@ -316,7 +387,12 @@ const NewGroupScreen = ({ navigation }: Props) => {
             activeOpacity={1}
             onPress={closeInviteShare}
           />
-          <View style={[styles.shareSheet, { paddingBottom: insets.bottom }]}>
+          <View
+            style={[
+              styles.shareSheet,
+              { paddingBottom: insets.bottom, backgroundColor: theme.listCardBg },
+            ]}
+          >
             {showInviteShare && (
               <GroupInviteShareSheet
                 groupName={createdGroupName || groupName}

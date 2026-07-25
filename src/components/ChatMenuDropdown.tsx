@@ -1,15 +1,18 @@
-// Alternative ChatMenuDropdown.tsx (Modal-based)
-import React, { useState } from 'react';
+// ChatMenuDropdown.tsx — anchored under the ⋮ trigger on the right
+import React, { useRef, useState } from 'react';
 import {
   View,
   TouchableOpacity,
   Text,
   StyleSheet,
   Modal,
-  TouchableWithoutFeedback,
-  Platform,
+  Pressable,
+  useWindowDimensions,
+  ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useChatSettings } from '../context/ChatSettingsContext';
 
 export type MenuItem = {
   title: string;
@@ -25,17 +28,35 @@ type Props = {
   iconSize?: number;
 };
 
-export default function ChatMenuDropdown({ 
-  items, 
+const MENU_WIDTH = 232;
+
+export default function ChatMenuDropdown({
+  items,
   iconColor = '#fff',
-  iconSize = 22 
+  iconSize = 22,
 }: Props) {
   const [visible, setVisible] = useState(false);
+  const [anchor, setAnchor] = useState({ top: 56, right: 12 });
+  const triggerRef = useRef<View>(null);
+  const { theme } = useChatSettings();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
 
-  const openMenu = () => setVisible(true);
+  const filteredItems = items.filter((item) => !item.disabled);
+
+  const openMenu = () => {
+    triggerRef.current?.measureInWindow((x, y, w, h) => {
+      const right = Math.max(8, windowWidth - (x + w));
+      const top = Math.min(y + h + 6, windowHeight - 220);
+      setAnchor({
+        top: Math.max(insets.top + 4, top),
+        right,
+      });
+      setVisible(true);
+    });
+  };
+
   const closeMenu = () => setVisible(false);
-
-  const filteredItems = items.filter(item => !item.disabled);
 
   if (filteredItems.length === 0) {
     return null;
@@ -43,123 +64,132 @@ export default function ChatMenuDropdown({
 
   return (
     <>
-      <TouchableOpacity 
-        onPress={openMenu} 
-        style={styles.trigger}
-        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-      >
-        <Ionicons 
-          name="ellipsis-vertical" 
-          size={iconSize} 
-          color={iconColor} 
-        />
-      </TouchableOpacity>
+      <View ref={triggerRef} collapsable={false}>
+        <TouchableOpacity
+          onPress={openMenu}
+          style={styles.trigger}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          accessibilityLabel="Chat menu"
+          accessibilityRole="button"
+        >
+          <Ionicons name="ellipsis-vertical" size={iconSize} color={iconColor} />
+        </TouchableOpacity>
+      </View>
 
       <Modal
         visible={visible}
         transparent
         animationType="fade"
         onRequestClose={closeMenu}
+        statusBarTranslucent
       >
-        <TouchableWithoutFeedback onPress={closeMenu}>
-          <View style={styles.modalOverlay}>
-            <TouchableWithoutFeedback>
-              <View style={styles.menuContainer}>
-                {filteredItems.map((item, index) => (
-                  <TouchableOpacity
-                    key={`${item.title}-${index}`}
+        <Pressable style={styles.modalOverlay} onPress={closeMenu}>
+          <Pressable
+            onPress={(e) => e.stopPropagation()}
+            style={[
+              styles.menuContainer,
+              {
+                top: anchor.top,
+                right: anchor.right,
+                width: MENU_WIDTH,
+                maxHeight: Math.min(420, windowHeight - anchor.top - 16),
+                backgroundColor: theme.listCardBg,
+                borderColor: theme.listBorder,
+                borderWidth: theme.isDark ? 1 : 0,
+              },
+            ]}
+          >
+            <ScrollView
+              bounces={false}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
+              {filteredItems.map((item, index) => (
+                <TouchableOpacity
+                  key={`${item.title}-${index}`}
+                  style={[
+                    styles.menuItem,
+                    index < filteredItems.length - 1 && {
+                      borderBottomWidth: StyleSheet.hairlineWidth,
+                      borderBottomColor: theme.listBorder,
+                    },
+                  ]}
+                  onPress={() => {
+                    closeMenu();
+                    // Let the modal unmount before navigating / alerting.
+                    setTimeout(() => item.onPress(), 40);
+                  }}
+                  disabled={item.disabled}
+                  activeOpacity={0.7}
+                >
+                  {item.icon ? (
+                    <Ionicons
+                      name={item.icon as any}
+                      size={20}
+                      color={item.destructive ? '#FF3B30' : theme.listPrimaryText}
+                      style={styles.menuIcon}
+                    />
+                  ) : null}
+                  <Text
                     style={[
-                      styles.menuItem,
-                      index === 0 && styles.firstMenuItem,
-                      index === filteredItems.length - 1 && styles.lastMenuItem,
-                    ]}
-                    onPress={() => {
-                      closeMenu();
-                      setTimeout(() => item.onPress(), 100);
-                    }}
-                    disabled={item.disabled}
-                  >
-                    {item.icon && (
-                      <Ionicons 
-                        name={item.icon as any} 
-                        size={20} 
-                        color={item.destructive ? '#FF3B30' : '#666'} 
-                        style={styles.menuIcon}
-                      />
-                    )}
-                    <Text style={[
                       styles.menuText,
+                      { color: theme.listPrimaryText },
                       item.destructive && styles.destructiveText,
-                      item.disabled && styles.disabledText
-                    ]}>
-                      {item.title}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </TouchableWithoutFeedback>
-          </View>
-        </TouchableWithoutFeedback>
+                      item.disabled && styles.disabledText,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {item.title}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
       </Modal>
     </>
   );
 }
 
 const styles = StyleSheet.create({
-  trigger: { 
+  trigger: {
     padding: 8,
     justifyContent: 'center',
     alignItems: 'center',
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.3)',
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.28)',
   },
   menuContainer: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    minWidth: 200,
-    maxWidth: 300,
-    margin: 20,
+    position: 'absolute',
+    borderRadius: 14,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 5,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.22,
+    shadowRadius: 16,
+    elevation: 12,
     overflow: 'hidden',
+    paddingVertical: 4,
   },
   menuItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 14,
+    paddingVertical: 13,
     paddingHorizontal: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-  },
-  firstMenuItem: {
-    borderTopLeftRadius: 12,
-    borderTopRightRadius: 12,
-  },
-  lastMenuItem: {
-    borderBottomWidth: 0,
-    borderBottomLeftRadius: 12,
-    borderBottomRightRadius: 12,
   },
   menuIcon: {
     marginRight: 12,
     width: 24,
   },
   menuText: {
-    fontSize: 16,
-    color: '#333',
-    fontWeight: '400',
+    fontSize: 15,
+    fontWeight: '500',
     flex: 1,
   },
   destructiveText: {
     color: '#FF3B30',
-    fontWeight: '500',
+    fontWeight: '600',
   },
   disabledText: {
     color: '#999',

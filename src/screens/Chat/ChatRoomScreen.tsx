@@ -18,12 +18,15 @@ import {
   ActivityIndicator,
   FlatList,
   StatusBar,
+  ImageBackground,
 } from 'react-native';
-import { IconButton } from 'react-native-paper';
 import { useAuth } from '../../hooks/useAuth';
 import { api, ApiError } from '../../lib/api';
 import { setLocalActiveChatFocus } from '../../lib/activeChatFocus';
+import { cancelChatThreadsPrefetch } from '../../lib/chatThreadsPrefetch';
 import { flushMessageOutbox, flushOutboxItem } from '../../lib/flushMessageOutbox';
+import { WallpaperPickerSheet } from '../../components/WallpaperPickerSheet';
+import { ChatSharedMediaSheet } from '../../components/ChatSharedMediaSheet';
 import { showAppToast } from '../../lib/appToast';
 import NetInfo from '@react-native-community/netinfo';
 import { uploadFromUri } from '../../lib/uploads';
@@ -54,13 +57,14 @@ import { ensureSupabaseSession } from '../../lib/ensureSupabaseSession';
 import { useChatTyping } from '../../hooks/useChatTyping';
 import { usePartnerPresence } from '../../hooks/usePartnerPresence';
 import { setStringAsync } from '../../lib/clipboard';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { GroupCallBanner } from '../../components/GroupCallBanner';
 import { useActiveGroupCall } from '../../hooks/useActiveGroupCall';
 import { ChatSearchOverlay } from './ChatSearchOverlay';
 import { MessageActionSheet, type MessageAction } from './MessageActionSheet';
 import { ReplyPreviewBar } from './ReplyPreviewBar';
 import { MomentChatPreview } from './MomentChatPreview';
-import { isWithinMinutes, WALLPAPER_OPTIONS, buildForwardPayload, isValidUuid } from './chatMessageUtils';
+import { isWithinMinutes, buildForwardPayload, isValidUuid, isWallpaperImageUri, resolveWallpaperColor } from './chatMessageUtils';
 import { ForwardToChatPicker, type ForwardTarget } from './ForwardToChatPicker';
 import { ReadReceiptSheet } from './ReadReceiptSheet';
 import {
@@ -145,6 +149,7 @@ export default function ChatRoomScreen() {
     visible: false,
     index: 0,
   });
+  const [sharedMediaOpen, setSharedMediaOpen] = useState(false);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [searchVisible, setSearchVisible] = useState(false);
   const [searchHitId, setSearchHitId] = useState<string | null>(null);
@@ -152,6 +157,8 @@ export default function ChatRoomScreen() {
   const [momentPreviewId, setMomentPreviewId] = useState<string | null>(null);
   const [wallpaper, setWallpaper] = useState<string | null>(null);
   const [starredIds, setStarredIds] = useState<string[]>([]);
+  const [chatMuted, setChatMuted] = useState(false);
+  const [wallpaperPickerOpen, setWallpaperPickerOpen] = useState(false);
   const [clearedAt, setClearedAt] = useState<string | null>(null);
   const [settingsReady, setSettingsReady] = useState(false);
   const [firstUnreadId, setFirstUnreadId] = useState<string | null>(null);
@@ -209,8 +216,8 @@ export default function ChatRoomScreen() {
   }, [messages, filterByClearedAt, expiryTick]);
   const listTailId = visibleMessages[visibleMessages.length - 1]?.id ?? '';
 
-  const chatBgColor =
-    WALLPAPER_OPTIONS.find((w) => w.id === wallpaper)?.color ?? theme.chatBg;
+  const chatBgColor = resolveWallpaperColor(wallpaper, theme.chatBg);
+  const wallpaperImageUri = isWallpaperImageUri(wallpaper) ? wallpaper : null;
 
   const pendingRetryRef = useRef<boolean>(false);
   const syncInProgressRef = useRef<boolean>(false);
@@ -274,11 +281,36 @@ export default function ChatRoomScreen() {
       setSettingsReady(true);
       return;
     }
+    const localKey = `chat_wallpaper:${chatType}:${chatId}`;
+    try {
+      const localWallpaper = await AsyncStorage.getItem(localKey);
+      if (isWallpaperImageUri(localWallpaper)) {
+        setWallpaper(localWallpaper);
+      } else if (localWallpaper) {
+        setWallpaper(localWallpaper);
+      } else if (localWallpaper === '') {
+        setWallpaper(null);
+      }
+    } catch {
+      // optional local cache
+    }
     try {
       const { preferences } = await api.chatSettings.get(chatType, chatId);
-      setWallpaper((preferences.wallpaper as string) ?? null);
+      const remoteWallpaper = (preferences.wallpaper as string) ?? null;
+      const localWallpaper = await AsyncStorage.getItem(localKey).catch(() => null);
+      // Keep a local photo wallpaper even if the server only stores color ids.
+      if (isWallpaperImageUri(localWallpaper)) {
+        setWallpaper(localWallpaper);
+      } else if (remoteWallpaper) {
+        setWallpaper(remoteWallpaper);
+        void AsyncStorage.setItem(localKey, remoteWallpaper).catch(() => undefined);
+      } else if (!localWallpaper) {
+        setWallpaper(null);
+      }
       setClearedAt((preferences.cleared_at as string) ?? null);
       setStarredIds((preferences.starred_message_ids as string[]) ?? []);
+      const mutedUntil = preferences.muted_until as string | null;
+      setChatMuted(Boolean(mutedUntil && new Date(mutedUntil) > new Date()));
     } catch {
       // Preferences are optional until migration is applied.
     }
@@ -346,12 +378,28 @@ export default function ChatRoomScreen() {
 
   const scrollToMessage = useCallback(
     (messageId: string) => {
-      const idx = chatRows.findIndex((r) => r.kind === 'message' && r.message.id === messageId);
-      if (idx >= 0) {
-        flatListRef.current?.scrollToIndex?.({ index: idx, animated: true });
-        setSearchHitId(messageId);
-        setTimeout(() => setSearchHitId(null), 2500);
+      const idx = chatRows.findIndex((r) => {
+        if (r.kind === 'message') return r.message.id === messageId;
+        if (r.kind === 'media_album') {
+          return r.messages.some((m) => m.id === messageId);
+        }
+        return false;
+      });
+      if (idx < 0) {
+        showAppToast('Message not found in the loaded chat');
+        return;
       }
+      try {
+        flatListRef.current?.scrollToIndex?.({
+          index: idx,
+          animated: true,
+          viewPosition: 0.35,
+        });
+      } catch {
+        flatListRef.current?.scrollToOffset?.({ offset: Math.max(0, idx * 72), animated: true });
+      }
+      setSearchHitId(messageId);
+      setTimeout(() => setSearchHitId(null), 2800);
     },
     [chatRows, flatListRef]
   );
@@ -2183,6 +2231,8 @@ export default function ChatRoomScreen() {
 
       // Suppress Expo message push while this room is open (Realtime delivers).
       setLocalActiveChatFocus({ chatId, chatType });
+      // Give this room the full network/JS budget.
+      cancelChatThreadsPrefetch();
       void api.profiles.setActiveChat(chatId, chatType).catch(() => undefined);
 
       const chatKey =
@@ -2272,11 +2322,76 @@ export default function ChatRoomScreen() {
       await api.chatSettings.update(chatType, chatId, {
         muted_until: isMuted ? null : new Date(Date.now() + 365 * 86400_000).toISOString(),
       });
-      Alert.alert('Notifications', isMuted ? 'Chat unmuted' : 'Chat muted');
+      setChatMuted(!isMuted);
+      showAppToast(isMuted ? 'Chat unmuted' : 'Chat muted');
     } catch {
-      Alert.alert('Error', 'Could not update mute setting');
+      showAppToast('Could not update mute setting', { isError: true });
     }
   }, [chatType, chatId]);
+
+  const handleOpenSettings = useCallback(() => {
+    navigation.navigate('Settings');
+  }, [navigation]);
+
+  const handleAddMembers = useCallback(() => {
+    if (chatType !== 'group') return;
+    navigation.navigate('FriendsList', {
+      mode: 'select',
+      groupId: chatId,
+      groupName: chatName,
+      existingMembers: groupMemberUserIds,
+    });
+  }, [chatType, chatId, chatName, groupMemberUserIds, navigation]);
+
+  const handleBlockContact = useCallback(() => {
+    if (chatType !== 'individual') return;
+    Alert.alert(
+      `Block ${chatName}?`,
+      'They will no longer be able to call or message you.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Block',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              try {
+                await api.friendships.block(chatId);
+                showAppToast(`${chatName} blocked`);
+                navigation.goBack();
+              } catch {
+                showAppToast('Could not block user', { isError: true });
+              }
+            })();
+          },
+        },
+      ]
+    );
+  }, [chatType, chatId, chatName, navigation]);
+
+  const handleExportChat = useCallback(() => {
+    const lines = visibleMessages
+      .slice(-200)
+      .map((m) => {
+        const who = m.sender_id === user?.id ? 'You' : m.profiles?.display_name || 'Them';
+        const body = m.content || m.file_name || `[${m.message_type}]`;
+        return `${who}: ${body}`;
+      })
+      .join('\n');
+    if (!lines) {
+      showAppToast('No messages to copy');
+      return;
+    }
+    void (async () => {
+      try {
+        const { setStringAsync } = await import('expo-clipboard');
+        await setStringAsync(lines);
+        showAppToast('Chat copied to clipboard');
+      } catch {
+        showAppToast('Could not copy chat', { isError: true });
+      }
+    })();
+  }, [visibleMessages, user?.id]);
 
   const handleClearChat = useCallback(() => {
     Alert.alert('Clear chat', 'Hide all messages in this chat on this device?', [
@@ -2297,17 +2412,51 @@ export default function ChatRoomScreen() {
   }, [chatType, chatId]);
 
   const handleWallpaper = useCallback(() => {
-    const buttons = WALLPAPER_OPTIONS.map((w) => ({
-      text: w.label,
-      onPress: () => {
-        setWallpaper(w.id === 'default' ? null : w.id);
-        void api.chatSettings
-          .update(chatType, chatId, { wallpaper: w.id === 'default' ? null : w.id })
-          .catch(() => undefined);
-      },
-    }));
-    Alert.alert('Chat wallpaper', 'Choose a background', [...buttons, { text: 'Cancel', style: 'cancel' }]);
-  }, [chatType, chatId]);
+    // Wait for the ⋮ menu modal to finish closing before opening the picker.
+    setTimeout(() => setWallpaperPickerOpen(true), 120);
+  }, []);
+
+  const wallpaperStorageKey = `chat_wallpaper:${chatType}:${chatId}`;
+
+  const applyWallpaper = useCallback(
+    (id: string | null) => {
+      const persist = async () => {
+        let value = id;
+        if (isWallpaperImageUri(id) && id && Platform.OS !== 'web') {
+          try {
+            const root = FileSystem.documentDirectory;
+            if (root) {
+              const dir = `${root}wallpapers/`;
+              const info = await FileSystem.getInfoAsync(dir);
+              if (!info.exists) await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
+              const ext = id.split('.').pop()?.split('?')[0]?.toLowerCase() || 'jpg';
+              const safeExt = ['jpg', 'jpeg', 'png', 'webp', 'heic'].includes(ext) ? ext : 'jpg';
+              const dest = `${dir}${chatType}_${chatId}.${safeExt}`;
+              await FileSystem.copyAsync({ from: id, to: dest });
+              value = dest;
+            }
+          } catch {
+            // Keep original picker URI if copy fails.
+          }
+        }
+        setWallpaper(value);
+        showAppToast(
+          !value ? 'Default wallpaper' : isWallpaperImageUri(value) ? 'Photo wallpaper set' : 'Wallpaper updated'
+        );
+        void AsyncStorage.setItem(wallpaperStorageKey, value ?? '').catch(() => undefined);
+        // Color ids sync to server; photo URIs stay on this device.
+        if (!isWallpaperImageUri(value)) {
+          void api.chatSettings
+            .update(chatType, chatId, { wallpaper: value })
+            .catch(() => {
+              showAppToast('Saved on this device only');
+            });
+        }
+      };
+      void persist();
+    },
+    [chatType, chatId, wallpaperStorageKey]
+  );
 
   const startChatCall = useCallback(
     async (type: 'voice' | 'video') => {
@@ -2373,22 +2522,6 @@ export default function ChatRoomScreen() {
     }
   }, [activeGroupCall.call]);
 
-  const menuItems: MenuItem[] = useMemo(() => {
-    const items = [
-      {
-        title: chatType === 'individual' ? 'View Contact' : 'Group Info',
-        icon: chatType === 'individual' ? 'person-outline' : 'people-outline',
-        onPress: handleInfoPress,
-      },
-      { title: 'Search', icon: 'search', onPress: () => setSearchVisible(true) },
-      { title: 'Mute', icon: 'volume-mute', onPress: handleMuteChat },
-      { title: 'Wallpaper', icon: 'color-palette-outline', onPress: handleWallpaper },
-      { title: 'Clear Chat', icon: 'trash-outline', onPress: handleClearChat },
-    ];
-
-    return items;
-  }, [handleInfoPress, handleMuteChat, handleClearChat, handleWallpaper, chatType]);
-
   /* ------------------------------------------------------------------ */
   /*  UTILITY FUNCTIONS                                                 */
   /* ------------------------------------------------------------------ */
@@ -2406,6 +2539,84 @@ export default function ChatRoomScreen() {
       }))
       .filter((item) => Boolean(item.uri));
   }, [visibleMessages, getImageUri]);
+
+  const handleViewMedia = useCallback(() => {
+    setSharedMediaOpen(true);
+  }, []);
+
+  const menuItems: MenuItem[] = useMemo(() => {
+    const items: MenuItem[] = [
+      {
+        title: chatType === 'individual' ? 'View contact' : 'Group info',
+        icon: chatType === 'individual' ? 'person-outline' : 'people-outline',
+        onPress: handleInfoPress,
+      },
+      { title: 'Search', icon: 'search-outline', onPress: () => setSearchVisible(true) },
+      {
+        title: 'Media, links & docs',
+        icon: 'images-outline',
+        onPress: handleViewMedia,
+      },
+      {
+        title: chatMuted ? 'Unmute notifications' : 'Mute notifications',
+        icon: chatMuted ? 'notifications-outline' : 'notifications-off-outline',
+        onPress: () => void handleMuteChat(),
+      },
+      {
+        title: 'Wallpaper',
+        icon: 'color-palette-outline',
+        onPress: handleWallpaper,
+      },
+      {
+        title: 'Copy chat',
+        icon: 'copy-outline',
+        onPress: handleExportChat,
+      },
+      {
+        title: 'Chat settings',
+        icon: 'settings-outline',
+        onPress: handleOpenSettings,
+      },
+    ];
+
+    if (chatType === 'group') {
+      items.splice(1, 0, {
+        title: 'Add members',
+        icon: 'person-add-outline',
+        onPress: handleAddMembers,
+      });
+    }
+
+    if (chatType === 'individual') {
+      items.push({
+        title: 'Block',
+        icon: 'ban-outline',
+        onPress: handleBlockContact,
+        destructive: true,
+      });
+    }
+
+    items.push({
+      title: 'Clear chat',
+      icon: 'trash-outline',
+      onPress: handleClearChat,
+      destructive: true,
+    });
+
+    return items;
+  }, [
+    chatType,
+    chatMuted,
+    handleInfoPress,
+    handleMuteChat,
+    handleClearChat,
+    handleWallpaper,
+    handleViewMedia,
+    handleOpenSettings,
+    handleAddMembers,
+    handleBlockContact,
+    handleExportChat,
+  ]);
 
   const viewOnceToConsumeRef = useRef<string | null>(null);
   const consumedViewOnceIdsRef = useRef<Set<string>>(new Set());
@@ -2558,12 +2769,14 @@ export default function ChatRoomScreen() {
         ]}
       >
         <View style={styles.headerLeft}>
-          <IconButton 
-            icon="arrow-left" 
-            size={24} 
-            iconColor={theme.headerText} 
-            onPress={() => navigation.goBack()} 
-          />
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            style={styles.headerIconBtn}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityLabel="Go back"
+          >
+            <Ionicons name="arrow-back" size={24} color={theme.headerText} />
+          </TouchableOpacity>
           <TouchableOpacity style={styles.headerInfo} onPress={handleInfoPress}>
             {avatarUrl ? (
               <Image source={{ uri: avatarUrl }} style={styles.headerAvatar} />
@@ -2591,19 +2804,23 @@ export default function ChatRoomScreen() {
           </TouchableOpacity>
         </View>
         <View style={styles.headerActions}>
-          <IconButton
-            icon="video"
-            size={24}
-            iconColor={theme.headerText}
+          <TouchableOpacity
             onPress={() => void startChatCall('video')}
-          />
-          <IconButton
-            icon="phone"
-            size={24}
-            iconColor={theme.headerText}
+            style={styles.headerIconBtn}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityLabel="Video call"
+          >
+            <Ionicons name="videocam" size={24} color={theme.headerText} />
+          </TouchableOpacity>
+          <TouchableOpacity
             onPress={() => void startChatCall('voice')}
-          />
-          <ChatMenuDropdown items={menuItems} />
+            style={styles.headerIconBtn}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityLabel="Voice call"
+          >
+            <Ionicons name="call" size={22} color={theme.headerText} />
+          </TouchableOpacity>
+          <ChatMenuDropdown items={menuItems} iconColor={theme.headerText} />
         </View>
       </View>
 
@@ -2626,6 +2843,15 @@ export default function ChatRoomScreen() {
         keyboardVerticalOffset={keyboardVerticalOffset}
       >
         <View style={[styles.chatBody, { backgroundColor: chatBgColor }]}>
+          {wallpaperImageUri ? (
+            <ImageBackground
+              source={{ uri: wallpaperImageUri }}
+              style={StyleSheet.absoluteFill}
+              resizeMode="cover"
+            >
+              <View style={styles.wallpaperDim} />
+            </ImageBackground>
+          ) : null}
           {pinnedBanner && chatType === 'group' && (
             <TouchableOpacity
               style={styles.pinnedBar}
@@ -2640,12 +2866,24 @@ export default function ChatRoomScreen() {
           <FlatList
             ref={flatListRef}
             data={chatRows}
-            extraData={`${visibleMessages.length}:${listTailId}:${chatRows.length}:${isPlayingAudio ?? ''}`}
+            extraData={`${visibleMessages.length}:${listTailId}:${chatRows.length}:${isPlayingAudio ?? ''}:${searchHitId ?? ''}:${wallpaper ?? ''}`}
             renderItem={renderChatRow}
             keyExtractor={(item) => item.key}
+            style={{ flex: 1, backgroundColor: 'transparent' }}
             contentContainerStyle={styles.listContent}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
+            onScrollToIndexFailed={(info) => {
+              const approx = Math.max(0, info.averageItemLength * info.index);
+              flatListRef.current?.scrollToOffset?.({ offset: approx, animated: true });
+              setTimeout(() => {
+                flatListRef.current?.scrollToIndex?.({
+                  index: info.index,
+                  animated: true,
+                  viewPosition: 0.35,
+                });
+              }, 120);
+            }}
             ListEmptyComponent={
               !initialLoadComplete ? (
                 <ActivityIndicator style={styles.loadingIndicator} size="large" color={chatTheme.primary} />
@@ -2755,11 +2993,41 @@ export default function ChatRoomScreen() {
         onClose={closeMediaViewer}
       />
 
+      <ChatSharedMediaSheet
+        visible={sharedMediaOpen}
+        messages={visibleMessages}
+        chatName={chatName}
+        onClose={() => setSharedMediaOpen(false)}
+        onOpenMedia={(messageId) => {
+          const idx = chatMediaItems.findIndex((item) => item.id === messageId);
+          if (idx < 0) {
+            showAppToast('Could not open media', { isError: true });
+            return;
+          }
+          setMediaViewer({ visible: true, index: idx });
+        }}
+        onJumpToMessage={(messageId) => {
+          setSharedMediaOpen(false);
+          setTimeout(() => scrollToMessage(messageId), 80);
+        }}
+      />
+
       <ChatSearchOverlay
         visible={searchVisible}
         messages={visibleMessages}
         onClose={() => setSearchVisible(false)}
-        onSelect={scrollToMessage}
+        onSelect={(messageId) => {
+          setSearchVisible(false);
+          // Allow the popup to close before scrolling.
+          setTimeout(() => scrollToMessage(messageId), 60);
+        }}
+      />
+
+      <WallpaperPickerSheet
+        visible={wallpaperPickerOpen}
+        selectedId={wallpaper}
+        onClose={() => setWallpaperPickerOpen(false)}
+        onSelect={applyWallpaper}
       />
 
       <MessageActionSheet
@@ -2814,6 +3082,11 @@ const styles = StyleSheet.create({
   chatBody: {
     flex: 1,
     backgroundColor: chatTheme.chatBg,
+    overflow: 'hidden',
+  },
+  wallpaperDim: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(0,0,0,0.18)',
   },
   header: {
     flexDirection: 'row',
@@ -2869,6 +3142,14 @@ const styles = StyleSheet.create({
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 2,
+  },
+  headerIconBtn: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
   },
   listContent: {
     flexGrow: 1,

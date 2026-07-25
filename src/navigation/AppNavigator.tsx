@@ -71,8 +71,14 @@ type ChatStackProps = {
  *  Unified Chat Stack (mobile + web sidebar)
  * ------------------------------------------------------------------ */
 export const ChatStack = ({ setSelectedChat }: ChatStackProps) => {
+  const { theme } = useChatSettings();
   return (
-  <Stack.Navigator screenOptions={{ headerShown: false }}>
+  <Stack.Navigator
+    screenOptions={{
+      headerShown: false,
+      contentStyle: { backgroundColor: theme.listBg },
+    }}
+  >
     <Stack.Screen name="ChatList">
       {(props) => <ChatListScreen {...props} setSelectedChat={setSelectedChat} />}
     </Stack.Screen>

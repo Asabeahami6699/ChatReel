@@ -19,6 +19,7 @@ import { formatLastSeen } from './chatMessageUtils';
 import { chatTheme } from './chatTheme';
 import { useAuth } from '../../hooks/useAuth';
 import { usePeerProfileStore } from '../../stores/peerProfileStore';
+import { useChatSettings } from '../../context/ChatSettingsContext';
 
 type RouteParams = {
   userId: string;
@@ -31,6 +32,7 @@ export default function ContactScreen() {
   const route = useRoute<any>();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
+  const { theme } = useChatSettings();
   const { userId, chatName, avatarUrl } = route.params as RouteParams;
 
   const profile = usePeerProfileStore((s) => s.byUserId[userId]?.profile ?? null);
@@ -102,19 +104,20 @@ export default function ContactScreen() {
 
   if (loading && !profile && !avatarUrl && !chatName) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color={chatTheme.primary} />
+      <View style={[styles.center, { backgroundColor: theme.listBg }]}>
+        <ActivityIndicator size="large" color={theme.primary} />
       </View>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={['left', 'right']}>
-      <StatusBar barStyle="light-content" backgroundColor={chatTheme.headerBg} />
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.listBg }]} edges={['left', 'right']}>
+      <StatusBar barStyle="light-content" backgroundColor={theme.headerBg} />
       <View
         style={[
           styles.header,
           {
+            backgroundColor: theme.headerBg,
             // Pull header into the shell top inset so blue fills the status area (no double pad).
             marginTop: -insets.top,
             paddingTop: insets.top + 14,
@@ -129,33 +132,41 @@ export default function ContactScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
-        <Image source={{ uri: avatar || undefined }} style={styles.avatar} />
-        <Text style={styles.name}>{displayName}</Text>
-        <Text style={styles.status}>{statusText}</Text>
-        {!!profile?.bio && <Text style={styles.bio}>{profile.bio as string}</Text>}
+        <Image source={{ uri: avatar || undefined }} style={[styles.avatar, { backgroundColor: theme.listBorder }]} />
+        <Text style={[styles.name, { color: theme.listPrimaryText }]}>{displayName}</Text>
+        <Text style={[styles.status, { color: theme.listSecondaryText }]}>{statusText}</Text>
+        {!!profile?.bio && (
+          <Text style={[styles.bio, { color: theme.listSecondaryText }]}>{profile.bio as string}</Text>
+        )}
 
         <View style={styles.actions}>
           <TouchableOpacity style={styles.actionBtn} onPress={() => startCall('voice')}>
-            <Ionicons name="call" size={22} color={chatTheme.primary} />
-            <Text style={styles.actionLabel}>Audio</Text>
+            <Ionicons name="call" size={22} color={theme.primary} />
+            <Text style={[styles.actionLabel, { color: theme.listPrimaryText }]}>Audio</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.actionBtn} onPress={() => startCall('video')}>
-            <Ionicons name="videocam" size={22} color={chatTheme.primary} />
-            <Text style={styles.actionLabel}>Video</Text>
+            <Ionicons name="videocam" size={22} color={theme.primary} />
+            <Text style={[styles.actionLabel, { color: theme.listPrimaryText }]}>Video</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.actionBtn} onPress={() => navigation.goBack()}>
-            <Ionicons name="chatbubble" size={22} color={chatTheme.primary} />
-            <Text style={styles.actionLabel}>Message</Text>
+            <Ionicons name="chatbubble" size={22} color={theme.primary} />
+            <Text style={[styles.actionLabel, { color: theme.listPrimaryText }]}>Message</Text>
           </TouchableOpacity>
         </View>
 
-        <TouchableOpacity style={styles.row} onPress={toggleMute} disabled={muting}>
-          <Ionicons name="volume-mute-outline" size={22} color="#444" />
-          <Text style={styles.rowText}>{muting ? 'Updating…' : 'Mute notifications'}</Text>
+        <TouchableOpacity
+          style={[styles.row, { borderTopColor: theme.listBorder }]}
+          onPress={toggleMute}
+          disabled={muting}
+        >
+          <Ionicons name="volume-mute-outline" size={22} color={theme.listPrimaryText} />
+          <Text style={[styles.rowText, { color: theme.listPrimaryText }]}>
+            {muting ? 'Updating…' : 'Mute notifications'}
+          </Text>
         </TouchableOpacity>
 
         {user?.id !== userId && (
-          <TouchableOpacity style={styles.row} onPress={blockUser}>
+          <TouchableOpacity style={[styles.row, { borderTopColor: theme.listBorder }]} onPress={blockUser}>
             <Ionicons name="ban-outline" size={22} color="#FF3B30" />
             <Text style={[styles.rowText, styles.destructive]}>Block user</Text>
           </TouchableOpacity>

@@ -5,9 +5,9 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { AuthProvider } from './src/context/AuthContext';
 import { ChatSettingsProvider } from './src/context/ChatSettingsContext';
+import { ThemedPaperProvider } from './src/theme/ThemedAppProviders';
 import { RealtimeProvider } from './src/components/RealtimeProvider';
 import { PushNotificationRegistrar } from './src/components/PushNotificationRegistrar';
-import { Provider as PaperProvider } from 'react-native-paper';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { ReelUploadToast } from './src/components/ReelUploadToast';
 import { ReelUploadQueueRegistrar } from './src/components/ReelUploadQueueRegistrar';
@@ -38,30 +38,30 @@ export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <PaperProvider>
-          <AuthProvider>
+        <AuthProvider>
           <ChatSettingsProvider>
-            <RealtimeProvider>
-              <PushNotificationRegistrar />
-              <ChatSocketRegistrar />
-              <PresenceSyncRegistrar />
-              <KeysRegistrar />
-              <MessageOutboxFlushRegistrar />
-              <AppPrefetchRegistrar />
-              <ChatListRealtimeRegistrar />
-              <ReelInboxRealtimeRegistrar />
-              <ReelUploadQueueRegistrar />
-              <RootNavigator />
-              <ReelUploadToast />
-              <AudioExtractToast />
-              <RingtoneSaveToast />
-              <MomentUploadToast />
-              <ConfirmToastHost />
-              <AppToastHost />
-            </RealtimeProvider>
+            <ThemedPaperProvider>
+              <RealtimeProvider>
+                <PushNotificationRegistrar />
+                <ChatSocketRegistrar />
+                <PresenceSyncRegistrar />
+                <KeysRegistrar />
+                <MessageOutboxFlushRegistrar />
+                <AppPrefetchRegistrar />
+                <ChatListRealtimeRegistrar />
+                <ReelInboxRealtimeRegistrar />
+                <ReelUploadQueueRegistrar />
+                <RootNavigator />
+                <ReelUploadToast />
+                <AudioExtractToast />
+                <RingtoneSaveToast />
+                <MomentUploadToast />
+                <ConfirmToastHost />
+                <AppToastHost />
+              </RealtimeProvider>
+            </ThemedPaperProvider>
           </ChatSettingsProvider>
-          </AuthProvider>
-        </PaperProvider>
+        </AuthProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

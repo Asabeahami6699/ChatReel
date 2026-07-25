@@ -174,7 +174,14 @@ export default function MarketScreen({ navigation }) {
 
   const ProductCard = ({ product }) => (
     <TouchableOpacity 
-      style={styles.productCard}
+      style={[
+        styles.productCard,
+        {
+          backgroundColor: theme.listCardBg,
+          borderColor: theme.listBorder,
+          borderWidth: theme.isDark ? 1 : 0,
+        },
+      ]}
       onPress={() => navigation.navigate('ProductDetail', { product })}
     >
       {/* Discount badges */}
@@ -193,18 +200,18 @@ export default function MarketScreen({ navigation }) {
 
       {/* Wishlist button */}
       <TouchableOpacity 
-        style={styles.wishlistButton}
+        style={[styles.wishlistButton, { backgroundColor: theme.isDark ? '#111' : 'rgba(255,255,255,0.9)' }]}
         onPress={() => toggleWishlist(product.id)}
       >
         <Ionicons
           name={wishlist.includes(product.id) ? 'heart' : 'heart-outline'}
           size={20}
-          color={wishlist.includes(product.id) ? '#FF4444' : '#666'}
+          color={wishlist.includes(product.id) ? '#FF4444' : theme.listSecondaryText}
         />
       </TouchableOpacity>
       
       {/* Product image */}
-      <View style={styles.imageContainer}>
+      <View style={[styles.imageContainer, { backgroundColor: theme.isDark ? '#111' : '#f0f0f0' }]}>
         <Image 
           source={product.image} 
           style={styles.productImage}
@@ -214,10 +221,12 @@ export default function MarketScreen({ navigation }) {
 
       {/* Product info */}
       <View style={styles.productInfo}>
-        <Text style={styles.productTitle}>{product.title}</Text>
+        <Text style={[styles.productTitle, { color: theme.listPrimaryText }]}>{product.title}</Text>
         
         {product.subtitle && (
-          <Text style={styles.productSubtitle}>{product.subtitle}</Text>
+          <Text style={[styles.productSubtitle, { color: theme.listSecondaryText }]}>
+            {product.subtitle}
+          </Text>
         )}
         
         {/* Rating */}
@@ -225,24 +234,30 @@ export default function MarketScreen({ navigation }) {
           <View style={styles.starsContainer}>
             {renderStars(product.rating)}
           </View>
-          <Text style={styles.ratingText}>({product.reviews})</Text>
+          <Text style={[styles.ratingText, { color: theme.listSecondaryText }]}>
+            ({product.reviews})
+          </Text>
         </View>
 
         {/* Seller info */}
-        <Text style={styles.sellerText}>{product.seller} • {product.location}</Text>
+        <Text style={[styles.sellerText, { color: theme.listSecondaryText }]}>
+          {product.seller} • {product.location}
+        </Text>
         
         {/* Features list */}
         {product.features && (
           <View style={styles.featuresContainer}>
             {product.features.slice(0, 2).map((feature, index) => (
-              <Text key={index} style={styles.featureText}>• {feature}</Text>
+              <Text key={index} style={[styles.featureText, { color: theme.listSecondaryText }]}>
+                • {feature}
+              </Text>
             ))}
           </View>
         )}
         
         {/* Price */}
         <View style={styles.priceContainer}>
-          <Text style={styles.productPrice}>{product.price}</Text>
+          <Text style={[styles.productPrice, { color: theme.listPrimaryText }]}>{product.price}</Text>
           {product.originalPrice && (
             <Text style={styles.originalPrice}>{product.originalPrice}</Text>
           )}
@@ -285,7 +300,7 @@ export default function MarketScreen({ navigation }) {
           {/* Cart Icon */}
           <View style={styles.headerIcons}>
             <TouchableOpacity style={styles.iconButton}>
-              <Ionicons name="cart-outline" size={24} color="#333" />
+              <Ionicons name="cart-outline" size={24} color={theme.listPrimaryText} />
               {cartItems.length > 0 && (
                 <View style={styles.cartBadge}>
                   <Text style={styles.cartBadgeText}>{cartItems.length}</Text>
@@ -306,12 +321,18 @@ export default function MarketScreen({ navigation }) {
               key={category}
               style={[
                 styles.categoryButton,
+                {
+                  backgroundColor: theme.isDark ? theme.listCardBg : '#f0f0f0',
+                  borderColor: theme.listBorder,
+                  borderWidth: theme.isDark ? 1 : 0,
+                },
                 selectedCategory === category && styles.categoryButtonActive
               ]}
               onPress={() => setSelectedCategory(category)}
             >
               <Text style={[
                 styles.categoryText,
+                { color: theme.listSecondaryText },
                 selectedCategory === category && styles.categoryTextActive
               ]}>
                 {category}
@@ -339,15 +360,15 @@ export default function MarketScreen({ navigation }) {
         onRequestClose={() => setShowFilters(false)}
       >
         <View style={styles.modalContainer}>
-          <View style={styles.modalContent}>
+          <View style={[styles.modalContent, { backgroundColor: theme.listCardBg }]}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Filter & Sort</Text>
+              <Text style={[styles.modalTitle, { color: theme.listPrimaryText }]}>Filter & Sort</Text>
               <TouchableOpacity onPress={() => setShowFilters(false)}>
-                <Ionicons name="close" size={24} color="#333" />
+                <Ionicons name="close" size={24} color={theme.listPrimaryText} />
               </TouchableOpacity>
             </View>
             
-            <Text style={styles.filterSectionTitle}>Sort By</Text>
+            <Text style={[styles.filterSectionTitle, { color: theme.listSecondaryText }]}>Sort By</Text>
             {['popular', 'price-low', 'price-high', 'rating'].map((option) => (
               <TouchableOpacity
                 key={option}
@@ -357,7 +378,7 @@ export default function MarketScreen({ navigation }) {
                   setShowFilters(false);
                 }}
               >
-                <Text style={styles.filterOptionText}>
+                <Text style={[styles.filterOptionText, { color: theme.listPrimaryText }]}>
                   {option === 'popular' && 'Most Popular'}
                   {option === 'price-low' && 'Price: Low to High'}
                   {option === 'price-high' && 'Price: High to Low'}

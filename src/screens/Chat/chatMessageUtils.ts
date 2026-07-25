@@ -69,11 +69,44 @@ export const REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'
 
 export const WALLPAPER_OPTIONS = [
   { id: 'default', color: '#f0f0f0', label: 'Default' },
-  { id: 'mint', color: '#e8f5e9', label: 'Mint' },
-  { id: 'lavender', color: '#ede7f6', label: 'Lavender' },
-  { id: 'sand', color: '#fff8e1', label: 'Sand' },
-  { id: 'sky', color: '#e3f2fd', label: 'Sky' },
+  { id: 'mint', color: '#d1fae5', label: 'Mint' },
+  { id: 'lavender', color: '#e9d5ff', label: 'Lavender' },
+  { id: 'sand', color: '#fde68a', label: 'Sand' },
+  { id: 'sky', color: '#bae6fd', label: 'Sky' },
+  { id: 'rose', color: '#fecdd3', label: 'Rose' },
+  { id: 'peach', color: '#fed7aa', label: 'Peach' },
+  { id: 'ocean', color: '#99f6e4', label: 'Ocean' },
+  { id: 'dark', color: '#0b1220', label: 'Night' },
+  { id: 'charcoal', color: '#1c1c1e', label: 'Charcoal' },
+  { id: 'forest', color: '#052e16', label: 'Forest' },
+  { id: 'wine', color: '#3b0a1e', label: 'Wine' },
 ];
+
+const WALLPAPER_ID_SET = new Set(WALLPAPER_OPTIONS.map((w) => w.id));
+
+/** True when the stored wallpaper value is a custom photo URI (not a color swatch id). */
+export function isWallpaperImageUri(value: string | null | undefined): boolean {
+  if (!value) return false;
+  if (WALLPAPER_ID_SET.has(value)) return false;
+  return (
+    value.startsWith('file:') ||
+    value.startsWith('http://') ||
+    value.startsWith('https://') ||
+    value.startsWith('content:') ||
+    value.startsWith('data:') ||
+    value.startsWith('blob:') ||
+    value.startsWith('ph://') ||
+    value.startsWith('assets-library:')
+  );
+}
+
+export function resolveWallpaperColor(
+  wallpaper: string | null | undefined,
+  fallback: string
+): string {
+  if (!wallpaper || isWallpaperImageUri(wallpaper)) return fallback;
+  return WALLPAPER_OPTIONS.find((w) => w.id === wallpaper)?.color ?? fallback;
+}
 
 export function isWithinMinutes(iso: string, minutes: number): boolean {
   return Date.now() - new Date(iso).getTime() <= minutes * 60_000;

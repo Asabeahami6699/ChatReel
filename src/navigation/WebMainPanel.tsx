@@ -1,11 +1,13 @@
-import React from 'react';
-import { View, StyleSheet, Text } from 'react-native';
+import React, { useMemo } from 'react';
+import { View, StyleSheet } from 'react-native';
 import { NavigationContainer, NavigationIndependentTree } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import ChatRoomScreen from '../screens/Chat/ChatRoomScreen';
 import ContactScreen from '../screens/Chat/ContactScreen';
 import EmptyChatScreen from '../screens/Chat/EmptyChatScreen';
 import GroupInfoScreen from '../screens/Group/GroupInfoScreen';
+import { useChatSettings } from '../context/ChatSettingsContext';
+import { buildNavigationTheme } from '../theme/buildAppTheme';
 
 const Stack = createNativeStackNavigator();
 
@@ -23,11 +25,18 @@ type Props = {
 
 function WebChatRoomPanel({ params }: { params: ChatParams }) {
   const panelKey = `chat-${params.chatId ?? params.groupId ?? 'room'}`;
+  const { theme } = useChatSettings();
+  const navigationTheme = useMemo(() => buildNavigationTheme(theme), [theme]);
 
   return (
     <NavigationIndependentTree>
-      <NavigationContainer key={panelKey}>
-        <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <NavigationContainer key={panelKey} theme={navigationTheme}>
+        <Stack.Navigator
+          screenOptions={{
+            headerShown: false,
+            contentStyle: { backgroundColor: theme.listBg },
+          }}
+        >
           <Stack.Screen
             name="WebChatRoom"
             component={ChatRoomScreen}

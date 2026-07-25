@@ -493,7 +493,7 @@ export default function FeedScreen() {
             <Ionicons name="add" size={14} color="#fff" />
           </View>
         )}
-        <Text style={styles.bubbleLabel} numberOfLines={1}>
+        <Text style={[styles.bubbleLabel, { color: C.muted }]} numberOfLines={1}>
           {isMe ? 'You' : authorName(item.author).split(' ')[0]}
         </Text>
       </TouchableOpacity>
@@ -573,7 +573,10 @@ export default function FeedScreen() {
     if (!preview) return null;
     return (
       <TouchableOpacity
-        style={styles.listRow}
+        style={[
+          styles.listRow,
+          { backgroundColor: C.bg, borderColor: C.border },
+        ]}
         onPress={() => openAuthor(item)}
         activeOpacity={0.75}
       >
@@ -587,14 +590,14 @@ export default function FeedScreen() {
           )}
         </View>
         <View style={styles.listMeta}>
-          <Text style={styles.listName}>{authorName(item.author)}</Text>
-          <Text style={styles.listTime}>
+          <Text style={[styles.listName, { color: C.text }]}>{authorName(item.author)}</Text>
+          <Text style={[styles.listTime, { color: C.muted }]}>
             {formatTimeAgo(preview.created_at)}
             {item.slides.length > 1 ? ` · ${item.slides.length} moments` : ''}
             {preview.view_once ? ' · View once' : ''}
           </Text>
         </View>
-        <View style={styles.listThumbWrap}>
+        <View style={[styles.listThumbWrap, { backgroundColor: C.surface }]}>
           {renderSlidePreview(preview, styles.listThumb)}
           <View style={styles.listThumbPlay}>
             <Ionicons
@@ -631,21 +634,21 @@ export default function FeedScreen() {
         {loading && authors.length === 0 && uploadTasks.length === 0 ? (
           <View style={styles.loadingBox}>
             <ActivityIndicator size="large" color={C.primary} />
-            <Text style={styles.loadingText}>Loading moments…</Text>
+            <Text style={[styles.loadingText, { color: C.muted }]}>Loading moments…</Text>
           </View>
         ) : error && authors.length === 0 && uploadTasks.length === 0 ? (
           <View style={styles.loadingBox}>
             <Ionicons name="cloud-offline-outline" size={40} color={C.muted} />
-            <Text style={styles.errorText}>{error}</Text>
-            <TouchableOpacity style={styles.retryBtn} onPress={refresh}>
+            <Text style={[styles.errorText, { color: C.muted }]}>{error}</Text>
+            <TouchableOpacity style={[styles.retryBtn, { backgroundColor: C.primary }]} onPress={refresh}>
               <Text style={styles.retryBtnText}>Retry</Text>
             </TouchableOpacity>
           </View>
         ) : (
           <>
-            <View style={styles.stripCard}>
+            <View style={[styles.stripCard, { backgroundColor: C.bg }]}>
               <View style={styles.stripHead}>
-                <Text style={styles.stripTitle}>Moments</Text>
+                <Text style={[styles.stripTitle, { color: C.text }]}>Moments</Text>
               </View>
               <ScrollView
                 horizontal
@@ -666,9 +669,12 @@ export default function FeedScreen() {
             </View>
 
             {myFeed && myFeed.slides.length > 0 && (
-              <TouchableOpacity style={styles.youRow} onPress={() => openAuthor(myFeed)}>
+              <TouchableOpacity
+                style={[styles.youRow, { borderColor: C.border }]}
+                onPress={() => openAuthor(myFeed)}
+              >
                 <LinearGradient
-                  colors={[C.primarySoft, '#fff']}
+                  colors={[C.primarySoft, C.bg]}
                   style={styles.youRowGrad}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 0 }}
@@ -680,8 +686,8 @@ export default function FeedScreen() {
                     )}
                   </View>
                   <View style={styles.youText}>
-                    <Text style={styles.youTitle}>Your moment</Text>
-                    <Text style={styles.youSub}>
+                    <Text style={[styles.youTitle, { color: C.text }]}>Your moment</Text>
+                    <Text style={[styles.youSub, { color: C.muted }]}>
                       {myFeed.slides.length} active · {formatTimeAgo(myFeed.latest_at)}
                     </Text>
                   </View>
@@ -693,8 +699,8 @@ export default function FeedScreen() {
             {othersNew.length > 0 && (
               <View style={styles.section}>
                 <View style={styles.sectionHead}>
-                  <View style={styles.sectionDot} />
-                  <Text style={styles.sectionTitle}>New</Text>
+                  <View style={[styles.sectionDot, { backgroundColor: C.primary }]} />
+                  <Text style={[styles.sectionTitle, { color: C.text }]}>New</Text>
                 </View>
                 {othersNew.map((a) => (
                   <React.Fragment key={`new-${a.author.id}`}>{renderListRow(a)}</React.Fragment>
@@ -704,7 +710,7 @@ export default function FeedScreen() {
 
             {othersSeen.length > 0 && (
               <View style={styles.section}>
-                <Text style={styles.sectionTitleMuted}>Earlier</Text>
+                <Text style={[styles.sectionTitleMuted, { color: C.muted }]}>Earlier</Text>
                 {othersSeen.map((a) => (
                   <React.Fragment key={`seen-${a.author.id}`}>{renderListRow(a)}</React.Fragment>
                 ))}
@@ -714,8 +720,8 @@ export default function FeedScreen() {
             {!loading && authors.length === 0 && (
               <View style={styles.emptyState}>
                 <Ionicons name="sparkles-outline" size={48} color={C.muted} />
-                <Text style={styles.emptyTitle}>No moments yet</Text>
-                <Text style={styles.emptySub}>
+                <Text style={[styles.emptyTitle, { color: C.text }]}>No moments yet</Text>
+                <Text style={[styles.emptySub, { color: C.muted }]}>
                   {isGuest
                     ? 'Sign in to see friends’ moments and post your own.'
                     : 'Post the first moment for your friends.'}

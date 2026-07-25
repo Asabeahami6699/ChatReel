@@ -12,6 +12,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { CallFriendRow } from '../lib/callFriends';
+import { useChatSettings } from '../context/ChatSettingsContext';
 
 type Props = {
   visible: boolean;
@@ -22,6 +23,7 @@ type Props = {
 
 export function CallFriendPickerSheet({ visible, friends, onClose, onCall }: Props) {
   const insets = useSafeAreaInsets();
+  const { theme } = useChatSettings();
   const [query, setQuery] = useState('');
 
   const filtered = useMemo(() => {
@@ -34,23 +36,28 @@ export function CallFriendPickerSheet({ visible, friends, onClose, onCall }: Pro
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.backdrop}>
         <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={onClose} />
-        <View style={[styles.sheet, { paddingBottom: insets.bottom + 12 }]}>
-          <View style={styles.handle} />
+        <View
+          style={[
+            styles.sheet,
+            { paddingBottom: insets.bottom + 12, backgroundColor: theme.listCardBg },
+          ]}
+        >
+          <View style={[styles.handle, { backgroundColor: theme.listBorder }]} />
           <View style={styles.header}>
-            <Text style={styles.title}>Call a friend</Text>
+            <Text style={[styles.title, { color: theme.listPrimaryText }]}>Call a friend</Text>
             <TouchableOpacity onPress={onClose} hitSlop={12}>
-              <Ionicons name="close" size={24} color="#6b7280" />
+              <Ionicons name="close" size={24} color={theme.listSecondaryText} />
             </TouchableOpacity>
           </View>
 
-          <View style={styles.searchWrap}>
-            <Ionicons name="search" size={18} color="#9ca3af" />
+          <View style={[styles.searchWrap, { backgroundColor: theme.searchBg }]}>
+            <Ionicons name="search" size={18} color={theme.searchPlaceholder} />
             <TextInput
               value={query}
               onChangeText={setQuery}
               placeholder="Search friends"
-              placeholderTextColor="#9ca3af"
-              style={styles.searchInput}
+              placeholderTextColor={theme.searchPlaceholder}
+              style={[styles.searchInput, { color: theme.searchText }]}
               autoCorrect={false}
               clearButtonMode="while-editing"
             />
@@ -64,11 +71,11 @@ export function CallFriendPickerSheet({ visible, friends, onClose, onCall }: Pro
             contentContainerStyle={filtered.length === 0 ? styles.emptyList : undefined}
             ListEmptyComponent={
               <View style={styles.empty}>
-                <Ionicons name="people-outline" size={40} color="#c4c4c4" />
-                <Text style={styles.emptyText}>
+                <Ionicons name="people-outline" size={40} color={theme.listSecondaryText} />
+                <Text style={[styles.emptyText, { color: theme.listPrimaryText }]}>
                   {friends.length === 0 ? 'No friends yet' : 'No matches'}
                 </Text>
-                <Text style={styles.emptySub}>
+                <Text style={[styles.emptySub, { color: theme.listSecondaryText }]}>
                   {friends.length === 0
                     ? 'Add friends from Chats to call them here.'
                     : 'Try a different name.'}
@@ -84,7 +91,7 @@ export function CallFriendPickerSheet({ visible, friends, onClose, onCall }: Pro
                     <Text style={styles.avatarText}>{item.name.charAt(0).toUpperCase()}</Text>
                   </View>
                 )}
-                <Text style={styles.name} numberOfLines={1}>
+                <Text style={[styles.name, { color: theme.listPrimaryText }]} numberOfLines={1}>
                   {item.name}
                 </Text>
                 <View style={styles.actions}>

@@ -1,4 +1,4 @@
-import React, { forwardRef, useCallback, useImperativeHandle, useRef } from 'react';
+import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from 'react';
 import {
   NativeScrollEvent,
   NativeSyntheticEvent,
@@ -71,6 +71,13 @@ export const ReelNativeFeed = forwardRef<ReelNativeFeedHandle, Props>(function R
   const indexRef = useRef(currentIndex);
   indexRef.current = currentIndex;
 
+  // Page height changes (measure-after-layout, rotation, split screen) leave the
+  // scroller parked between two pages — re-anchor on the reel the user is on.
+  useEffect(() => {
+    if (reelHeight <= 0) return;
+    scrollRef.current?.scrollTo({ y: Math.max(0, indexRef.current) * reelHeight, animated: false });
+  }, [reelHeight]);
+
   useImperativeHandle(ref, () => ({
     scrollToIndex: (index: number, animated = true) => {
       const h = heightRef.current;
@@ -117,8 +124,11 @@ export const ReelNativeFeed = forwardRef<ReelNativeFeedHandle, Props>(function R
       style={{ height: reelHeight, width: reelWidth }}
       contentContainerStyle={{ flexGrow: 0 }}
       pagingEnabled
+      snapToInterval={reelHeight}
+      snapToAlignment="start"
       decelerationRate={Platform.OS === 'ios' ? 'fast' : 0.92}
-      disableIntervalMomentum={false}
+      // One reel per fling — matches TikTok and stops Android over-scrolling pages.
+      disableIntervalMomentum
       showsVerticalScrollIndicator={false}
       bounces={false}
       overScrollMode="never"

@@ -2,12 +2,19 @@ import React, { memo } from 'react';
 import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { ReelDTO } from '../../lib/api';
-import { REEL_ACTION_RAIL_RIGHT, REEL_ACTION_RAIL_WIDTH, REEL_CONTENT_SHIFT_DOWN } from './reelVideoLayout';
+import {
+  REEL_ACTION_RAIL_RIGHT,
+  REEL_ACTION_RAIL_WIDTH,
+  REEL_COMPACT_HEIGHT,
+  REEL_CONTENT_SHIFT_DOWN,
+} from './reelVideoLayout';
 import { ExpandableCaption } from './ExpandableCaption';
 import { ReelSoundStrip } from './ReelSoundStrip';
 import { REEL_ACCENT } from './reelTheme';
 import { formatReelCount, reelAuthorLabel, reelAvatarUrl } from './reelFeedRowUtils';
 import { ReelActionIcon } from './ReelActionIcon';
+
+const HIT_SLOP = { top: 6, bottom: 6, left: 8, right: 8 };
 
 type Props = {
   reel: ReelDTO;
@@ -36,6 +43,7 @@ type Props = {
 function ReelFloatingChromeComponent({
   reel,
   reelWidth,
+  reelHeight,
   usePhoneFrame,
   metaBottom,
   myProfileId,
@@ -52,6 +60,12 @@ function ReelFloatingChromeComponent({
   const avatar = reelAvatarUrl(reel);
   const author = reelAuthorLabel(reel);
   const isLiked = reel.liked_by_me;
+  // Short phones (and split-screen) can't fit the full-size rail above the caption.
+  const compact = !usePhoneFrame && reelHeight > 0 && reelHeight < REEL_COMPACT_HEIGHT;
+  const icon = (size: number) => (compact ? Math.round(size * 0.85) : size);
+  const actionTextStyle = usePhoneFrame
+    ? [styles.actionText, styles.actionTextDesktop]
+    : styles.actionText;
 
   return (
     <View
@@ -73,6 +87,8 @@ function ReelFloatingChromeComponent({
               paddingRight: usePhoneFrame ? 8 : REEL_ACTION_RAIL_WIDTH + 8,
             },
           ]}
+          // Empty caption space must pass vertical drags to the pager.
+          pointerEvents="box-none"
         >
           <View style={styles.userInfo}>
             <TouchableOpacity onPress={onOpenProfile}>
@@ -114,48 +130,58 @@ function ReelFloatingChromeComponent({
         style={[
           styles.actionButtons,
           { bottom: metaBottom },
+          compact && styles.actionButtonsCompact,
           usePhoneFrame && styles.actionButtonsDesktop,
         ]}
+        pointerEvents="box-none"
       >
         <View style={styles.profileActionWrap}>
-          <TouchableOpacity style={styles.profileButton} onPress={onOpenProfile}>
+          <TouchableOpacity
+            style={styles.profileButton}
+            onPress={onOpenProfile}
+            hitSlop={HIT_SLOP}
+          >
             {avatar ? (
-              <Image source={{ uri: avatar }} style={styles.profileAvatar} />
+              <Image source={{ uri: avatar }} style={[styles.profileAvatar, compact && styles.profileAvatarCompact]} />
             ) : (
-              <View style={[styles.profileAvatar, styles.avatarFallback]}>
+              <View style={[styles.profileAvatar, compact && styles.profileAvatarCompact, styles.avatarFallback]}>
                 <Text style={styles.avatarFallbackText}>{author.charAt(0).toUpperCase()}</Text>
               </View>
             )}
           </TouchableOpacity>
-          <TouchableOpacity style={styles.profileFollowPlus} onPress={onQuickFollow}>
+          <TouchableOpacity style={styles.profileFollowPlus} onPress={onQuickFollow} hitSlop={HIT_SLOP}>
             <Ionicons name={isFollowing ? 'checkmark' : 'add'} size={17} color="#fff" />
           </TouchableOpacity>
         </View>
-        <TouchableOpacity style={styles.actionButton} onPress={onToggleLike}>
-          <ReelActionIcon name="heart" size={36} color={isLiked ? REEL_ACCENT : '#fff'} />
-          <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>
+        <TouchableOpacity style={styles.actionButton} onPress={onToggleLike} hitSlop={HIT_SLOP}>
+          <ReelActionIcon name="heart" size={icon(36)} color={isLiked ? REEL_ACCENT : '#fff'} />
+          <Text style={actionTextStyle} maxFontSizeMultiplier={1.2} numberOfLines={1}>
             {formatReelCount(reel.like_count)}
           </Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.actionButton} onPress={onOpenComments}>
-          <ReelActionIcon name="chatbubble-ellipses" size={34} />
-          <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>
+        <TouchableOpacity style={styles.actionButton} onPress={onOpenComments} hitSlop={HIT_SLOP}>
+          <ReelActionIcon name="chatbubble-ellipses" size={icon(34)} />
+          <Text style={actionTextStyle} maxFontSizeMultiplier={1.2} numberOfLines={1}>
             {formatReelCount(reel.comment_count)}
           </Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.actionButton} onPress={onOpenShare}>
-          <ReelActionIcon name="paper-plane" size={32} />
-          <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>Share</Text>
+        <TouchableOpacity style={styles.actionButton} onPress={onOpenShare} hitSlop={HIT_SLOP}>
+          <ReelActionIcon name="paper-plane" size={icon(32)} />
+          <Text style={actionTextStyle} maxFontSizeMultiplier={1.2} numberOfLines={1}>
+            Share
+          </Text>
         </TouchableOpacity>
         {myProfileId && reel.author_id !== myProfileId ? (
-          <TouchableOpacity style={styles.actionButton} onPress={onOpenGift}>
-            <ReelActionIcon name="gift" size={30} color="#fff" />
-            <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>Gift</Text>
+          <TouchableOpacity style={styles.actionButton} onPress={onOpenGift} hitSlop={HIT_SLOP}>
+            <ReelActionIcon name="gift" size={icon(30)} color="#fff" />
+            <Text style={actionTextStyle} maxFontSizeMultiplier={1.2} numberOfLines={1}>
+              Gift
+            </Text>
           </TouchableOpacity>
         ) : null}
         <TouchableOpacity style={styles.actionButton}>
-          <ReelActionIcon name="eye" size={30} />
-          <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>
+          <ReelActionIcon name="eye" size={icon(30)} />
+          <Text style={actionTextStyle} maxFontSizeMultiplier={1.2} numberOfLines={1}>
             {formatReelCount(reel.view_count)}
           </Text>
         </TouchableOpacity>
@@ -201,6 +227,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     minWidth: REEL_ACTION_RAIL_WIDTH,
   },
+  actionButtonsCompact: {
+    gap: 4,
+    paddingVertical: 6,
+  },
   actionButtonsDesktop: {
     right: 0,
     paddingRight: 4,
@@ -224,6 +254,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#fff',
   },
+  profileAvatarCompact: { width: 38, height: 38, borderRadius: 19 },
   avatarFallback: {
     backgroundColor: '#6366f1',
     justifyContent: 'center',

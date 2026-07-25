@@ -278,30 +278,53 @@ export default function CallsScreen() {
           </View>
 
           <View style={styles.callInfo}>
-            <Text style={[styles.callName, missed && styles.missedCallName]} numberOfLines={1}>
+            <Text
+              style={[
+                styles.callName,
+                { color: theme.listPrimaryText },
+                missed && styles.missedCallName,
+              ]}
+              numberOfLines={1}
+            >
               {name}
             </Text>
             <View style={styles.callMeta}>
               <Ionicons
                 name={incoming ? 'arrow-down' : 'arrow-up'}
                 size={14}
-                color={missed ? '#ff3b30' : '#8e8e93'}
+                color={missed ? '#ff3b30' : theme.listSecondaryText}
               />
-              <Text style={[styles.callTime, missed && styles.missedCallTime]}>{sub}</Text>
+              <Text
+                style={[
+                  styles.callTime,
+                  { color: theme.listSecondaryText },
+                  missed && styles.missedCallTime,
+                ]}
+              >
+                {sub}
+              </Text>
             </View>
           </View>
         </TouchableOpacity>
 
         <View style={styles.callbackRow}>
           <TouchableOpacity
-            style={[styles.callbackButton, styles.callbackVoice]}
+            style={[
+              styles.callbackButton,
+              styles.callbackVoice,
+              theme.isDark && { backgroundColor: '#0d2137' },
+            ]}
             accessibilityLabel="Call back"
             onPress={() => void startCall(item, 'voice')}
           >
             <Ionicons name="call" size={20} color="#1976d2" />
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.callbackButton, styles.callbackVideo]}
+            style={[
+              styles.callbackButton,
+              styles.callbackVideo,
+              theme.isDark && { backgroundColor: '#0f2918' },
+            ]}
             accessibilityLabel="Video call back"
             onPress={() => void startCall(item, 'video')}
           >
@@ -343,12 +366,23 @@ export default function CallsScreen() {
       </LinearGradient>
 
       {tab === 'all' && missedCount > 0 && (
-        <TouchableOpacity style={styles.missedBanner} onPress={() => setTab('missed')}>
+        <TouchableOpacity
+          style={[
+            styles.missedBanner,
+            theme.isDark && { backgroundColor: '#2a1212', borderColor: '#5c1f1f' },
+          ]}
+          onPress={() => setTab('missed')}
+        >
           <View style={styles.missedBannerIcon}>
             <Ionicons name="call-outline" size={18} color="#fff" />
           </View>
           <View style={styles.missedBannerText}>
-            <Text style={styles.missedBannerTitle}>
+            <Text
+              style={[
+                styles.missedBannerTitle,
+                theme.isDark && { color: '#ff8a80' },
+              ]}
+            >
               {missedCount} missed call{missedCount === 1 ? '' : 's'}
             </Text>
             <Text style={styles.missedBannerSub}>Tap to view and call back</Text>
@@ -357,30 +391,54 @@ export default function CallsScreen() {
         </TouchableOpacity>
       )}
 
-      <View style={styles.tabContainer}>
+      <View style={[styles.tabContainer, { backgroundColor: theme.listBg }]}>
         <TouchableOpacity
-          style={[styles.tab, tab === 'all' && styles.activeTab]}
+          style={[
+            styles.tab,
+            { backgroundColor: theme.listCardBg },
+            tab === 'all' && styles.activeTab,
+          ]}
           onPress={() => setTab('all')}
         >
           <Ionicons
             name="time-outline"
             size={16}
-            color={tab === 'all' ? '#fff' : '#8e8e93'}
+            color={tab === 'all' ? '#fff' : theme.listSecondaryText}
             style={styles.tabIcon}
           />
-          <Text style={[styles.tabText, tab === 'all' && styles.activeTabText]}>Recent</Text>
+          <Text
+            style={[
+              styles.tabText,
+              { color: theme.listSecondaryText },
+              tab === 'all' && styles.activeTabText,
+            ]}
+          >
+            Recent
+          </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.tab, tab === 'missed' && styles.activeTab]}
+          style={[
+            styles.tab,
+            { backgroundColor: theme.listCardBg },
+            tab === 'missed' && styles.activeTab,
+          ]}
           onPress={() => setTab('missed')}
         >
           <Ionicons
             name="call-outline"
             size={16}
-            color={tab === 'missed' ? '#fff' : '#8e8e93'}
+            color={tab === 'missed' ? '#fff' : theme.listSecondaryText}
             style={styles.tabIcon}
           />
-          <Text style={[styles.tabText, tab === 'missed' && styles.activeTabText]}>Missed</Text>
+          <Text
+            style={[
+              styles.tabText,
+              { color: theme.listSecondaryText },
+              tab === 'missed' && styles.activeTabText,
+            ]}
+          >
+            Missed
+          </Text>
           {missedCount > 0 && (
             <View style={styles.badge}>
               <Text style={styles.badgeText}>{missedCount > 9 ? '9+' : missedCount}</Text>
@@ -407,7 +465,7 @@ export default function CallsScreen() {
       {loading && calls.length === 0 ? (
         <View style={styles.loadingBox}>
           <ActivityIndicator color="#1976d2" size="large" />
-          <Text style={styles.loadingText}>Loading calls…</Text>
+          <Text style={[styles.loadingText, { color: theme.listSecondaryText }]}>Loading calls…</Text>
         </View>
       ) : error && calls.length === 0 ? (
         <View style={styles.loadingBox}>
@@ -423,7 +481,9 @@ export default function CallsScreen() {
           keyExtractor={(c) => c.id}
           renderItem={({ item }) => renderCallItem(item)}
           renderSectionHeader={({ section: { title } }) => (
-            <Text style={styles.sectionHeader}>{title}</Text>
+            <Text style={[styles.sectionHeader, { color: theme.sectionLabel, backgroundColor: theme.listBg }]}>
+              {title}
+            </Text>
           )}
           ListHeaderComponent={listHeader}
           stickySectionHeadersEnabled={false}
@@ -434,17 +494,17 @@ export default function CallsScreen() {
           }
           ListEmptyComponent={
             <View style={styles.emptyState}>
-              <View style={styles.emptyIconRing}>
+              <View style={[styles.emptyIconRing, { backgroundColor: theme.listCardBg }]}>
                 <Ionicons
                   name={tab === 'missed' ? 'checkmark-circle' : 'call-outline'}
                   size={40}
                   color={tab === 'missed' ? '#34c759' : '#1976d2'}
                 />
               </View>
-              <Text style={styles.emptyText}>
+              <Text style={[styles.emptyText, { color: theme.listPrimaryText }]}>
                 {tab === 'missed' ? 'All caught up!' : 'No recent calls'}
               </Text>
-              <Text style={styles.emptySubtext}>
+              <Text style={[styles.emptySubtext, { color: theme.listSecondaryText }]}>
                 {tab === 'missed'
                   ? 'You have no missed calls right now.'
                   : 'Tap the friends button below to start a call.'}

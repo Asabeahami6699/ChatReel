@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useLayoutEffect } from 'react';
 import {
   View,
   Text,
@@ -32,6 +32,8 @@ import {
   normalizeLanguageValue,
   optionsWithCurrentValue,
 } from '../../lib/profileLocaleOptions';
+import { useChatSettings } from '../../context/ChatSettingsContext';
+import { getCachedProfile, setCachedProfile, patchCachedProfile } from '../../lib/profileCache';
 
 // === Schema ===
 const profileSchema = z.object({
@@ -139,8 +141,9 @@ const StatusPulseDot = () => {
 // === Main Screen ===
 const ProfileScreen = ({ navigation }: { navigation: any }) => {
   const { user } = useAuth();
+  const { theme } = useChatSettings();
   const insets = useSafeAreaInsets();
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !getCachedProfile());
   const [saving, setSaving] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
@@ -174,6 +177,27 @@ const ProfileScreen = ({ navigation }: { navigation: any }) => {
 
       setUserId(user.id);
 
+      // Instant fill from Settings (or prior visit) while network refresh runs.
+      const cached = getCachedProfile();
+      if (cached) {
+        const country = normalizeCountryValue(cached.country);
+        const language = normalizeLanguageValue(cached.language);
+        reset({
+          display_name: cached.display_name || '',
+          email: cached.email || user.email || '',
+          avatar_url: cached.avatar_url || '',
+          bio: cached.bio || '',
+          country,
+          region: cached.region || '',
+          language,
+        });
+        setCountryOptions(optionsWithCurrentValue(COUNTRY_OPTIONS, country));
+        setLanguageOptions(optionsWithCurrentValue(LANGUAGE_OPTIONS, language));
+        setAvatarUrl(cached.avatar_url || '');
+        setCurrentAppStatus(cached.status === 'Online' ? 'Online' : 'Offline');
+        setLoading(false);
+      }
+
       const { profile: data } = await api.profiles.me();
 
       const profile = data || {};
@@ -189,16 +213,51 @@ const ProfileScreen = ({ navigation }: { navigation: any }) => {
         language,
       };
 
+      setCachedProfile({
+        display_name: formData.display_name,
+        email: formData.email,
+        avatar_url: formData.avatar_url,
+        bio: formData.bio,
+        country: formData.country,
+        region: formData.region,
+        language: formData.language,
+        status: profile.status === 'Online' ? 'Online' : 'Offline',
+      });
+
       setCountryOptions(optionsWithCurrentValue(COUNTRY_OPTIONS, country));
       setLanguageOptions(optionsWithCurrentValue(LANGUAGE_OPTIONS, language));
       reset(formData);
       setAvatarUrl(formData.avatar_url);
       setCurrentAppStatus(profile.status === 'Online' ? 'Online' : 'Offline');
     } catch (err: any) {
-      Alert.alert('Error', err.message);
+      if (!getCachedProfile()) {
+        Alert.alert('Error', err.message);
+      }
     } finally {
       setLoading(false);
     }
+  }, [reset, user?.id, user?.email]);
+
+  useLayoutEffect(() => {
+    const cached = getCachedProfile();
+    if (!cached || !user?.id) return;
+    setUserId(user.id);
+    const country = normalizeCountryValue(cached.country);
+    const language = normalizeLanguageValue(cached.language);
+    reset({
+      display_name: cached.display_name || '',
+      email: cached.email || user.email || '',
+      avatar_url: cached.avatar_url || '',
+      bio: cached.bio || '',
+      country,
+      region: cached.region || '',
+      language,
+    });
+    setCountryOptions(optionsWithCurrentValue(COUNTRY_OPTIONS, country));
+    setLanguageOptions(optionsWithCurrentValue(LANGUAGE_OPTIONS, language));
+    setAvatarUrl(cached.avatar_url || '');
+    setCurrentAppStatus(cached.status === 'Online' ? 'Online' : 'Offline');
+    setLoading(false);
   }, [reset, user?.id, user?.email]);
 
   useEffect(() => {
@@ -214,6 +273,15 @@ const ProfileScreen = ({ navigation }: { navigation: any }) => {
 
     try {
       await api.profiles.updateMe({
+        display_name: data.display_name,
+        email: data.email,
+        avatar_url: data.avatar_url || '',
+        bio: data.bio || '',
+        country: data.country || '',
+        region: data.region || '',
+        language: data.language || '',
+      });
+      patchCachedProfile({
         display_name: data.display_name,
         email: data.email,
         avatar_url: data.avatar_url || '',
@@ -269,6 +337,7 @@ const ProfileScreen = ({ navigation }: { navigation: any }) => {
 
       setAvatarUrl(url);
       setValue('avatar_url', url);
+      patchCachedProfile({ avatar_url: url });
 
       Alert.alert('Success', 'Avatar updated!');
     } catch (err: any) {
@@ -280,8 +349,8 @@ const ProfileScreen = ({ navigation }: { navigation: any }) => {
 
   if (loading) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color="#0066cc" />
+      <View style={[styles.center, { backgroundColor: theme.listBg }]}>
+        <ActivityIndicator size="large" color={theme.primary} />
       </View>
     );
   }
@@ -289,10 +358,10 @@ const ProfileScreen = ({ navigation }: { navigation: any }) => {
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={{ flex: 1, backgroundColor: '#f8f9fa' }}
+      style={{ flex: 1, backgroundColor: theme.listBg }}
     >
       {/* === Header with Back Button === */}
-      <View style={styles.header}>
+      <View style={[styles.header, { backgroundColor: theme.headerBg }]}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
           <Ionicons name="arrow-back" size={28} color="#fff" />
         </TouchableOpacity>
@@ -302,12 +371,21 @@ const ProfileScreen = ({ navigation }: { navigation: any }) => {
 
       <ScrollView contentContainerStyle={styles.scrollContainer}>
         {/* === Profile Card === */}
-        <View style={styles.card}>
+        <View
+          style={[
+            styles.card,
+            {
+              backgroundColor: theme.listCardBg,
+              borderColor: theme.listBorder,
+              borderWidth: theme.isDark ? 1 : 0,
+            },
+          ]}
+        >
           <AvatarPreview uri={avatarUrl} onPress={uploadAvatar} loading={uploadingAvatar} />
 
-          <FormField label="Display Name" control={control} name="display_name" error={errors.display_name} placeholder="John Doe" />
-          <FormField label="Email" control={control} name="email" error={errors.email} placeholder="john@example.com" keyboardType="email-address" />
-          <FormField label="Bio" control={control} name="bio" error={errors.bio} placeholder="Tell us about yourself..." multiline />
+          <FormField label="Display Name" control={control} name="display_name" error={errors.display_name} placeholder="John Doe" labelColor={theme.listPrimaryText} inputBg={theme.searchBg} inputColor={theme.listPrimaryText} borderColor={theme.listBorder} />
+          <FormField label="Email" control={control} name="email" error={errors.email} placeholder="john@example.com" keyboardType="email-address" labelColor={theme.listPrimaryText} inputBg={theme.searchBg} inputColor={theme.listPrimaryText} borderColor={theme.listBorder} />
+          <FormField label="Bio" control={control} name="bio" error={errors.bio} placeholder="Tell us about yourself..." multiline labelColor={theme.listPrimaryText} inputBg={theme.searchBg} inputColor={theme.listPrimaryText} borderColor={theme.listBorder} />
           <FormSelectField
             label="Country"
             control={control}
@@ -316,7 +394,7 @@ const ProfileScreen = ({ navigation }: { navigation: any }) => {
             placeholder="Select country"
             error={errors.country}
           />
-          <FormField label="Region" control={control} name="region" error={errors.region} placeholder="California" />
+          <FormField label="Region" control={control} name="region" error={errors.region} placeholder="California" labelColor={theme.listPrimaryText} inputBg={theme.searchBg} inputColor={theme.listPrimaryText} borderColor={theme.listBorder} />
           <FormSelectField
             label="Language"
             control={control}
@@ -328,10 +406,10 @@ const ProfileScreen = ({ navigation }: { navigation: any }) => {
 
           {/* === Status === */}
           <View style={styles.field}>
-            <Text style={styles.label}>Status</Text>
-            <View style={styles.statusBadge}>
+            <Text style={[styles.label, { color: theme.listPrimaryText }]}>Status</Text>
+            <View style={[styles.statusBadge, theme.isDark && { backgroundColor: '#111' }]}>
               <View style={[styles.statusDot, currentAppStatus === 'Online' ? styles.onlineDot : styles.offlineDot]} />
-              <Text style={styles.statusBadgeText}>{currentAppStatus}</Text>
+              <Text style={[styles.statusBadgeText, { color: theme.listPrimaryText }]}>{currentAppStatus}</Text>
               {currentAppStatus === 'Online' && <StatusPulseDot />}
             </View>
           </View>
@@ -365,29 +443,42 @@ const FormField = ({
   control,
   name,
   error,
+  labelColor,
+  inputBg,
+  inputColor,
+  borderColor,
   ...props
 }: {
   label: string;
   control: any;
   name: keyof ProfileFormData;
   error?: any;
+  labelColor?: string;
+  inputBg?: string;
+  inputColor?: string;
+  borderColor?: string;
   [key: string]: any;
 }) => {
   const [focused, setFocused] = useState(false);
 
   return (
     <View style={styles.field}>
-      <Text style={styles.label}>{label}</Text>
+      <Text style={[styles.label, labelColor ? { color: labelColor } : null]}>{label}</Text>
       <Controller
         control={control}
         name={name}
         render={({ field }) => (
           <TextInput
             {...props}
+            placeholderTextColor={inputColor ? `${inputColor}99` : '#999'}
             style={[
               styles.input,
+              inputBg ? { backgroundColor: inputBg } : null,
+              inputColor ? { color: inputColor } : null,
+              borderColor ? { borderColor } : null,
               error && styles.inputError,
               focused && styles.inputFocused,
+              focused && inputBg ? { backgroundColor: inputBg } : null,
             ]}
             value={field.value}
             onChangeText={field.onChange}

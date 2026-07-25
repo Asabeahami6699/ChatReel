@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -23,6 +23,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { useCurrentProfileId } from '../../hooks/useCurrentProfileId';
 import { useFriendshipsRealtime } from '../../hooks/useFriendshipsRealtime';
 import { notifyFriendshipsListenersImmediate } from '../../lib/friendshipsRealtime';
+import { useChatSettings } from '../../context/ChatSettingsContext';
 
 interface Profile {
   id: string;
@@ -45,7 +46,7 @@ interface Friendship {
 
 type SuggestionType = 'mutual_friends' | 'location' | 'new_users';
 
-const C = {
+const LIGHT_C = {
   primary: '#007AFF',
   primaryDark: '#1e73ce',
   primarySoft: '#e8f2ff',
@@ -55,6 +56,9 @@ const C = {
   text: '#1c1c1e',
   muted: '#6b7280',
 };
+
+/** Defaults for StyleSheet; screens override with theme via inline styles. */
+const C = LIGHT_C;
 
 const SECTION_META: Record<SuggestionType, { icon: keyof typeof Ionicons.glyphMap; color: string }> = {
   mutual_friends: { icon: 'people', color: '#007AFF' },
@@ -81,6 +85,23 @@ export default function AddFriendsListScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
+  const { theme } = useChatSettings();
+  const C = useMemo(
+    () =>
+      theme.isDark
+        ? {
+            primary: theme.primary,
+            primaryDark: theme.accent,
+            primarySoft: '#1a2a3a',
+            bg: theme.listBg,
+            surface: theme.listCardBg,
+            border: theme.listBorder,
+            text: theme.listPrimaryText,
+            muted: theme.listSecondaryText,
+          }
+        : LIGHT_C,
+    [theme]
+  );
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchExpanded, setSearchExpanded] = useState(false);
@@ -274,17 +295,22 @@ export default function AddFriendsListScreen() {
     const displayName = item.display_name?.trim() || item.email?.split('@')[0] || 'User';
 
     return (
-      <View style={styles.userCard}>
+      <View
+        style={[
+          styles.userCard,
+          { backgroundColor: C.surface, borderColor: C.border },
+        ]}
+      >
         <ProfileAvatar uri={item.avatar_url} name={displayName} />
         <View style={styles.userInfo}>
-          <Text style={styles.userName} numberOfLines={1}>
+          <Text style={[styles.userName, { color: C.text }]} numberOfLines={1}>
             {displayName}
           </Text>
-          <Text style={styles.userEmail} numberOfLines={1}>
+          <Text style={[styles.userEmail, { color: C.muted }]} numberOfLines={1}>
             {item.email}
           </Text>
           {item.reason ? (
-            <Text style={styles.reasonText} numberOfLines={1}>
+            <Text style={[styles.reasonText, { color: C.primary }]} numberOfLines={1}>
               {item.reason}
             </Text>
           ) : null}
@@ -312,8 +338,10 @@ export default function AddFriendsListScreen() {
           <View style={[styles.sectionIcon, { backgroundColor: `${meta.color}18` }]}>
             <Ionicons name={meta.icon} size={16} color={meta.color} />
           </View>
-          <Text style={styles.sectionTitle}>{item.title}</Text>
-          <Text style={styles.sectionCount}>{item.data.length}</Text>
+          <Text style={[styles.sectionTitle, { color: C.text }]}>{item.title}</Text>
+          <Text style={[styles.sectionCount, { color: C.muted, backgroundColor: C.primarySoft }]}>
+            {item.data.length}
+          </Text>
         </View>
         {item.data.map((profile) => (
           <React.Fragment key={`${item.type}-${profile.id}`}>
@@ -330,17 +358,17 @@ export default function AddFriendsListScreen() {
   const listHeader = (
     <View style={styles.listHeader}>
       {showResults ? (
-        <Text style={styles.resultsLabel}>
+        <Text style={[styles.resultsLabel, { color: C.muted }]}>
           {loading ? 'Searching…' : `${profiles.length} result${profiles.length === 1 ? '' : 's'}`}
         </Text>
       ) : (
-        <Text style={styles.resultsLabel}>Suggested for you</Text>
+        <Text style={[styles.resultsLabel, { color: C.muted }]}>Suggested for you</Text>
       )}
     </View>
   );
 
   return (
-    <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
+    <SafeAreaView style={[styles.container, { backgroundColor: C.bg }]} edges={['left', 'right', 'bottom']}>
       <LinearGradient
         colors={['#0d47a1', '#1976d2', '#42a5f5']}
         start={{ x: 0, y: 0 }}
@@ -364,12 +392,12 @@ export default function AddFriendsListScreen() {
         <View style={styles.searchRow}>
           {!searchExpanded ? (
             <TouchableOpacity
-              style={styles.searchCollapsed}
+              style={[styles.searchCollapsed, { backgroundColor: C.surface }]}
               onPress={openSearch}
               activeOpacity={0.9}
             >
               <Ionicons name="search" size={20} color={C.muted} />
-              <Text style={styles.searchPlaceholder}>Search by name or email</Text>
+              <Text style={[styles.searchPlaceholder, { color: C.muted }]}>Search by name or email</Text>
             </TouchableOpacity>
           ) : null}
 
@@ -395,7 +423,7 @@ export default function AddFriendsListScreen() {
             ]}
           >
             {searchExpanded ? (
-              <View style={styles.searchInputShell}>
+              <View style={[styles.searchInputShell, { backgroundColor: C.surface }]}>
                 <TextInput
                   ref={searchInputRef}
                   mode="flat"
@@ -439,8 +467,8 @@ export default function AddFriendsListScreen() {
             !loading ? (
               <View style={styles.emptyBox}>
                 <Ionicons name="search-outline" size={40} color={C.muted} />
-                <Text style={styles.emptyTitle}>No users found</Text>
-                <Text style={styles.emptySub}>Try a different name or email</Text>
+                <Text style={[styles.emptyTitle, { color: C.text }]}>No users found</Text>
+                <Text style={[styles.emptySub, { color: C.muted }]}>Try a different name or email</Text>
               </View>
             ) : null
           }
@@ -458,13 +486,13 @@ export default function AddFriendsListScreen() {
             loadingSuggestions ? (
               <View style={styles.emptyBox}>
                 <ActivityIndicator size="large" color={C.primary} />
-                <Text style={styles.emptySub}>Loading suggestions…</Text>
+                <Text style={[styles.emptySub, { color: C.muted }]}>Loading suggestions…</Text>
               </View>
             ) : (
               <View style={styles.emptyBox}>
                 <Ionicons name="people-outline" size={40} color={C.muted} />
-                <Text style={styles.emptyTitle}>No suggestions yet</Text>
-                <Text style={styles.emptySub}>
+                <Text style={[styles.emptyTitle, { color: C.text }]}>No suggestions yet</Text>
+                <Text style={[styles.emptySub, { color: C.muted }]}>
                   Tap search above to find friends by name or email
                 </Text>
                 <TouchableOpacity style={styles.emptySearchBtn} onPress={openSearch}>

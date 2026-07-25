@@ -18,6 +18,14 @@ import {
   identityPrivateKeyId,
   setSecretItem,
 } from './keyStore';
+import {
+  clearCachedIdentityPub,
+  getCachedCleartext,
+  getCachedIdentityPub,
+  hydrateE2ECaches,
+  setCachedCleartext,
+  setCachedIdentityPub,
+} from './e2eCache';
 
 export type E2EWireFields = {
   content: string;
@@ -40,11 +48,18 @@ export type DecryptableMessage = {
   decrypted?: string | null;
 };
 
-const identityPubCache = new Map<string, string>();
-/** Survives remounts within the session so reopening a chat doesn't flash ciphertext. */
-const decryptedByMessageId = new Map<string, string>();
-const IDENTITY_FETCH_MS = 2000;
+/**
+ * Identity keys and decrypted cleartext live in e2eCache (memory + disk) so a
+ * cold start doesn't need a network round trip before a message can be read.
+ */
+const IDENTITY_FETCH_MS = 6000;
+const IDENTITY_FETCH_ATTEMPTS = 3;
 const GROUP_ENCRYPT_MS = 8000;
+/** Ceiling for the send path — past this we fall back to plaintext rather than stall. */
+const DM_ENCRYPT_MS = 10000;
+
+/** Warm the persisted caches as early as possible. */
+void hydrateE2ECaches();
 
 /**
  * Wire format for DM ECDH:
@@ -80,12 +95,12 @@ export function isEncryptedMessage(msg: DecryptableMessage): boolean {
 
 export function rememberDecryptedText(messageId: string | undefined, cleartext: string | null | undefined) {
   if (!messageId || !cleartext) return;
-  decryptedByMessageId.set(messageId, cleartext);
+  setCachedCleartext(messageId, cleartext);
 }
 
 export function recallDecryptedText(messageId: string | undefined): string | undefined {
   if (!messageId) return undefined;
-  return decryptedByMessageId.get(messageId);
+  return getCachedCleartext(messageId);
 }
 
 /** UI text: prefer decrypted cache, else plaintext content, else soft placeholder. */
@@ -113,11 +128,11 @@ export async function getLocalIdentity(userId: string): Promise<{
     privateKeyHex = encode(privateKey);
     await setSecretItem(identityPrivateKeyId(userId), privateKeyHex);
     const publicKeyHex = encode(publicKey);
-    identityPubCache.set(userId, publicKeyHex);
+    setCachedIdentityPub(userId, publicKeyHex);
     return { privateKeyHex, publicKeyHex };
   }
   const publicKeyHex = publicKeyFromPrivate(privateKeyHex);
-  identityPubCache.set(userId, publicKeyHex);
+  setCachedIdentityPub(userId, publicKeyHex);
   return { privateKeyHex, publicKeyHex };
 }
 
@@ -154,21 +169,57 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   });
 }
 
-async function fetchRecipientIdentityPublicKey(userId: string): Promise<string> {
-  const cached = identityPubCache.get(userId);
-  if (cached) return cached;
-  const { public_key } = await withTimeout(
-    api.keys.getIdentity(userId),
-    IDENTITY_FETCH_MS,
-    'getIdentity'
-  );
-  identityPubCache.set(userId, public_key);
-  return public_key;
+/** Coalesce concurrent lookups — a screen of messages must not fan out N requests. */
+const identityFetches = new Map<string, Promise<string>>();
+
+async function fetchIdentityWithRetry(userId: string): Promise<string> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < IDENTITY_FETCH_ATTEMPTS; attempt += 1) {
+    try {
+      const { public_key } = await withTimeout(
+        api.keys.getIdentity(userId),
+        IDENTITY_FETCH_MS,
+        'getIdentity'
+      );
+      if (public_key) return public_key;
+      lastErr = new Error('empty identity key');
+    } catch (err) {
+      lastErr = err;
+    }
+    if (attempt < IDENTITY_FETCH_ATTEMPTS - 1) {
+      await new Promise((r) => setTimeout(r, 400 * 2 ** attempt));
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error('identity fetch failed');
+}
+
+async function fetchRecipientIdentityPublicKey(
+  userId: string,
+  opts?: { forceRefresh?: boolean }
+): Promise<string> {
+  if (!opts?.forceRefresh) {
+    const cached = getCachedIdentityPub(userId);
+    if (cached) return cached;
+  }
+  const inFlight = identityFetches.get(userId);
+  if (inFlight && !opts?.forceRefresh) return inFlight;
+
+  const request = fetchIdentityWithRetry(userId)
+    .then((publicKey) => {
+      setCachedIdentityPub(userId, publicKey);
+      return publicKey;
+    })
+    .finally(() => {
+      if (identityFetches.get(userId) === request) identityFetches.delete(userId);
+    });
+  identityFetches.set(userId, request);
+  return request;
 }
 
 export function clearIdentityPubCache(userId?: string) {
-  if (userId) identityPubCache.delete(userId);
-  else identityPubCache.clear();
+  clearCachedIdentityPub(userId);
+  if (userId) identityFetches.delete(userId);
+  else identityFetches.clear();
 }
 
 /**
@@ -223,12 +274,12 @@ export async function tryEncryptChatText(opts: {
 
     return await withTimeout(
       encryptTextForRecipient(senderUserId, chatId, cleartext),
-      IDENTITY_FETCH_MS + 500,
+      DM_ENCRYPT_MS,
       'encrypt'
     );
   } catch (err) {
     console.warn('[e2e] encrypt skipped (plaintext fallback):', err);
-    if (chatType === 'individual') identityPubCache.delete(chatId);
+    if (chatType === 'individual') clearIdentityPubCache(chatId);
     return null;
   }
 }
@@ -272,6 +323,7 @@ export async function decryptChatMessage<T extends DecryptableMessage>(
   myUserId: string | undefined
 ): Promise<T> {
   if (!myUserId) return msg;
+  await hydrateE2ECaches();
   if (msg.decrypted) {
     rememberDecryptedText(msg.id, msg.decrypted);
     return msg;
@@ -350,18 +402,38 @@ export async function decryptChatMessage<T extends DecryptableMessage>(
     }
 
     const tried = new Set<string>();
-    for (const pub of peerPubs) {
-      if (!pub || tried.has(pub)) continue;
+    const attempt = async (pub: string | undefined): Promise<string | null> => {
+      if (!pub || tried.has(pub)) return null;
       tried.add(pub);
       try {
         const shared = await deriveSharedSecret(myPriv, pub);
-        const clear = await tryDecryptWithShared(msg, shared);
+        return await tryDecryptWithShared(msg, shared);
+      } catch {
+        return null;
+      }
+    };
+
+    for (const pub of peerPubs) {
+      const clear = await attempt(pub);
+      if (clear != null) {
+        rememberDecryptedText(msg.id, clear);
+        return { ...msg, decrypted: clear };
+      }
+    }
+
+    // The cached peer identity can be stale (peer reinstalled and re-registered).
+    // Re-fetch once and retry before giving up, so the row isn't stuck on a
+    // placeholder until the user reopens the chat.
+    if (peerId) {
+      try {
+        const fresh = await fetchRecipientIdentityPublicKey(peerId, { forceRefresh: true });
+        const clear = await attempt(fresh);
         if (clear != null) {
           rememberDecryptedText(msg.id, clear);
           return { ...msg, decrypted: clear };
         }
       } catch {
-        /* try next peer pub */
+        /* offline — keep the cached key for the next attempt */
       }
     }
 
@@ -370,8 +442,6 @@ export async function decryptChatMessage<T extends DecryptableMessage>(
       msg.id,
       iAmSender ? '(sender re-read failed)' : '(recipient decrypt failed — identity key mismatch?)'
     );
-    // Drop stale peer pub so the next open re-fetches.
-    if (peerId) identityPubCache.delete(peerId);
     return msg;
   } catch (err) {
     console.warn('[e2e] decrypt failed for message', msg.id, err);

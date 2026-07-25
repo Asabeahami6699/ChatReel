@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -7,9 +7,13 @@ import {
   TouchableOpacity,
   FlatList,
   Modal,
+  Pressable,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { chatTheme } from './chatTheme';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useChatSettings } from '../../context/ChatSettingsContext';
 import type { ChatListMessage } from './chatListModel';
 import { getMessageDisplayText } from '../../lib/messageCrypto';
 
@@ -20,96 +24,203 @@ type Props = {
   onSelect: (messageId: string) => void;
 };
 
+function previewFor(message: ChatListMessage): string {
+  if (message.message_type === 'text' || !message.message_type) {
+    return getMessageDisplayText(message) || '';
+  }
+  return message.file_name || `[${message.message_type}]`;
+}
+
 export function ChatSearchOverlay({ visible, messages, onClose, onSelect }: Props) {
+  const { theme } = useChatSettings();
+  const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
+
+  useEffect(() => {
+    if (!visible) setQuery('');
+  }, [visible]);
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return [];
     return messages
       .filter((m) => {
-        if (m.message_type && m.message_type !== 'text') {
-          return (m.file_name || '').toLowerCase().includes(q);
-        }
-        return getMessageDisplayText(m).toLowerCase().includes(q);
+        const text = previewFor(m).toLowerCase();
+        const sender = (m.profiles?.display_name || '').toLowerCase();
+        return text.includes(q) || sender.includes(q);
       })
-      .slice(-40)
+      .slice(-60)
       .reverse();
   }, [messages, query]);
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={onClose}>
-            <Ionicons name="arrow-back" size={24} color="#fff" />
-          </TouchableOpacity>
-          <TextInput
-            style={styles.input}
-            placeholder="Search in chat"
-            placeholderTextColor="rgba(255,255,255,0.7)"
-            value={query}
-            onChangeText={setQuery}
-            autoFocus
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+      statusBarTranslucent
+    >
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <Pressable style={styles.backdrop} onPress={onClose} />
+        <View
+          style={[
+            styles.sheet,
+            {
+              paddingTop: insets.top + 8,
+              backgroundColor: theme.listCardBg,
+              borderColor: theme.listBorder,
+            },
+          ]}
+        >
+          <View style={[styles.searchRow, { backgroundColor: theme.searchBg, borderColor: theme.listBorder }]}>
+            <Ionicons name="search" size={18} color={theme.searchPlaceholder} />
+            <TextInput
+              style={[styles.input, { color: theme.searchText }]}
+              placeholder="Search in this chat"
+              placeholderTextColor={theme.searchPlaceholder}
+              value={query}
+              onChangeText={setQuery}
+              autoFocus
+              autoCorrect
+              returnKeyType="search"
+              clearButtonMode="while-editing"
+            />
+            {query.length > 0 ? (
+              <TouchableOpacity onPress={() => setQuery('')} hitSlop={10}>
+                <Ionicons name="close-circle" size={18} color={theme.searchPlaceholder} />
+              </TouchableOpacity>
+            ) : null}
+            <TouchableOpacity onPress={onClose} hitSlop={10} style={styles.cancelBtn}>
+              <Text style={[styles.cancelText, { color: theme.primary }]}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+
+          <Text style={[styles.hint, { color: theme.listSecondaryText }]}>
+            {query.trim()
+              ? `${results.length} result${results.length === 1 ? '' : 's'}`
+              : 'Start typing to find messages'}
+          </Text>
+
+          <FlatList
+            data={results}
+            keyExtractor={(item) => item.id}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={
+              results.length === 0 ? styles.emptyList : styles.listContent
+            }
+            ListEmptyComponent={
+              query.trim() ? (
+                <Text style={[styles.empty, { color: theme.listSecondaryText }]}>
+                  No messages found
+                </Text>
+              ) : null
+            }
+            renderItem={({ item }) => (
+              <TouchableOpacity
+                style={[styles.row, { borderBottomColor: theme.listBorder }]}
+                activeOpacity={0.75}
+                onPress={() => {
+                  onSelect(item.id);
+                  onClose();
+                }}
+              >
+                <View style={[styles.avatar, { backgroundColor: theme.primary }]}>
+                  <Text style={styles.avatarLetter}>
+                    {(item.profiles?.display_name || '?').charAt(0).toUpperCase()}
+                  </Text>
+                </View>
+                <View style={styles.rowBody}>
+                  <Text style={[styles.rowMeta, { color: theme.listSecondaryText }]} numberOfLines={1}>
+                    {item.profiles?.display_name || 'Unknown'} ·{' '}
+                    {new Date(item.created_at).toLocaleString([], {
+                      month: 'short',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </Text>
+                  <Text numberOfLines={2} style={[styles.rowText, { color: theme.listPrimaryText }]}>
+                    {previewFor(item)}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={theme.listSecondaryText} />
+              </TouchableOpacity>
+            )}
           />
         </View>
-        <FlatList
-          data={results}
-          keyExtractor={(item) => item.id}
-          ListEmptyComponent={
-            <Text style={styles.empty}>
-              {query.trim() ? 'No messages found' : 'Type to search messages'}
-            </Text>
-          }
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              style={styles.row}
-              onPress={() => {
-                onSelect(item.id);
-                onClose();
-              }}
-            >
-              <Text style={styles.rowMeta}>
-                {item.profiles?.display_name || 'Unknown'} ·{' '}
-                {new Date(item.created_at).toLocaleString()}
-              </Text>
-              <Text numberOfLines={2} style={styles.rowText}>
-                {item.message_type === 'text'
-                  ? getMessageDisplayText(item)
-                  : item.file_name || item.message_type}
-              </Text>
-            </TouchableOpacity>
-          )}
-        />
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
-  header: {
+  flex: { flex: 1, justifyContent: 'flex-start' },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  sheet: {
+    marginHorizontal: 10,
+    marginTop: 4,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    maxHeight: '78%',
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 12,
+  },
+  searchRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    backgroundColor: chatTheme.headerBg,
+    gap: 8,
+    marginHorizontal: 12,
+    marginTop: 10,
+    marginBottom: 6,
     paddingHorizontal: 12,
-    paddingVertical: 14,
-    paddingTop: 48,
+    paddingVertical: Platform.OS === 'ios' ? 10 : 6,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   input: {
     flex: 1,
-    color: '#fff',
     fontSize: 16,
-    paddingVertical: 6,
+    paddingVertical: 4,
   },
-  empty: { textAlign: 'center', color: '#999', marginTop: 40 },
-  row: {
+  cancelBtn: { marginLeft: 2 },
+  cancelText: { fontSize: 15, fontWeight: '600' },
+  hint: {
+    fontSize: 12,
+    fontWeight: '600',
     paddingHorizontal: 16,
+    paddingBottom: 6,
+  },
+  listContent: { paddingBottom: 12 },
+  emptyList: { paddingVertical: 28 },
+  empty: { textAlign: 'center', fontSize: 14 },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 14,
     paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#eee',
   },
-  rowMeta: { fontSize: 12, color: '#888', marginBottom: 4 },
-  rowText: { fontSize: 15, color: '#222' },
+  avatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarLetter: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  rowBody: { flex: 1, minWidth: 0 },
+  rowMeta: { fontSize: 12, marginBottom: 3 },
+  rowText: { fontSize: 15, lineHeight: 20 },
 });

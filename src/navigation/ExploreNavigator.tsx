@@ -5,6 +5,7 @@ import FeedScreen from '../screens/Explore/FeedScreen';
 import MarketScreen from '../screens/Explore/MarketScreen';
 import ProductDetailScreen from '../screens/Explore/ProductDetailScreen';
 import { StyleSheet, View } from 'react-native';
+import { useChatSettings } from '../context/ChatSettingsContext';
 
 const Tab = createMaterialTopTabNavigator();
 const MarketStack = createStackNavigator();
@@ -25,20 +26,26 @@ const MarketStackScreen = () => (
 );
 
 const ExploreNavigator = () => {
+  const { theme } = useChatSettings();
+
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: theme.listBg }]}>
       <Tab.Navigator
         screenOptions={{
-          tabBarActiveTintColor: '#007AFF',
-          tabBarInactiveTintColor: '#8e8e93',
-          tabBarIndicatorStyle: { backgroundColor: '#007AFF', height: 3, borderRadius: 2 },
+          tabBarActiveTintColor: theme.primary,
+          tabBarInactiveTintColor: theme.tabInactive,
+          tabBarIndicatorStyle: {
+            backgroundColor: theme.primary,
+            height: 3,
+            borderRadius: 2,
+          },
           tabBarLabelStyle: { fontSize: 14, fontWeight: '600', textTransform: 'none' },
           tabBarStyle: {
-            backgroundColor: '#fff',
+            backgroundColor: theme.listCardBg,
             elevation: 0,
             shadowOpacity: 0,
             borderBottomWidth: StyleSheet.hairlineWidth,
-            borderBottomColor: '#e2eaf3',
+            borderBottomColor: theme.listBorder,
           },
           tabBarPressColor: 'rgba(0,122,255,0.08)',
         }}

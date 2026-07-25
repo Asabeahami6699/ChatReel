@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { setLocalActiveChatFocus } from './activeChatFocus';
 import { clearCallsPrefetchCache } from './callsPrefetch';
+import { clearCachedIdentityPub, clearCachedCleartexts, flushE2ECaches } from './e2eCache';
 import { messageStorage } from '../utils/messageStorage';
 
 /**
@@ -11,6 +12,10 @@ export async function clearUserLocalCaches(userId: string | null | undefined): P
   try {
     setLocalActiveChatFocus(null);
     clearCallsPrefetchCache();
+    // Decrypted text must never survive into the next account's session.
+    clearCachedCleartexts();
+    clearCachedIdentityPub();
+    await flushE2ECaches();
   } catch {
     /* ignore */
   }

@@ -24,8 +24,15 @@ export function getReelFrameDimensions(windowWidth: number, windowHeight: number
   return { frameWidth, frameHeight, usePhoneFrame, desktopActionOffset };
 }
 
-/** Distance from the right screen edge to the engagement column (smaller = closer to edge). */
-export const REEL_ACTION_RAIL_RIGHT = -2;
+/**
+ * Distance from the right screen edge to the engagement column.
+ * Kept at 0 — a negative value pushes the column past the parent bounds, which
+ * Android clips out of the touch region and narrow phones cut off visually.
+ */
+export const REEL_ACTION_RAIL_RIGHT = 0;
+
+/** Below this page height the engagement rail shrinks so it always fits. */
+export const REEL_COMPACT_HEIGHT = 660;
 
 /** Height of the progress scrubber touch zone above the tab bar. */
 export const REEL_PROGRESS_ZONE = 20;

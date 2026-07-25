@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { chatThemePresets, type ChatThemeId, type ChatThemeTokens } from '../lib/chatThemes';
+import { chatThemePresets, isChatThemeId, type ChatThemeId, type ChatThemeTokens } from '../lib/chatThemes';
 import { api, type UserRingtoneDTO } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
 
@@ -64,7 +64,8 @@ export function ChatSettingsProvider({ children }: { children: React.ReactNode }
       .then((raw) => {
         if (!alive || !raw) return;
         const parsed = JSON.parse(raw) as Partial<ChatAppSettings>;
-        setSettings({ ...DEFAULT_SETTINGS, ...parsed });
+        const themeId = isChatThemeId(parsed.themeId) ? parsed.themeId : DEFAULT_SETTINGS.themeId;
+        setSettings({ ...DEFAULT_SETTINGS, ...parsed, themeId });
       })
       .catch(() => undefined)
       .finally(() => {
