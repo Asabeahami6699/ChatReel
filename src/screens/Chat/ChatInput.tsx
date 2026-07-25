@@ -1182,8 +1182,11 @@ const formatDuration = (seconds: number) => {
             onBlur={() => setInputFocused(false)}
             style={[styles.textInput, { height: Math.max(MIN_INPUT_HEIGHT - 8, inputHeight - 8) }]}
             underlineColorAndroid="transparent"
-            importantForAutofill="no"
-            autoComplete="off"
+            autoCorrect
+            spellCheck
+            autoCapitalize="sentences"
+            keyboardType="default"
+            textContentType="none"
             placeholderTextColor="#8b8b8b"
             maxLength={5000}
             blurOnSubmit={false}

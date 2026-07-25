@@ -960,13 +960,25 @@ function WebCallRoom({
           <Text style={styles.duration}>{formatDuration(duration)}</Text>
         </View>
 
-        <CallReactionsBar
-          myName="You"
-          publish={publishExtras}
-          incoming={extras.incomingReaction}
-        />
+        {!ringing ? (
+          <CallReactionsBar
+            myName="You"
+            publish={publishExtras}
+            incoming={extras.incomingReaction}
+          />
+        ) : null}
 
         <View style={[styles.controls, { paddingBottom: 32 + insets.bottom }]}>
+          {ringing ? (
+            <TouchableOpacity
+              style={[styles.ctrlBtn, styles.endBtn]}
+              onPress={finishCall}
+              accessibilityLabel="Cancel call"
+            >
+              <Ionicons name="call" size={28} color="#fff" style={{ transform: [{ rotate: '135deg' }] }} />
+            </TouchableOpacity>
+          ) : (
+            <>
           <TouchableOpacity style={[styles.ctrlBtn, muted && styles.ctrlBtnActive]} onPress={toggleMute}>
             <Ionicons name={muted ? 'mic-off' : 'mic'} size={26} color="#fff" />
           </TouchableOpacity>
@@ -1013,6 +1025,8 @@ function WebCallRoom({
           >
             <Ionicons name="call" size={26} color="#fff" style={{ transform: [{ rotate: '135deg' }] }} />
           </TouchableOpacity>
+            </>
+          )}
         </View>
 
         <CallInCallChat
@@ -1302,7 +1316,11 @@ function CallRoom({
           void finishCall(false);
         }}
         onError={(err: Error) => {
-          showAppToast(err.message || 'Call error', { isError: true });
+          const raw = err?.message || 'Call error';
+          const msg = /unexpected token|not valid JSON|JSON/i.test(raw)
+            ? 'Call media server returned an invalid response. Check LIVEKIT_URL on Render.'
+            : raw;
+          showAppToast(msg, { isError: true });
           void finishCall(false);
         }}
       >
@@ -2067,13 +2085,25 @@ function RoomBody(props: {
         <Text style={styles.duration}>{formatDuration(props.duration)}</Text>
       </View>
 
-      <CallReactionsBar
-        myName="You"
-        publish={publishExtras}
-        incoming={extras.incomingReaction}
-      />
+      {!props.ringing ? (
+        <CallReactionsBar
+          myName="You"
+          publish={publishExtras}
+          incoming={extras.incomingReaction}
+        />
+      ) : null}
 
       <View style={[styles.controls, { paddingBottom: 32 + insets.bottom }]}>
+        {props.ringing ? (
+          <TouchableOpacity
+            style={[styles.ctrlBtn, styles.endBtn]}
+            onPress={() => void hangup()}
+            accessibilityLabel="Cancel call"
+          >
+            <Ionicons name="call" size={28} color="#fff" style={{ transform: [{ rotate: '135deg' }] }} />
+          </TouchableOpacity>
+        ) : (
+          <>
         <TouchableOpacity
           style={[styles.ctrlBtn, props.muted && styles.ctrlBtnActive]}
           onPress={toggleMute}
@@ -2150,6 +2180,8 @@ function RoomBody(props: {
             style={{ transform: [{ rotate: '135deg' }] }}
           />
         </TouchableOpacity>
+          </>
+        )}
       </View>
 
       <CallInCallChat

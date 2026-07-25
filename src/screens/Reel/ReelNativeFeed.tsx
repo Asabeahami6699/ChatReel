@@ -2,6 +2,7 @@ import React, { forwardRef, useCallback, useImperativeHandle, useRef } from 'rea
 import {
   NativeScrollEvent,
   NativeSyntheticEvent,
+  Platform,
   ScrollView,
   StyleSheet,
   View,
@@ -91,15 +92,18 @@ export const ReelNativeFeed = forwardRef<ReelNativeFeedHandle, Props>(function R
 
   const onScrollEndDrag = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      // Let paging + momentum finish the page change; only nudge when almost settled.
       const h = heightRef.current;
       if (h <= 0) return;
       const y = e.nativeEvent.contentOffset.y;
+      const velocity = e.nativeEvent.velocity?.y ?? 0;
+      if (Math.abs(velocity) > 0.6) return;
       const raw = Math.round(y / h);
       const anchor = indexRef.current;
       const next = Math.max(anchor - 1, Math.min(anchor + 1, raw));
       const clamped = Math.max(0, Math.min(reels.length - 1, next));
       const targetY = clamped * h;
-      if (Math.abs(y - targetY) > 1) {
+      if (Math.abs(y - targetY) > h * 0.12) {
         scrollRef.current?.scrollTo({ y: targetY, animated: true });
       }
       if (clamped !== indexRef.current) onIndexChange(clamped);
@@ -113,12 +117,12 @@ export const ReelNativeFeed = forwardRef<ReelNativeFeedHandle, Props>(function R
       style={{ height: reelHeight, width: reelWidth }}
       contentContainerStyle={{ flexGrow: 0 }}
       pagingEnabled
-      decelerationRate="fast"
-      disableIntervalMomentum
+      decelerationRate={Platform.OS === 'ios' ? 'fast' : 0.92}
+      disableIntervalMomentum={false}
       showsVerticalScrollIndicator={false}
       bounces={false}
       overScrollMode="never"
-      nestedScrollEnabled={false}
+      nestedScrollEnabled
       directionalLockEnabled
       scrollEventThrottle={16}
       onScrollEndDrag={onScrollEndDrag}

@@ -200,7 +200,9 @@ export default function ReelsScreen() {
   const [badgePlayCycle, setBadgePlayCycle] = useState(0);
   const endScreenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const { progressBottom, metaBottom } = reelBottomLayout();
+  const { progressBottom, metaBottom } = reelBottomLayout(
+    usePhoneFrame ? 0 : Math.max(insets.bottom, 8)
+  );
 
   const pausePlayers = useCallback(async () => {
     await Promise.all(
@@ -1067,7 +1069,7 @@ export default function ReelsScreen() {
       <View
         style={[
           styles.topBarWrap,
-          { paddingTop: usePhoneFrame ? 16 : insets.top + 8 },
+          { paddingTop: usePhoneFrame ? 16 : Math.max(insets.top, StatusBar.currentHeight ?? 0) },
           usePhoneFrame && styles.topBarWrapDesktop,
         ]}
         pointerEvents="box-none"

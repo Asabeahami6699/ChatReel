@@ -481,8 +481,26 @@ export async function moderateReelById(
 
 /** Fire-and-forget moderation for image-only / no-transcode reels. */
 export function scheduleReelModeration(reelId: string): void {
-  void moderateReelById(reelId).catch((err) => {
+  const MODERATION_HARD_TIMEOUT_MS = 40_000;
+  void Promise.race([
+    moderateReelById(reelId),
+    new Promise<never>((_, reject) => {
+      setTimeout(
+        () => reject(new Error('Moderation timed out')),
+        MODERATION_HARD_TIMEOUT_MS
+      );
+    }),
+  ]).catch(async (err) => {
     console.error('[moderation] schedule failed:', reelId, err);
+    try {
+      await applyModerationDecision(reelId, {
+        status: 'flagged',
+        score: 0,
+        reason: 'Moderation timed out or failed — pending manual review',
+      });
+    } catch (fallbackErr) {
+      console.error('[moderation] fallback flag failed:', reelId, fallbackErr);
+    }
   });
 }
 

@@ -20,7 +20,13 @@ export function isImageMime(mime?: string | null): boolean {
 }
 
 export function getReelMediaItems(reel: ReelDTO): ReelMediaDTO[] {
-  if (reel.media?.length) return reel.media;
+  if (reel.media?.length) {
+    return reel.media.map((item) => ({
+      ...item,
+      media_type:
+        item.media_type === 'image' || isImageReelUrl(item.media_url) ? 'image' : 'video',
+    }));
+  }
   return [
     {
       id: reel.id,

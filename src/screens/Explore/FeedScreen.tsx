@@ -28,6 +28,7 @@ import { useMomentsFeed } from '../../hooks/useMomentsFeed';
 import { useIsFocused } from '@react-navigation/native';
 import { useCurrentProfileId } from '../../hooks/useCurrentProfileId';
 import { useAuth } from '../../hooks/useAuth';
+import { useChatSettings } from '../../context/ChatSettingsContext';
 import { promptSignIn } from '../../lib/requireSignedIn';
 import { MomentComposer, type MomentDraft, type MomentDraftItem } from './MomentComposer';
 import { MomentViewer } from './MomentViewer';
@@ -162,6 +163,20 @@ export default function FeedScreen() {
   const insets = useSafeAreaInsets();
   const isScreenFocused = useIsFocused();
   const { isGuest, exitGuest } = useAuth();
+  const { theme } = useChatSettings();
+  const C = useMemo(
+    () => ({
+      primary: theme.primary,
+      primaryDark: theme.accent,
+      primarySoft: theme.isDark ? '#1a2a3a' : '#e8f2ff',
+      bg: theme.listBg,
+      surface: theme.isDark ? theme.listCardBg : '#f4f8fc',
+      border: theme.listBorder,
+      text: theme.listPrimaryText,
+      muted: theme.listSecondaryText,
+    }),
+    [theme]
+  );
   const myProfileId = useCurrentProfileId();
   const { authors, loading, refreshing, error, refresh, markSlideViewed, removeSlide } =
     useMomentsFeed();
@@ -600,8 +615,11 @@ export default function FeedScreen() {
   };
 
   return (
-    <View style={styles.container}>
-      <StatusBar backgroundColor={C.bg} barStyle="dark-content" />
+    <View style={[styles.container, { backgroundColor: C.surface }]}>
+      <StatusBar
+        backgroundColor={C.bg}
+        barStyle={theme.isDark ? 'light-content' : 'dark-content'}
+      />
 
       <ScrollView
         showsVerticalScrollIndicator={false}

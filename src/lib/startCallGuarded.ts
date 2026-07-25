@@ -53,7 +53,19 @@ export async function startCallGuarded(data: {
     if (result.waiting_on_busy) {
       showAppToast("Ringing — they'll see call waiting and can put their other call on hold");
     }
-    return result;
+    const liveKit = result.live_kit;
+    const url = typeof liveKit?.url === 'string' ? liveKit.url.trim() : '';
+    const token = typeof liveKit?.token === 'string' ? liveKit.token.trim() : '';
+    if (!token || !/^wss?:\/\//i.test(url)) {
+      throw new ApiError(
+        'Calling is misconfigured (invalid LiveKit URL/token). Check LIVEKIT_URL on the server.',
+        503
+      );
+    }
+    return {
+      ...result,
+      live_kit: { ...liveKit, url, token },
+    };
   } catch (err) {
     if (err instanceof ApiError) {
       if (err.status === 429 || /CALL_CONCURRENCY|Too many active calls/i.test(err.message)) {

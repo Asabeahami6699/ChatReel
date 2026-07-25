@@ -160,7 +160,7 @@ function setProgress(id: string, progress: number, stage?: string) {
 }
 
 const MODERATION_POLL_MS = 2000;
-const MODERATION_TIMEOUT_MS = 90_000;
+const MODERATION_TIMEOUT_MS = 45_000;
 
 async function waitForReelModeration(
   reelId: string,

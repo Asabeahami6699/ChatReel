@@ -12,8 +12,10 @@ import {
   Alert
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useChatSettings } from '../../context/ChatSettingsContext';
 
 export default function MarketScreen({ navigation }) {
+  const { theme } = useChatSettings();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [showFilters, setShowFilters] = useState(false);
@@ -258,16 +260,17 @@ export default function MarketScreen({ navigation }) {
   );
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: theme.listBg }]}>
       {/* Header with search and cart */}
-      <View style={styles.header}>
+      <View style={[styles.header, { backgroundColor: theme.listHeaderBg, borderBottomColor: theme.listBorder }]}>
         <View style={styles.headerTop}>
           {/* Search Bar */}
-          <View style={styles.searchContainer}>
-            <Ionicons name="search" size={20} color="#666" style={styles.searchIcon} />
+          <View style={[styles.searchContainer, { backgroundColor: theme.searchBg }]}>
+            <Ionicons name="search" size={20} color={theme.searchPlaceholder} style={styles.searchIcon} />
             <TextInput
-              style={styles.searchInput}
+              style={[styles.searchInput, { color: theme.searchText }]}
               placeholder="Search products..."
+              placeholderTextColor={theme.searchPlaceholder}
               value={searchQuery}
               onChangeText={setSearchQuery}
             />
@@ -275,7 +278,7 @@ export default function MarketScreen({ navigation }) {
               style={styles.filterButton}
               onPress={() => setShowFilters(true)}
             >
-              <Ionicons name="filter" size={20} color="#666" />
+              <Ionicons name="filter" size={20} color={theme.listSecondaryText} />
             </TouchableOpacity>
           </View>
 

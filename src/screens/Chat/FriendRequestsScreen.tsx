@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { Button, IconButton, Divider, Card, Title, Paragraph } from 'react-native-paper'
 import { api } from '../../lib/api'
 import { useAuth } from '../../hooks/useAuth'
+import { useChatSettings } from '../../context/ChatSettingsContext'
 import { useCurrentProfileId } from '../../hooks/useCurrentProfileId'
 import { useFriendshipsRealtime } from '../../hooks/useFriendshipsRealtime'
 import { notifyFriendshipsListenersImmediate } from '../../lib/friendshipsRealtime'
@@ -27,6 +28,7 @@ const REQUESTS_TIMESTAMP_KEY = '@friend_requests_timestamp'
 
 export default function FriendRequestsScreen() {
   const { user } = useAuth()
+  const { theme } = useChatSettings()
   const [incomingRequests, setIncomingRequests] = useState<any[]>([])
   const [outgoingRequests, setOutgoingRequests] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -247,7 +249,7 @@ export default function FriendRequestsScreen() {
   const hasRequests = allRequests.length > 0
 
   return (
-    <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.listBg }]} edges={['left', 'right', 'bottom']}>
       {loading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#007AFF" />

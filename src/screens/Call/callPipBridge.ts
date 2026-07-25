@@ -85,6 +85,13 @@ export function openCallSession(params: {
   peerName?: string;
   peerAvatar?: string | null;
 }) {
+  const token = String(params.token ?? '').trim();
+  const url = String(params.url ?? '').trim();
+  if (!token || !/^wss?:\/\//i.test(url)) {
+    showAppToast('Cannot start call — invalid media server URL', { isError: true });
+    console.warn('[callPip] reject openCallSession', { hasToken: !!token, url });
+    return;
+  }
   preloadCallEndTone();
   snapshot = {
     ...snapshot,
@@ -92,8 +99,8 @@ export function openCallSession(params: {
     minimized: false,
     callId: params.call.id,
     call: params.call,
-    token: params.token,
-    url: params.url,
+    token,
+    url,
     peerName: params.peerName ?? snapshot.peerName,
     peerAvatar: params.peerAvatar !== undefined ? params.peerAvatar : snapshot.peerAvatar,
     durationLabel: '0:00',

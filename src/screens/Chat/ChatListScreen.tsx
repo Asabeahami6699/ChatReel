@@ -130,7 +130,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
   const { width } = useWindowDimensions()
   const insets = useSafeAreaInsets()
   const isNarrow = width < 400
-  const fabBottom = Math.max(2, insets.bottom) + (setSelectedChat ? 4 : 44)
+  const fabBottom = Math.max(2, insets.bottom) + (setSelectedChat ? 4 : 28)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchHistory, setSearchHistory] = useState<string[]>([])

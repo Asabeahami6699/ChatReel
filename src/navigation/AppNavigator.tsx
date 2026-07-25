@@ -145,8 +145,9 @@ const MainTabNavigator = () => {
   const tabBarBase = useMemo(
     () => ({
       ...styles.tabBarMobile,
-      height: 56 + insets.bottom,
+      height: 62 + insets.bottom,
       paddingBottom: Math.max(insets.bottom, Platform.OS === 'android' ? 8 : 0),
+      paddingTop: 4,
       backgroundColor: theme.listCardBg,
       borderTopColor: theme.listBorder,
     }),
@@ -163,8 +164,8 @@ const MainTabNavigator = () => {
         tabBarActiveTintColor: theme.tabActive,
         tabBarInactiveTintColor: theme.tabInactive,
         tabBarStyle: tabBarBase,
-        tabBarLabelStyle: { fontSize: 12, fontWeight: '700' },
-        tabBarItemStyle: { paddingVertical: 4 },
+        tabBarLabelStyle: { fontSize: 13, fontWeight: '700' },
+        tabBarItemStyle: { paddingVertical: 2 },
         lazy: true,
         lazyPreloadDistance: 0,
         swipeEnabled: false,
@@ -191,7 +192,7 @@ const MainTabNavigator = () => {
             lazy: false,
             tabBarStyle: hideTabBar ? { display: 'none' } : tabBarBase,
             tabBarIcon: ({ color }) => (
-              <Ionicons name="chatbubble-outline" size={20} color={color} />
+              <Ionicons name="chatbubble-outline" size={24} color={color} />
             ),
           };
         }}
@@ -204,7 +205,7 @@ const MainTabNavigator = () => {
         options={{
           lazy: false,
           tabBarIcon: ({ color }) => (
-            <Ionicons name="compass-outline" size={22} color={color} />
+            <Ionicons name="compass-outline" size={24} color={color} />
           ),
         }}
       />
@@ -216,7 +217,7 @@ const MainTabNavigator = () => {
         options={{
           lazy: false,
           tabBarIcon: ({ color }) => (
-            <Ionicons name="call-outline" size={22} color={color} />
+            <Ionicons name="call-outline" size={24} color={color} />
           ),
         }}
       />
@@ -228,7 +229,7 @@ const MainTabNavigator = () => {
         options={{
           tabBarStyle: { display: 'none' },
           tabBarIcon: ({ color }) => (
-            <Ionicons name="play-circle-outline" size={22} color={color} />
+            <Ionicons name="play-circle-outline" size={24} color={color} />
           ),
           lazy: true,
         }}

@@ -49,6 +49,7 @@ export function ReelVideoSurface({
   const isCurrent = index === currentIndex;
   const isNear = isReelNearViewport(index, currentIndex);
   const isImage =
+    reel.media?.[0]?.media_type === 'image' ||
     isImageReelUrl(videoUri) ||
     isImageReelUrl(reel.video_url) ||
     (!reel.duration && isImageReelUrl(reel.thumbnail_url ?? ''));

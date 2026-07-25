@@ -18,6 +18,7 @@ import { api, ApiError, type CallHistoryItemDTO } from '../../lib/api';
 import { showAppToast } from '../../lib/appToast';
 import { startCallGuarded } from '../../lib/startCallGuarded';
 import { useAuth } from '../../hooks/useAuth';
+import { useChatSettings } from '../../context/ChatSettingsContext';
 import { navigateToChat } from '../../navigation/navigateToChat';
 import { useCurrentProfileId } from '../../hooks/useCurrentProfileId';
 import { useCallsFeed } from '../../hooks/useCallsFeed';
@@ -118,6 +119,7 @@ function groupCalls(calls: CallHistoryItemDTO[]): CallSection[] {
 
 export default function CallsScreen() {
   const insets = useSafeAreaInsets();
+  const { theme } = useChatSettings();
   const { user, isGuest, exitGuest } = useAuth();
   const myProfileId = useCurrentProfileId();
   const {
@@ -246,7 +248,7 @@ export default function CallsScreen() {
     const canChat = item.scope === 'direct';
 
     return (
-      <View style={styles.callItem}>
+      <View style={[styles.callItem, { backgroundColor: theme.listCardBg, borderColor: theme.listBorder }]}>
         <TouchableOpacity
           style={styles.callMain}
           activeOpacity={0.7}
@@ -399,7 +401,7 @@ export default function CallsScreen() {
   );
 
   return (
-    <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.listBg }]} edges={['left', 'right', 'bottom']}>
       <StatusBar barStyle="light-content" backgroundColor="#0d47a1" />
 
       {loading && calls.length === 0 ? (

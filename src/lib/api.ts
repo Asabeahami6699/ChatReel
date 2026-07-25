@@ -412,7 +412,20 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
       body: body !== undefined ? JSON.stringify(body) : undefined,
       signal,
     });
-    const data = await res.json().catch(() => ({}));
+    const raw = await res.text();
+    let data: Record<string, unknown> = {};
+    if (raw) {
+      try {
+        data = JSON.parse(raw) as Record<string, unknown>;
+      } catch {
+        const snippet = raw.replace(/\s+/g, ' ').slice(0, 80);
+        throw new ApiError(
+          `Server returned non-JSON (${res.status})${snippet ? `: ${snippet}` : ''}. Check API connectivity.`,
+          res.status,
+          true
+        );
+      }
+    }
     return { res, data };
   };
 
