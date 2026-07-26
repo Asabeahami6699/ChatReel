@@ -1,5 +1,5 @@
 // src/screens/Chat/GroupInfoScreen.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -29,6 +29,8 @@ import { api } from '../../lib/api';
 import { setStringAsync as copyToClipboard } from '../../lib/clipboard';
 import { uploadFromUri } from '../../lib/uploads';
 import { useAuth } from '../../hooks/useAuth';
+import { useChatSettings } from '../../context/ChatSettingsContext';
+import type { ChatThemeTokens } from '../../lib/chatThemes';
 import { useRealtimeTopic } from '../../hooks/useRealtimeTopic';
 import { notifyRealtimeTopic } from '../../lib/realtimeHub';
 import { buildGroupInviteLink } from '../../lib/groupInviteLinks';
@@ -92,6 +94,8 @@ export default function GroupInfoScreen() {
   const route = useRoute<any>();
   const { groupId } = route.params;
   const { user } = useAuth();
+  const { theme } = useChatSettings();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
 
   const [groupInfo, setGroupInfo] = useState<GroupInfo | null>(null);
   const [members, setMembers] = useState<GroupMember[]>([]);
@@ -1101,7 +1105,7 @@ useEffect(() => {
             }}
             style={styles.manageButton}
           >
-            <Feather name="more-vertical" size={20} color="#666" />
+            <Feather name="more-vertical" size={20} color={theme.listSecondaryText} />
           </TouchableOpacity>
         )}
       </TouchableOpacity>
@@ -1122,7 +1126,7 @@ useEffect(() => {
         }}
       >
         <View style={styles.inviteInfo}>
-          <Feather name="link" size={24} color="#007AFF" />
+          <Feather name="link" size={24} color={theme.primary} />
           <View style={styles.inviteDetails}>
             <Text style={styles.inviteToken} numberOfLines={1}>
               Token: ...{item.token.slice(-8)}
@@ -1133,7 +1137,7 @@ useEffect(() => {
             </Text>
           </View>
         </View>
-        <Feather name="more-vertical" size={20} color="#666" />
+        <Feather name="more-vertical" size={20} color={theme.listSecondaryText} />
       </TouchableOpacity>
     );
   };
@@ -1147,7 +1151,7 @@ useEffect(() => {
           <View style={{ width: 48 }} />
         </View>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#007AFF" />
+          <ActivityIndicator size="large" color={theme.primary} />
           <Text style={styles.loadingText}>Loading group information...</Text>
           {!isOnline && (
             <Text style={styles.offlineText}>You are offline</Text>
@@ -1166,8 +1170,8 @@ useEffect(() => {
             refreshing={refreshing}
             onRefresh={refreshData}
             enabled={isOnline}
-            colors={['#007AFF']}
-            tintColor="#007AFF"
+            colors={[theme.primary]}
+            tintColor={theme.primary}
           />
         }
       >
@@ -1244,11 +1248,11 @@ useEffect(() => {
           <Text style={styles.groupName}>{groupInfo?.name}</Text>
           <View style={styles.groupStats}>
             <View style={styles.statItem}>
-              <Ionicons name="people" size={20} color="#666" />
+              <Ionicons name="people" size={20} color={theme.listSecondaryText} />
               <Text style={styles.statText}>{groupInfo?.members_count} members</Text>
             </View>
             <View style={styles.statItem}>
-              <Ionicons name={isPublic ? "globe" : "lock-closed"} size={20} color="#666" />
+              <Ionicons name={isPublic ? "globe" : "lock-closed"} size={20} color={theme.listSecondaryText} />
               <Text style={styles.statText}>{isPublic ? 'Public' : 'Private'}</Text>
             </View>
           </View>
@@ -1260,7 +1264,7 @@ useEffect(() => {
             <Text style={styles.sectionTitle}>Description</Text>
             {isAdmin && !editingDescription && (
               <TouchableOpacity onPress={() => setEditingDescription(true)}>
-                <Feather name="edit-2" size={18} color="#007AFF" />
+                <Feather name="edit-2" size={18} color={theme.primary} />
               </TouchableOpacity>
             )}
           </View>
@@ -1313,7 +1317,7 @@ useEffect(() => {
               <Feather 
                 name={expandedSections.members ? "chevron-down" : "chevron-right"} 
                 size={20} 
-                color="#666" 
+                color={theme.listSecondaryText} 
               />
               <Text style={styles.collapsibleTitle}>Members ({members.length})</Text>
             </View>
@@ -1329,7 +1333,7 @@ useEffect(() => {
                   });
                 }}
               >
-                <Feather name="user-plus" size={18} color="#007AFF" />
+                <Feather name="user-plus" size={18} color={theme.primary} />
                 <Text style={styles.addMemberText}>Add</Text>
               </TouchableOpacity>
             )}
@@ -1381,7 +1385,7 @@ useEffect(() => {
               <Feather 
                 name={expandedSections.settings ? "chevron-down" : "chevron-right"} 
                 size={20} 
-                color="#666" 
+                color={theme.listSecondaryText} 
               />
               <Text style={styles.collapsibleTitle}>Group Settings</Text>
             </View>
@@ -1391,7 +1395,7 @@ useEffect(() => {
             <>
               <View style={styles.settingItem}>
                 <View style={styles.settingInfo}>
-                  <Ionicons name="notifications-off" size={24} color="#007AFF" />
+                  <Ionicons name="notifications-off" size={24} color={theme.primary} />
                   <View style={styles.settingDetails}>
                     <Text style={styles.settingTitle}>Mute notifications</Text>
                     <Text style={styles.settingDescription}>
@@ -1408,7 +1412,7 @@ useEffect(() => {
               {isAdmin && (
                 <View style={styles.settingItem}>
                   <View style={styles.settingInfo}>
-                    <Ionicons name="globe" size={24} color="#007AFF" />
+                    <Ionicons name="globe" size={24} color={theme.primary} />
                     <View style={styles.settingDetails}>
                       <Text style={styles.settingTitle}>Public Group</Text>
                       <Text style={styles.settingDescription}>
@@ -1440,7 +1444,7 @@ useEffect(() => {
                 <Feather 
                   name={expandedSections.invites ? "chevron-down" : "chevron-right"} 
                   size={20} 
-                  color="#666" 
+                  color={theme.listSecondaryText} 
                 />
                 <Text style={styles.collapsibleTitle}>Invite Links ({invites.length})</Text>
               </View>
@@ -1470,7 +1474,7 @@ useEffect(() => {
                   />
                 ) : (
                   <View style={styles.emptyState}>
-                    <Feather name="link" size={40} color="#ddd" />
+                    <Feather name="link" size={40} color={theme.listBorder} />
                     <Text style={styles.emptyStateText}>No active invite links</Text>
                     <Text style={styles.emptyStateSubtext}>
                       {isOnline 
@@ -1495,7 +1499,7 @@ useEffect(() => {
               <Feather 
                 name={expandedSections.info ? "chevron-down" : "chevron-right"} 
                 size={20} 
-                color="#666" 
+                color={theme.listSecondaryText} 
               />
               <Text style={styles.collapsibleTitle}>Group Information</Text>
             </View>
@@ -1504,7 +1508,7 @@ useEffect(() => {
           {expandedSections.info && (
             <View style={styles.infoGrid}>
               <View style={styles.infoCard}>
-                <Feather name="calendar" size={24} color="#007AFF" />
+                <Feather name="calendar" size={24} color={theme.primary} />
                 <Text style={styles.infoCardTitle}>Created</Text>
                 <Text style={styles.infoCardValue}>
                   {new Date(groupInfo?.created_at || '').toLocaleDateString()}
@@ -1512,7 +1516,7 @@ useEffect(() => {
               </View>
               
               <View style={styles.infoCard}>
-                <Feather name="user" size={24} color="#007AFF" />
+                <Feather name="user" size={24} color={theme.primary} />
                 <Text style={styles.infoCardTitle}>Created By</Text>
                 <Text style={styles.infoCardValue} numberOfLines={1}>
                   {members.find(m => m.role === 'creator')?.profiles?.display_name || 'Unknown'}
@@ -1571,7 +1575,7 @@ useEffect(() => {
                 disabled={generatingInvite || !isOnline}
               >
                 <View style={styles.inviteOptionIcon}>
-                  <Feather name="link" size={28} color="#007AFF" />
+                  <Feather name="link" size={28} color={theme.primary} />
                 </View>
                 <View style={styles.inviteOptionDetails}>
                   <Text style={styles.inviteOptionTitle}>
@@ -1583,11 +1587,11 @@ useEffect(() => {
                       : 'Save invite locally. It will be created when you reconnect.'}
                   </Text>
                 </View>
-                {generatingInvite && <ActivityIndicator color="#007AFF" />}
+                {generatingInvite && <ActivityIndicator color={theme.primary} />}
               </TouchableOpacity>
               
               <View style={styles.inviteInfo}>
-                <Ionicons name="information-circle" size={20} color="#666" />
+                <Ionicons name="information-circle" size={20} color={theme.listSecondaryText} />
                 <Text style={styles.inviteInfoText}>
                   {isOnline
                     ? 'Anyone with the link can join this group. You can revoke links at any time.'
@@ -1617,7 +1621,7 @@ useEffect(() => {
                 onPress={() => updateMemberRole(selectedMember.id, 'admin')}
                 disabled={!isOnline}
               >
-                <Ionicons name="shield-checkmark" size={20} color="#007AFF" />
+                <Ionicons name="shield-checkmark" size={20} color={theme.primary} />
                 <Text style={styles.actionButtonText}>Make Admin</Text>
               </TouchableOpacity>
             )}
@@ -1674,7 +1678,7 @@ useEffect(() => {
                 setShowInviteActions(false);
               }}
             >
-              <Feather name="copy" size={20} color="#007AFF" />
+              <Feather name="copy" size={20} color={theme.primary} />
               <Text style={styles.actionButtonText}>Copy Link</Text>
             </TouchableOpacity>
             
@@ -1688,7 +1692,7 @@ useEffect(() => {
                 setShowInviteActions(false);
               }}
             >
-              <Feather name="share-2" size={20} color="#007AFF" />
+              <Feather name="share-2" size={20} color={theme.primary} />
               <Text style={styles.actionButtonText}>Share Link</Text>
             </TouchableOpacity>
             
@@ -1719,10 +1723,10 @@ useEffect(() => {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: ChatThemeTokens) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: theme.listBg,
   },
   header: {
     flexDirection: 'row',
@@ -1731,7 +1735,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    borderBottomColor: theme.listBorder,
   },
   headerCenter: {
     alignItems: 'center',
@@ -1739,7 +1743,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#000',
+    color: theme.listPrimaryText,
   },
   offlineBadge: {
     flexDirection: 'row',
@@ -1759,7 +1763,7 @@ const styles = StyleSheet.create({
   pendingBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#007AFF',
+    backgroundColor: theme.primary,
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 10,
@@ -1791,7 +1795,7 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   disabledButton: {
-    backgroundColor: '#ccc',
+    backgroundColor: theme.listBorder,
     opacity: 0.7,
   },
   disabledAction: {
@@ -1805,12 +1809,12 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 12,
     fontSize: 14,
-    color: '#666',
+    color: theme.listSecondaryText,
   },
   groupHeader: {
     alignItems: 'center',
     paddingVertical: 24,
-    backgroundColor: '#f8f9fa',
+    backgroundColor: theme.listCardBg,
   },
   avatarContainer: {
     position: 'relative',
@@ -1821,26 +1825,26 @@ const styles = StyleSheet.create({
     height: 60,
     borderRadius: 30,
     borderWidth: 3,
-    borderColor: '#fff',
-    backgroundColor: '#e0e0e0',
+    borderColor: theme.listCardBg,
+    backgroundColor: theme.listBorder,
   },
   editAvatarButton: {
     position: 'absolute',
     bottom: 0,
     right: 0,
-    backgroundColor: '#007AFF',
+    backgroundColor: theme.primary,
     width: 32,
     height: 32,
     borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 2,
-    borderColor: '#fff',
+    borderColor: theme.listCardBg,
   },
   groupName: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#000',
+    color: theme.listPrimaryText,
     marginBottom: 16,
   },
   groupStats: {
@@ -1854,13 +1858,13 @@ const styles = StyleSheet.create({
   },
   statText: {
     fontSize: 14,
-    color: '#666',
+    color: theme.listSecondaryText,
   },
   section: {
     paddingHorizontal: 20,
     paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    borderBottomColor: theme.listBorder,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -1882,7 +1886,7 @@ const styles = StyleSheet.create({
   collapsibleTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#000',
+    color: theme.listPrimaryText,
   },
   memberActions: {
     flexDirection: 'row',
@@ -1891,13 +1895,13 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#000',
+    color: theme.listPrimaryText,
   },
   addButton: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#007AFF',
+    backgroundColor: theme.primary,
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 20,
@@ -1915,26 +1919,28 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   addMemberText: {
-    color: '#007AFF',
+    color: theme.primary,
     fontSize: 14,
     fontWeight: '500',
   },
   description: {
     fontSize: 16,
     lineHeight: 24,
-    color: '#333',
+    color: theme.listPrimaryText,
   },
   editDescriptionContainer: {
     gap: 12,
   },
   descriptionInput: {
     borderWidth: 1,
-    borderColor: '#ddd',
+    borderColor: theme.listBorder,
     borderRadius: 8,
     padding: 12,
     fontSize: 16,
     minHeight: 80,
     textAlignVertical: 'top',
+    backgroundColor: theme.searchBg,
+    color: theme.searchText,
   },
   editActions: {
     flexDirection: 'row',
@@ -1946,12 +1952,12 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   cancelButtonText: {
-    color: '#666',
+    color: theme.listSecondaryText,
     fontSize: 14,
     fontWeight: '500',
   },
   saveButton: {
-    backgroundColor: '#007AFF',
+    backgroundColor: theme.primary,
     paddingHorizontal: 20,
     paddingVertical: 8,
     borderRadius: 8,
@@ -1980,12 +1986,12 @@ const styles = StyleSheet.create({
   settingTitle: {
     fontSize: 16,
     fontWeight: '500',
-    color: '#000',
+    color: theme.listPrimaryText,
     marginBottom: 2,
   },
   settingDescription: {
     fontSize: 14,
-    color: '#666',
+    color: theme.listSecondaryText,
   },
   memberItem: {
     flexDirection: 'row',
@@ -2006,7 +2012,7 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: '#e0e0e0',
+    backgroundColor: theme.listBorder,
   },
   memberDetails: {
     flex: 1,
@@ -2020,7 +2026,7 @@ const styles = StyleSheet.create({
   memberName: {
     fontSize: 16,
     fontWeight: '500',
-    color: '#000',
+    color: theme.listPrimaryText,
     flexShrink: 1,
     maxWidth: '60%',
   },
@@ -2036,7 +2042,7 @@ const styles = StyleSheet.create({
   },
   memberEmail: {
     fontSize: 12,
-    color: '#999',
+    color: theme.listSecondaryText,
   },
   inviteItem: {
     flexDirection: 'row',
@@ -2056,16 +2062,16 @@ const styles = StyleSheet.create({
   inviteToken: {
     fontSize: 14,
     fontWeight: '500',
-    color: '#000',
+    color: theme.listPrimaryText,
     marginBottom: 2,
   },
   inviteMeta: {
     fontSize: 12,
-    color: '#666',
+    color: theme.listSecondaryText,
   },
   separator: {
     height: 1,
-    backgroundColor: '#f0f0f0',
+    backgroundColor: theme.listBorder,
     marginLeft: 60,
   },
   showMoreButton: {
@@ -2074,7 +2080,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   showMoreText: {
-    color: '#007AFF',
+    color: theme.primary,
     fontSize: 14,
     fontWeight: '500',
   },
@@ -2084,13 +2090,13 @@ const styles = StyleSheet.create({
   },
   emptyStateText: {
     fontSize: 16,
-    color: '#666',
+    color: theme.listSecondaryText,
     marginTop: 12,
     marginBottom: 4,
   },
   emptyStateSubtext: {
     fontSize: 14,
-    color: '#999',
+    color: theme.listSecondaryText,
     textAlign: 'center',
   },
   infoGrid: {
@@ -2102,13 +2108,13 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     padding: 16,
-    backgroundColor: '#f8f9fa',
+    backgroundColor: theme.listCardBg,
     borderRadius: 12,
     marginHorizontal: 4,
   },
   infoCardTitle: {
     fontSize: 12,
-    color: '#666',
+    color: theme.listSecondaryText,
     marginTop: 8,
     marginBottom: 4,
     textAlign: 'center',
@@ -2116,7 +2122,7 @@ const styles = StyleSheet.create({
   infoCardValue: {
     fontSize: 14,
     fontWeight: '500',
-    color: '#000',
+    color: theme.listPrimaryText,
     textAlign: 'center',
   },
   dangerActionsRow: {
@@ -2136,7 +2142,7 @@ const styles = StyleSheet.create({
   leaveButton: {
     borderWidth: 1,
     borderColor: '#FF3B30',
-    backgroundColor: '#fff',
+    backgroundColor: theme.listCardBg,
   },
   leaveButtonText: {
     fontSize: 14,
@@ -2159,7 +2165,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: '#fff',
+    backgroundColor: theme.listCardBg,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: 20,
@@ -2175,7 +2181,7 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#000',
+    color: theme.listPrimaryText,
   },
   inviteOptions: {
     gap: 16,
@@ -2185,14 +2191,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 16,
     padding: 16,
-    backgroundColor: '#f8f9fa',
+    backgroundColor: theme.searchBg,
     borderRadius: 12,
   },
   inviteOptionIcon: {
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: '#007AFF15',
+    backgroundColor: theme.isDark ? 'rgba(255, 255, 255, 0.1)' : '#007AFF15',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -2202,12 +2208,12 @@ const styles = StyleSheet.create({
   inviteOptionTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#000',
+    color: theme.listPrimaryText,
     marginBottom: 4,
   },
   inviteOptionDescription: {
     fontSize: 14,
-    color: '#666',
+    color: theme.listSecondaryText,
     lineHeight: 18,
   },
   inviteInfo: {
@@ -2215,17 +2221,17 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     gap: 8,
     padding: 12,
-    backgroundColor: '#f0f7ff',
+    backgroundColor: theme.isDark ? 'rgba(255, 255, 255, 0.06)' : '#f0f7ff',
     borderRadius: 8,
   },
   inviteInfoText: {
     fontSize: 14,
-    color: '#666',
+    color: theme.listSecondaryText,
     lineHeight: 18,
     flex: 1,
   },
   actionsModalContent: {
-    backgroundColor: '#fff',
+    backgroundColor: theme.listCardBg,
     borderRadius: 12,
     margin: 20,
     overflow: 'hidden',
@@ -2233,10 +2239,10 @@ const styles = StyleSheet.create({
   actionsModalTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#000',
+    color: theme.listPrimaryText,
     padding: 20,
     textAlign: 'center',
-    backgroundColor: '#f8f9fa',
+    backgroundColor: theme.searchBg,
   },
   actionButton: {
     flexDirection: 'row',
@@ -2244,10 +2250,10 @@ const styles = StyleSheet.create({
     gap: 12,
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    borderBottomColor: theme.listBorder,
   },
   actionButtonText: {
     fontSize: 16,
-    color: '#000',
+    color: theme.listPrimaryText,
   },
 });
