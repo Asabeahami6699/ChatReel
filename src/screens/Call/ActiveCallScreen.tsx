@@ -171,11 +171,12 @@ export function ActiveCallContent(props: ActiveCallScreenProps) {
 
   const available = isLiveKitAvailable();
   const effectiveCall = latestCall ?? call;
+  // Don't require myAuthId — on cold start auth can lag briefly and the
+  // outgoing screen would otherwise skip ringing chrome/ringtone.
   const isCallerRinging =
     !!effectiveCall &&
-    !!myAuthId &&
-    effectiveCall.caller_id === myAuthId &&
-    effectiveCall.status === 'ringing';
+    effectiveCall.status === 'ringing' &&
+    (!myAuthId || effectiveCall.caller_id === myAuthId);
 
   useCallRowSync(call?.id, setLatestCall, true, {
     fastPollMs: isCallerRinging

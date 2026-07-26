@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { ActiveCallContent } from '../screens/Call/ActiveCallScreen';
+import { OutgoingConnectingView } from '../screens/Call/OutgoingConnectingView';
 import {
   getCallPipSnapshot,
   subscribeCallPip,
@@ -16,6 +17,18 @@ export function ActiveCallLayer() {
   const [snap, setSnap] = useState<CallPipSnapshot>(getCallPipSnapshot);
 
   useEffect(() => subscribeCallPip(() => setSnap(getCallPipSnapshot())), []);
+
+  if (snap.connecting && !snap.token) {
+    return (
+      <View style={styles.fullHost} pointerEvents="auto" collapsable={false}>
+        <OutgoingConnectingView
+          peerName={snap.peerName}
+          peerAvatar={snap.peerAvatar}
+          callType={snap.callType}
+        />
+      </View>
+    );
+  }
 
   if (!snap.active || !snap.call || !snap.token || !snap.url) {
     return null;

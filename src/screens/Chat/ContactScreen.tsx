@@ -56,7 +56,10 @@ export default function ContactScreen() {
     async (type: 'voice' | 'video') => {
       try {
         const { startCallGuarded } = await import('../../lib/startCallGuarded');
-        const { call, live_kit } = await startCallGuarded({ type, callee_id: userId });
+        const { call, live_kit } = await startCallGuarded(
+          { type, callee_id: userId },
+          { peerName: displayName, peerAvatar: avatar ?? null }
+        );
         const { navigateToOutgoingCall } = await import('../../navigation/rootNavigation');
         navigateToOutgoingCall({ call, token: live_kit.token, url: live_kit.url });
       } catch (err: unknown) {
@@ -64,7 +67,7 @@ export default function ContactScreen() {
         showAppToast(msg, { isError: true });
       }
     },
-    [userId]
+    [avatar, displayName, userId]
   );
 
   const toggleMute = useCallback(async () => {

@@ -399,17 +399,27 @@ async function getAccessToken(): Promise<string | null> {
 
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { method = 'GET', body, auth = true, signal } = options;
+  const methodUpper = method.toUpperCase();
+  // Expo Android fetch can send a null byte when Content-Type is application/json
+  // with no body; Express then rejects the request as invalid JSON. Always send
+  // '{}' for body-less mutating calls so like/accept/end work on installed APKs.
+  const needsJsonBody = ['POST', 'PUT', 'PATCH'].includes(methodUpper);
+  const hasBody = body !== undefined;
+  const requestBody = hasBody
+    ? JSON.stringify(body)
+    : needsJsonBody
+      ? '{}'
+      : undefined;
 
   const doFetch = async (token: string | null) => {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
+    const headers: Record<string, string> = {};
+    if (requestBody !== undefined) headers['Content-Type'] = 'application/json';
     if (auth && token) headers.Authorization = `Bearer ${token}`;
 
     const res = await fetch(`${config.apiUrl}${path}`, {
       method,
       headers,
-      body: body !== undefined ? JSON.stringify(body) : undefined,
+      body: requestBody,
       signal,
     });
     const raw = await res.text();

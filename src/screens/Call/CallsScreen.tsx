@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { FAB } from 'react-native-paper';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useIsFocused } from '@react-navigation/native';
 import { api, ApiError, type CallHistoryItemDTO } from '../../lib/api';
 import { showAppToast } from '../../lib/appToast';
 import { startCallGuarded } from '../../lib/startCallGuarded';
@@ -120,6 +121,7 @@ function groupCalls(calls: CallHistoryItemDTO[]): CallSection[] {
 export default function CallsScreen() {
   const insets = useSafeAreaInsets();
   const { theme } = useChatSettings();
+  const isFocused = useIsFocused();
   const { user, isGuest, exitGuest } = useAuth();
   const myProfileId = useCurrentProfileId();
   const {
@@ -460,7 +462,9 @@ export default function CallsScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.listBg }]} edges={['left', 'right', 'bottom']}>
-      <StatusBar barStyle="light-content" backgroundColor="#0d47a1" />
+      {isFocused ? (
+        <StatusBar barStyle="light-content" backgroundColor="#0d47a1" />
+      ) : null}
 
       {loading && calls.length === 0 ? (
         <View style={styles.loadingBox}>

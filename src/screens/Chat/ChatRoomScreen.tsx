@@ -2479,7 +2479,10 @@ export default function ChatRoomScreen() {
             ? { type, group_id: chatId }
             : { type, callee_id: chatId };
         const { startCallGuarded } = await import('../../lib/startCallGuarded');
-        const { call, live_kit } = await startCallGuarded(body);
+        const { call, live_kit } = await startCallGuarded(body, {
+          peerName: chatName,
+          peerAvatar: avatarUrl ?? null,
+        });
         if (!live_kit?.token || !live_kit?.url) {
           showAppToast('Call started but media token was missing — try again', {
             isError: true,
@@ -2500,7 +2503,7 @@ export default function ChatRoomScreen() {
         showAppToast(String(message), { isError: true });
       }
     },
-    [chatId, chatType, user?.id]
+    [avatarUrl, chatId, chatName, chatType, user?.id]
   );
 
   const joinGroupCall = useCallback(async () => {

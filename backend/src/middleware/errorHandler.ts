@@ -18,6 +18,17 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
     return res.status(400).json({ error: 'Validation failed', details: err.message });
   }
 
+  // Body-parser / Express JSON SyntaxError (e.g. Expo Android null-byte POSTs)
+  if (
+    err instanceof SyntaxError ||
+    (err &&
+      typeof err === 'object' &&
+      'type' in err &&
+      (err as { type?: string }).type === 'entity.parse.failed')
+  ) {
+    return res.status(400).json({ error: 'Invalid JSON body' });
+  }
+
   const message = err instanceof Error ? err.message : 'Internal server error';
   const status =
     err && typeof err === 'object' && 'status' in err && typeof (err as { status: unknown }).status === 'number'

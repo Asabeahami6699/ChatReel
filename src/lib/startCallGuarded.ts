@@ -1,6 +1,11 @@
 import { api, ApiError } from './api';
 import { ensureCallMediaPermissions } from './ensureCallMediaPermissions';
 import { showAppToast } from './appToast';
+import {
+  beginOutgoingConnecting,
+  clearCallPip,
+  getCallPipSnapshot,
+} from '../screens/Call/callPipBridge';
 
 const RINGING_FRESH_MS = 120_000;
 const ACCEPTED_FRESH_MS = 8 * 60 * 1000;
@@ -28,16 +33,27 @@ export async function getCallBusyMessage(): Promise<string | null> {
 }
 
 /** Start a call after busy + media permission checks. */
-export async function startCallGuarded(data: {
-  type: 'voice' | 'video';
-  callee_id?: string;
-  group_id?: string;
-  metadata?: { reel_id?: string; source?: string; [key: string]: unknown };
-}) {
+export async function startCallGuarded(
+  data: {
+    type: 'voice' | 'video';
+    callee_id?: string;
+    group_id?: string;
+    metadata?: { reel_id?: string; source?: string; [key: string]: unknown };
+  },
+  peerHint?: { peerName?: string; peerAvatar?: string | null }
+) {
   const permErr = await ensureCallMediaPermissions(data.type);
   if (permErr) {
     throw new ApiError(permErr, 403);
   }
+
+  // Show outgoing UI immediately so the installed app doesn't sit on a blank
+  // screen while the start API + LiveKit token mint (often cold on Render).
+  beginOutgoingConnecting({
+    peerName: peerHint?.peerName,
+    peerAvatar: peerHint?.peerAvatar,
+    callType: data.type,
+  });
 
   const busyCallId = await getCallBusyMessage();
   if (busyCallId) {
@@ -57,6 +73,7 @@ export async function startCallGuarded(data: {
     const url = typeof liveKit?.url === 'string' ? liveKit.url.trim() : '';
     const token = typeof liveKit?.token === 'string' ? liveKit.token.trim() : '';
     if (!token || !/^wss?:\/\//i.test(url)) {
+      clearCallPip();
       throw new ApiError(
         'Calling is misconfigured (invalid LiveKit URL/token). Check LIVEKIT_URL on the server.',
         503
@@ -67,6 +84,11 @@ export async function startCallGuarded(data: {
       live_kit: { ...liveKit, url, token },
     };
   } catch (err) {
+    // Only tear down if we still own the connecting placeholder (user may have cancelled).
+    const snap = getCallPipSnapshot();
+    if (snap.connecting && !snap.token) {
+      clearCallPip();
+    }
     if (err instanceof ApiError) {
       if (err.status === 429 || /CALL_CONCURRENCY|Too many active calls/i.test(err.message)) {
         showAppToast('Too many active calls — end one first');

@@ -1,6 +1,6 @@
 // src/navigation/AppNavigator.tsx
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
-import { Platform, StyleSheet, View, StatusBar, useWindowDimensions } from 'react-native';
+import { Platform, StyleSheet, Text, View, StatusBar, useWindowDimensions } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getFocusedRouteName, MOBILE_BREAKPOINT } from './navigationUtils';
 import {
@@ -142,17 +142,38 @@ const ReelsWrapper = ({ navigation }: { navigation: any }) => {
   );
 };
 
-/**
- * Bottom nav labels. Material top tabs uppercase labels by default, which reads
- * as cramped at this size — sentence case plus a heavy weight stays legible
- * against both light and dark surfaces.
- */
+/** Inactive label — active weight/color come from tabBarLabel renderer. */
 const TAB_LABEL_STYLE = {
   fontSize: 12,
-  fontWeight: '800' as const,
+  fontWeight: '600' as const,
   letterSpacing: 0.2,
   textTransform: 'none' as const,
 };
+
+function TabBarLabel({
+  label,
+  color,
+  focused,
+}: {
+  label: string;
+  color: string;
+  focused: boolean;
+}) {
+  return (
+    <Text
+      style={{
+        fontSize: 12,
+        letterSpacing: 0.2,
+        textTransform: 'none',
+        color,
+        fontWeight: focused ? '800' : '600',
+        marginTop: 2,
+      }}
+    >
+      {label}
+    </Text>
+  );
+}
 
 /* ------------------------------------------------------------------
  *  Main Tab Navigator (Separate component)
@@ -209,8 +230,15 @@ const MainTabNavigator = () => {
           return {
             lazy: false,
             tabBarStyle: hideTabBar ? { display: 'none' } : tabBarBase,
-            tabBarIcon: ({ color }) => (
-              <Ionicons name="chatbubble-outline" size={24} color={color} />
+            tabBarLabel: ({ color, focused }) => (
+              <TabBarLabel label="Chats" color={color} focused={focused} />
+            ),
+            tabBarIcon: ({ color, focused }) => (
+              <Ionicons
+                name={focused ? 'chatbubble' : 'chatbubble-outline'}
+                size={24}
+                color={color}
+              />
             ),
           };
         }}
@@ -222,8 +250,15 @@ const MainTabNavigator = () => {
         component={ExploreNavigator}
         options={{
           lazy: false,
-          tabBarIcon: ({ color }) => (
-            <Ionicons name="compass-outline" size={24} color={color} />
+          tabBarLabel: ({ color, focused }) => (
+            <TabBarLabel label="Explore" color={color} focused={focused} />
+          ),
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? 'compass' : 'compass-outline'}
+              size={24}
+              color={color}
+            />
           ),
         }}
       />
@@ -234,8 +269,11 @@ const MainTabNavigator = () => {
         component={CallsScreen}
         options={{
           lazy: false,
-          tabBarIcon: ({ color }) => (
-            <Ionicons name="call-outline" size={24} color={color} />
+          tabBarLabel: ({ color, focused }) => (
+            <TabBarLabel label="Calls" color={color} focused={focused} />
+          ),
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons name={focused ? 'call' : 'call-outline'} size={24} color={color} />
           ),
         }}
       />
@@ -246,8 +284,15 @@ const MainTabNavigator = () => {
         component={ReelsWrapper}
         options={{
           tabBarStyle: { display: 'none' },
-          tabBarIcon: ({ color }) => (
-            <Ionicons name="play-circle-outline" size={24} color={color} />
+          tabBarLabel: ({ color, focused }) => (
+            <TabBarLabel label="Reels" color={color} focused={focused} />
+          ),
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? 'play-circle' : 'play-circle-outline'}
+              size={24}
+              color={color}
+            />
           ),
           lazy: true,
         }}
@@ -322,8 +367,15 @@ const WebDesktopMain = () => {
             listeners={{ focus: () => setSelectedChat(null) }}
             options={{
               lazy: false,
-              tabBarIcon: ({ color }) => (
-                <Ionicons name="chatbubble-outline" size={22} color={color} />
+              tabBarLabel: ({ color, focused }) => (
+                <TabBarLabel label="Chats" color={color} focused={focused} />
+              ),
+              tabBarIcon: ({ color, focused }) => (
+                <Ionicons
+                  name={focused ? 'chatbubble' : 'chatbubble-outline'}
+                  size={22}
+                  color={color}
+                />
               ),
             }}
           >
@@ -334,8 +386,15 @@ const WebDesktopMain = () => {
             component={ExploreNavigator}
             options={{
               lazy: false,
-              tabBarIcon: ({ color }) => (
-                <Ionicons name="compass-outline" size={22} color={color} />
+              tabBarLabel: ({ color, focused }) => (
+                <TabBarLabel label="Explore" color={color} focused={focused} />
+              ),
+              tabBarIcon: ({ color, focused }) => (
+                <Ionicons
+                  name={focused ? 'compass' : 'compass-outline'}
+                  size={22}
+                  color={color}
+                />
               ),
             }}
           />
@@ -343,8 +402,11 @@ const WebDesktopMain = () => {
             name="Calls"
             component={CallsScreen}
             options={{
-              tabBarIcon: ({ color }) => (
-                <Ionicons name="call-outline" size={22} color={color} />
+              tabBarLabel: ({ color, focused }) => (
+                <TabBarLabel label="Calls" color={color} focused={focused} />
+              ),
+              tabBarIcon: ({ color, focused }) => (
+                <Ionicons name={focused ? 'call' : 'call-outline'} size={22} color={color} />
               ),
             }}
           />
@@ -352,8 +414,15 @@ const WebDesktopMain = () => {
             name="Reels"
             component={WebReelsSidebarPlaceholder}
             options={{
-              tabBarIcon: ({ color }) => (
-                <Ionicons name="play-circle-outline" size={22} color={color} />
+              tabBarLabel: ({ color, focused }) => (
+                <TabBarLabel label="Reels" color={color} focused={focused} />
+              ),
+              tabBarIcon: ({ color, focused }) => (
+                <Ionicons
+                  name={focused ? 'play-circle' : 'play-circle-outline'}
+                  size={22}
+                  color={color}
+                />
               ),
             }}
           />
@@ -406,6 +475,8 @@ export const AppNavigator = () => {
   const { width } = useWindowDimensions();
   const { theme } = useChatSettings();
   const isWebDesktop = Platform.OS === 'web' && width >= MOBILE_BREAKPOINT;
+  // WhatsApp/Telegram-style: themed shell under the status bar. Use header
+  // surface (not pure white) so light themes keep dark status icons readable.
   const shellBg = theme.listHeaderBg;
 
   return (
@@ -419,8 +490,9 @@ export const AppNavigator = () => {
       <StatusBar
         barStyle={theme.isDark ? 'light-content' : 'dark-content'}
         backgroundColor={shellBg}
+        translucent={false}
       />
-      <View style={styles.appShell}>
+      <View style={[styles.appShell, { backgroundColor: theme.listBg }]}>
         <Stack.Navigator
           detachInactiveScreens
           screenOptions={{

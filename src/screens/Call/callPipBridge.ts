@@ -12,6 +12,9 @@ import { playCallEndTone, preloadCallEndTone } from '../../lib/playCallEndTone';
 
 export type CallPipSnapshot = {
   active: boolean;
+  /** True while placing an outgoing call before LiveKit credentials arrive. */
+  connecting: boolean;
+  callType: 'voice' | 'video';
   minimized: boolean;
   callId: string | null;
   call: CallDTO | null;
@@ -34,6 +37,8 @@ type Listener = () => void;
 
 let snapshot: CallPipSnapshot = {
   active: false,
+  connecting: false,
+  callType: 'voice',
   minimized: false,
   callId: null,
   call: null,
@@ -77,6 +82,36 @@ export function updateCallPip(partial: Partial<CallPipSnapshot>) {
   notify();
 }
 
+/**
+ * Show outgoing chrome immediately (before API/LiveKit credentials).
+ * Keeps the installed-app UX responsive while startCallGuarded runs.
+ */
+export function beginOutgoingConnecting(opts?: {
+  peerName?: string;
+  peerAvatar?: string | null;
+  callType?: 'voice' | 'video';
+}) {
+  preloadCallEndTone();
+  snapshot = {
+    ...snapshot,
+    active: true,
+    connecting: true,
+    callType: opts?.callType ?? 'voice',
+    minimized: false,
+    callId: null,
+    call: null,
+    token: null,
+    url: null,
+    peerName: opts?.peerName?.trim() || 'Calling...',
+    peerAvatar: opts?.peerAvatar ?? null,
+    durationLabel: '0:00',
+    elapsedSec: 0,
+    muted: false,
+  };
+  handlers = null;
+  notify();
+}
+
 /** Open / replace the in-call session (LiveKit stays in ActiveCallLayer). */
 export function openCallSession(params: {
   call: CallDTO;
@@ -90,12 +125,15 @@ export function openCallSession(params: {
   if (!token || !/^wss?:\/\//i.test(url)) {
     showAppToast('Cannot start call — invalid media server URL', { isError: true });
     console.warn('[callPip] reject openCallSession', { hasToken: !!token, url });
+    clearCallPip();
     return;
   }
   preloadCallEndTone();
   snapshot = {
     ...snapshot,
     active: true,
+    connecting: false,
+    callType: params.call.call_type === 'video' ? 'video' : 'voice',
     minimized: false,
     callId: params.call.id,
     call: params.call,
@@ -114,6 +152,8 @@ export function openCallSession(params: {
 export function clearCallPip() {
   snapshot = {
     active: false,
+    connecting: false,
+    callType: 'voice',
     minimized: false,
     callId: null,
     call: null,

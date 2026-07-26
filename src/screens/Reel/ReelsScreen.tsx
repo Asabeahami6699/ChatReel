@@ -201,9 +201,9 @@ export default function ReelsScreen() {
   const [badgePlayCycle, setBadgePlayCycle] = useState(0);
   const endScreenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const { progressBottom, metaBottom } = reelBottomLayout(
-    usePhoneFrame ? 0 : Math.max(insets.bottom, 8)
-  );
+  // Feed height already excludes the tab bar (which includes safe-area).
+  // Do not pass insets.bottom again or progress/rail float above the nav.
+  const { progressBottom, metaBottom } = reelBottomLayout(usePhoneFrame ? 0 : 4);
 
   const pausePlayers = useCallback(async () => {
     await Promise.all(
@@ -1039,7 +1039,7 @@ export default function ReelsScreen() {
   if (loading && reels.length === 0) {
     return (
       <View style={[styles.container, styles.center]}>
-        <StatusBar barStyle="light-content" backgroundColor="#000" />
+        {isFocused ? <StatusBar barStyle="light-content" backgroundColor="#000" /> : null}
         <ActivityIndicator size="large" color="#fff" />
         <Text style={styles.emptyText}>Loading reels…</Text>
       </View>
@@ -1049,7 +1049,7 @@ export default function ReelsScreen() {
   if (error && reels.length === 0) {
     return (
       <View style={[styles.container, styles.center]}>
-        <StatusBar barStyle="light-content" backgroundColor="#000" />
+        {isFocused ? <StatusBar barStyle="light-content" backgroundColor="#000" /> : null}
         <Ionicons name="cloud-offline-outline" size={48} color="#fff" />
         <Text style={styles.emptyText}>{error}</Text>
         <TouchableOpacity style={styles.retryButton} onPress={reload}>
@@ -1067,7 +1067,9 @@ export default function ReelsScreen() {
         if (h > 0) setViewportHeight(h);
       }}
     >
-      <StatusBar barStyle="light-content" backgroundColor="#000" translucent />
+      {isFocused ? (
+        <StatusBar barStyle="light-content" backgroundColor="#000" translucent />
+      ) : null}
 
       <View
         style={[

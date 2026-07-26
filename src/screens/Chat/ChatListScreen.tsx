@@ -14,6 +14,7 @@ import {
   ScrollView,
   Animated,
   Easing,
+  StatusBar,
 } from 'react-native'
 import { ChatListAvatar } from '../../components/ChatListAvatar'
 import { ChatListRow, ChatListScrollPane } from '../../components/ChatListRow'
@@ -27,7 +28,7 @@ import { TabView } from 'react-native-tab-view'
 import { LinearGradient } from 'expo-linear-gradient'
 import { useIndividualChats, type IndividualChat } from '../../hooks/useIndividualChats'
 import DropdownMenu from '../../components/DropdownMenu'
-import { useNavigation, useFocusEffect } from '@react-navigation/native'
+import { useNavigation, useFocusEffect, useIsFocused } from '@react-navigation/native'
 import { useGroupList, type Group } from '../../hooks/useGroupList'
 import { useIncomingFriendRequestCount } from '../../hooks/useIncomingFriendRequestCount'
 import { useCurrentProfileId } from '../../hooks/useCurrentProfileId'
@@ -126,6 +127,7 @@ type AllFeedItem =
 export default function ChatListScreen({ setSelectedChat }: Props) {
   const { user, isGuest, exitGuest } = useAuth()
   const { theme } = useChatSettings()
+  const isFocused = useIsFocused()
   const myProfileId = useCurrentProfileId()
   const navigation = useNavigation<any>()
   const { width } = useWindowDimensions()
@@ -1140,6 +1142,12 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.listBg }]} edges={['left', 'right']}>
+      {isFocused ? (
+        <StatusBar
+          barStyle={theme.isDark ? 'light-content' : 'dark-content'}
+          backgroundColor={theme.listHeaderBg}
+        />
+      ) : null}
       <View
         style={[
           styles.navbar,
@@ -1192,18 +1200,31 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
         animationType="fade"
         onRequestClose={closeSearchPopup}
       >
-        <Pressable style={styles.searchBackdrop} onPress={closeSearchPopup} />
-        <View
-          style={[
-            styles.searchDropdown,
-            {
-              top: insets.top + 54,
-              right: 12,
-              width: Math.min(360, width - 24),
-              backgroundColor: theme.listCardBg,
-            },
-          ]}
-        >
+        <View style={styles.searchModalRoot}>
+          <Pressable style={styles.searchBackdrop} onPress={closeSearchPopup} />
+          <View
+            style={[
+              styles.searchDropdown,
+              {
+                top: insets.top + 54,
+                right: 12,
+                width: Math.min(360, width - 24),
+                backgroundColor: theme.listCardBg,
+              },
+            ]}
+          >
+            <View style={styles.searchDropdownHeader}>
+              <Text style={[styles.searchDropdownTitle, { color: theme.listPrimaryText }]}>
+                Search
+              </Text>
+              <TouchableOpacity
+                onPress={closeSearchPopup}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityLabel="Close search"
+              >
+                <Ionicons name="close" size={22} color={theme.listPrimaryText} />
+              </TouchableOpacity>
+            </View>
           <LinearGradient colors={[theme.accent, theme.primary]} style={styles.gradientBorder}>
             <View style={[styles.searchWrapper, { backgroundColor: theme.searchBg }]}>
               <TextInput
@@ -1225,7 +1246,9 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
                 right={
                   searchQuery.length > 0 ? (
                     <TextInput.Icon icon="close" color={theme.searchPlaceholder} onPress={clearActiveSearch} />
-                  ) : undefined
+                  ) : (
+                    <TextInput.Icon icon="close" color={theme.searchPlaceholder} onPress={closeSearchPopup} />
+                  )
                 }
               />
             </View>
@@ -1296,6 +1319,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
               </>
             )}
           </ScrollView>
+          </View>
         </View>
       </Modal>
 
@@ -1395,9 +1419,23 @@ const styles = StyleSheet.create({
     letterSpacing: -0.3,
     flexShrink: 0,
   },
+  searchModalRoot: {
+    flex: 1,
+  },
   searchBackdrop: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.25)',
+  },
+  searchDropdownHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+    paddingHorizontal: 2,
+  },
+  searchDropdownTitle: {
+    fontSize: 15,
+    fontWeight: '700',
   },
   searchDropdown: {
     position: 'absolute',
