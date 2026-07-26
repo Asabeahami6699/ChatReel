@@ -14,12 +14,14 @@ import QRCode from 'react-native-qrcode-svg';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '../../lib/api';
 import { useAuth } from '../../hooks/useAuth';
+import { useChatSettings } from '../../context/ChatSettingsContext';
 import { useRealtimeTopic } from '../../hooks/useRealtimeTopic';
 import { useNavigation } from '@react-navigation/native';
 import { USE_NATIVE_DRIVER } from '../../lib/animation';
 
 export default function QRCodeScreen() {
   const { user } = useAuth();
+  const { theme } = useChatSettings();
   const navigation = useNavigation<any>();
   const [qrRef, setQrRef] = useState('');
   const [timeLeft, setTimeLeft] = useState(30);
@@ -73,25 +75,41 @@ export default function QRCodeScreen() {
 
   if (!qrRef) {
     return (
-      <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
-        <Text style={styles.loading}>Generating QR...</Text>
+      <SafeAreaView
+        style={[styles.container, { backgroundColor: theme.listBg }]}
+        edges={['left', 'right', 'bottom']}
+      >
+        <Text style={[styles.loading, { color: theme.listSecondaryText }]}>
+          Generating QR...
+        </Text>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
-      <View style={styles.header}>
+    <SafeAreaView
+      style={[styles.container, { backgroundColor: theme.listBg }]}
+      edges={['left', 'right', 'bottom']}
+    >
+      <View
+        style={[
+          styles.header,
+          { backgroundColor: theme.listCardBg, borderBottomColor: theme.listBorder },
+        ]}
+      >
         <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Ionicons name="arrow-back" size={28} color="#000" />
+          <Ionicons name="arrow-back" size={28} color={theme.listPrimaryText} />
         </TouchableOpacity>
-        <Text style={styles.title}>Link a Device</Text>
+        <Text style={[styles.title, { color: theme.listPrimaryText }]}>Link a Device</Text>
         <View style={{ width: 28 }} />
       </View>
 
       <View style={styles.content}>
-        <Text style={styles.subtitle}>Scan with your phone</Text>
+        <Text style={[styles.subtitle, { color: theme.listSecondaryText }]}>
+          Scan with your phone
+        </Text>
 
+        {/* Stays black on white regardless of theme — scanners need the contrast. */}
         <View style={styles.qrBox}>
           <QRCode
             value={`myapp://link?ref=${qrRef}`}
@@ -100,17 +118,20 @@ export default function QRCodeScreen() {
             backgroundColor="#fff"
           />
           <Animated.View style={[styles.ring, { transform: [{ rotate: spin }] }]}>
-            <Ionicons name="sync" size={32} color="#007AFF" />
+            <Ionicons name="sync" size={32} color={theme.primary} />
           </Animated.View>
         </View>
 
         <View style={styles.info}>
-          <Text style={styles.timer}>
+          <Text style={[styles.timer, { color: theme.primary }]}>
             Expires in <Text style={styles.bold}>{timeLeft}s</Text>
           </Text>
         </View>
 
-        <TouchableOpacity style={styles.refreshBtn} onPress={generateRef}>
+        <TouchableOpacity
+          style={[styles.refreshBtn, { backgroundColor: theme.primary }]}
+          onPress={generateRef}
+        >
           <Ionicons name="refresh" size={20} color="#fff" />
           <Text style={styles.refreshText}>New Code</Text>
         </TouchableOpacity>
@@ -120,19 +141,17 @@ export default function QRCodeScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f9f9f9' },
+  container: { flex: 1 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: 16,
-    backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
   },
   title: { fontSize: 20, fontWeight: 'bold' },
   content: { flex: 1, alignItems: 'center', padding: 24 },
-  subtitle: { fontSize: 18, fontWeight: '600', marginBottom: 24, color: '#333' },
+  subtitle: { fontSize: 18, fontWeight: '600', marginBottom: 24 },
   qrBox: {
     padding: 20,
     backgroundColor: '#fff',
@@ -158,11 +177,10 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   info: { marginTop: 24 },
-  timer: { fontSize: 16, color: '#007AFF' },
+  timer: { fontSize: 16 },
   bold: { fontWeight: 'bold' },
   refreshBtn: {
     flexDirection: 'row',
-    backgroundColor: '#007AFF',
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 30,
