@@ -142,6 +142,18 @@ const ReelsWrapper = ({ navigation }: { navigation: any }) => {
   );
 };
 
+/**
+ * Bottom nav labels. Material top tabs uppercase labels by default, which reads
+ * as cramped at this size — sentence case plus a heavy weight stays legible
+ * against both light and dark surfaces.
+ */
+const TAB_LABEL_STYLE = {
+  fontSize: 12,
+  fontWeight: '800' as const,
+  letterSpacing: 0.2,
+  textTransform: 'none' as const,
+};
+
 /* ------------------------------------------------------------------
  *  Main Tab Navigator (Separate component)
  * ------------------------------------------------------------------ */
@@ -170,7 +182,7 @@ const MainTabNavigator = () => {
         tabBarActiveTintColor: theme.tabActive,
         tabBarInactiveTintColor: theme.tabInactive,
         tabBarStyle: tabBarBase,
-        tabBarLabelStyle: { fontSize: 13, fontWeight: '700' },
+        tabBarLabelStyle: TAB_LABEL_STYLE,
         tabBarItemStyle: { paddingVertical: 2 },
         lazy: true,
         lazyPreloadDistance: 0,
@@ -254,8 +266,17 @@ const SIDEBAR_COLLAPSED = 64;
 const WebDesktopMain = () => {
   const [selectedChat, setSelectedChat] = useState<any>(null);
   const [activeTab, setActiveTab] = useState('Chats');
+  const { theme } = useChatSettings();
   const isReels = activeTab === 'Reels';
   const sidebarWidth = isReels ? SIDEBAR_COLLAPSED : SIDEBAR_FULL;
+
+  // Reels is always its own black surface; every other tab follows the theme.
+  const sidebarSurface = isReels
+    ? styles.sidebarReels
+    : { backgroundColor: theme.listCardBg, borderColor: theme.listBorder };
+  const webTabBarSurface = isReels
+    ? styles.webTabBarCollapsed
+    : [styles.webTabBar, { backgroundColor: theme.listCardBg, borderColor: theme.listBorder }];
 
   const openDesktopChat = useCallback((params: OpenChatParams) => {
     setActiveTab('Chats');
@@ -269,7 +290,7 @@ const WebDesktopMain = () => {
 
   return (
     <View style={styles.webContainer}>
-      <View style={[styles.sidebar, { width: sidebarWidth }, isReels && styles.sidebarReels]}>
+      <View style={[styles.sidebar, { width: sidebarWidth }, sidebarSurface]}>
         <Tab.Navigator
           initialRouteName="Chats"
           tabBarPosition="bottom"
@@ -285,10 +306,10 @@ const WebDesktopMain = () => {
           screenOptions={{
             tabBarShowIcon: true,
             tabBarShowLabel: !isReels,
-            tabBarActiveTintColor: isReels ? '#fff' : '#007AFF',
-            tabBarInactiveTintColor: isReels ? 'rgba(255,255,255,0.45)' : '#999',
-            tabBarStyle: isReels ? styles.webTabBarCollapsed : styles.webTabBar,
-            tabBarLabelStyle: { fontSize: 13, fontWeight: '600' },
+            tabBarActiveTintColor: isReels ? '#fff' : theme.tabActive,
+            tabBarInactiveTintColor: isReels ? 'rgba(255,255,255,0.45)' : theme.tabInactive,
+            tabBarStyle: webTabBarSurface,
+            tabBarLabelStyle: TAB_LABEL_STYLE,
             tabBarItemStyle: isReels ? styles.webTabBarItemCollapsed : undefined,
             tabBarIndicatorStyle: isReels ? { display: 'none' } : undefined,
             tabBarPressColor: 'transparent',
@@ -338,7 +359,7 @@ const WebDesktopMain = () => {
           />
         </Tab.Navigator>
       </View>
-      <View style={styles.mainPanel}>
+      <View style={[styles.mainPanel, { backgroundColor: theme.listBg }]}>
         {isReels ? (
           <ReelsNavigator key="web-desktop-reels" />
         ) : (
@@ -356,6 +377,7 @@ type LayoutMode = 'mobile' | 'desktop';
 
 function MainShell() {
   const { width } = useWindowDimensions();
+  const { theme } = useChatSettings();
   const targetLayout: LayoutMode =
     Platform.OS === 'web' && width >= MOBILE_BREAKPOINT ? 'desktop' : 'mobile';
   const [activeLayout, setActiveLayout] = useState<LayoutMode | null>(targetLayout);
@@ -368,7 +390,9 @@ function MainShell() {
   }, [targetLayout, activeLayout]);
 
   if (!activeLayout) {
-    return <View style={styles.layoutSwapPlaceholder} />;
+    return (
+      <View style={[styles.layoutSwapPlaceholder, { backgroundColor: theme.listBg }]} />
+    );
   }
 
   return activeLayout === 'desktop' ? (
@@ -476,9 +500,7 @@ const styles = StyleSheet.create({
   },
   sidebar: {
     width: 320,
-    backgroundColor: '#fff',
     borderRightWidth: 1,
-    borderColor: '#ddd',
     shadowColor: '#000',
     shadowOpacity: 0.08,
     shadowRadius: 6,
@@ -489,9 +511,7 @@ const styles = StyleSheet.create({
     borderColor: '#222',
   },
   webTabBar: {
-    backgroundColor: '#fff',
     borderTopWidth: 0.5,
-    borderColor: '#eee',
     height: 60,
   },
   webTabBarCollapsed: {
@@ -504,9 +524,8 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     minWidth: 0,
   },
-  mainPanel: { 
-    flex: 1, 
-    backgroundColor: '#fafafa' 
+  mainPanel: {
+    flex: 1,
   },
 
   // Mobile styles — backgroundColor overridden by theme in AppNavigator
@@ -537,6 +556,5 @@ const styles = StyleSheet.create({
   },
   layoutSwapPlaceholder: {
     flex: 1,
-    backgroundColor: '#fff',
   },
 });
