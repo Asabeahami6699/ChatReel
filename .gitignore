@@ -46,6 +46,11 @@ backend/dist
 credentials.json
 *.keystore
 
+# Firebase / FCM (download from Firebase Console; never commit)
+google-services.json
+GoogleService-Info.plist
+firebase-service-account.json
+
 # typescript
 *.tsbuildinfo
 

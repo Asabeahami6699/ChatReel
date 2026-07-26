@@ -1,10 +1,13 @@
 import { env } from '../config/env';
 import { supabaseAdmin } from '../lib/supabaseAdmin';
+import { getUnreadBadgeCount } from './unreadBadge';
 
 export type PushPayload = {
   title: string;
   body: string;
   data?: Record<string, unknown>;
+  /** Absolute unread count for the app icon. Computed per recipient when omitted. */
+  badge?: number;
 };
 
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
@@ -70,6 +73,7 @@ async function postExpoPush(
     data: Record<string, unknown>;
     channelId: string;
     priority: 'high';
+    badge?: number;
     _contentAvailable?: boolean;
     interruptionLevel?: 'active' | 'critical' | 'passive' | 'timeSensitive';
   }>
@@ -137,22 +141,48 @@ export async function sendPushToUsers(userIds: string[], payload: PushPayload): 
 
   const channelId = channelIdFor(payload.data);
   const isCall = payload.data?.type === 'incoming_call';
-  const messages = tokens.map((row) => ({
-    to: row.token as string,
-    sound: 'default' as const,
-    title: payload.title,
-    body: payload.body,
-    data: payload.data ?? {},
-    channelId,
-    priority: 'high' as const,
-    // Wake path for ringing while backgrounded (best-effort on iOS).
-    ...(isCall
-      ? {
-          _contentAvailable: true,
-          interruptionLevel: 'timeSensitive' as const,
+  const isMessage = payload.data?.type === 'message';
+
+  // Resolve badge once per recipient so the icon count matches SMS-style unread.
+  const badgeByUser = new Map<string, number>();
+  if (payload.badge != null && Number.isFinite(payload.badge)) {
+    for (const id of uniqueIds) badgeByUser.set(id, Math.max(0, Math.floor(payload.badge)));
+  } else if (isMessage || payload.data?.type === 'friend_request') {
+    await Promise.all(
+      uniqueIds.map(async (id) => {
+        try {
+          badgeByUser.set(id, await getUnreadBadgeCount(id));
+        } catch (err) {
+          console.warn('[push] badge count failed for', id, err);
         }
-      : {}),
-  }));
+      })
+    );
+  }
+
+  const messages = tokens.map((row) => {
+    const uid = row.user_id as string;
+    const badge = badgeByUser.get(uid);
+    return {
+      to: row.token as string,
+      sound: 'default' as const,
+      title: payload.title,
+      body: payload.body,
+      data: {
+        ...(payload.data ?? {}),
+        ...(badge != null ? { badge } : {}),
+      },
+      channelId,
+      priority: 'high' as const,
+      ...(badge != null ? { badge } : {}),
+      // Wake path for ringing while backgrounded (best-effort on iOS).
+      ...(isCall
+        ? {
+            _contentAvailable: true,
+            interruptionLevel: 'timeSensitive' as const,
+          }
+        : {}),
+    };
+  });
 
   await postExpoPush(messages);
 }

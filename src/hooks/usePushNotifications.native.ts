@@ -3,6 +3,7 @@ import { AppState, Platform, type AppStateStatus } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
 import { isPushForActiveChat } from '../lib/activeChatFocus';
+import { bumpAppBadgeCount } from '../lib/appBadge';
 import { api } from '../lib/api';
 import { requestIncomingCallResync } from '../lib/callIncomingBridge';
 import { openChat } from '../navigation/chatNavigationBridge';
@@ -47,6 +48,7 @@ type PushData = {
   friendship_id?: string;
   message_id?: string;
   call_id?: string;
+  badge?: number;
 };
 
 function handlePushOpen(data: PushData | undefined) {
@@ -107,19 +109,23 @@ async function ensureAndroidChannels() {
     }
   }
   // Omit `sound` so Android uses the system default notification sound.
+  // showBadge lets launchers that support it show an unread count / dot.
   await Notifications.setNotificationChannelAsync('default', {
     name: 'Messages & friends',
     importance: Notifications.AndroidImportance.MAX,
+    showBadge: true,
   });
   await Notifications.setNotificationChannelAsync('reel_inbox', {
     name: 'Reel activity',
     importance: Notifications.AndroidImportance.HIGH,
+    showBadge: true,
   });
   await Notifications.setNotificationChannelAsync('calls', {
     name: 'Incoming calls',
     importance: Notifications.AndroidImportance.MAX,
     vibrationPattern: [0, 400, 200, 400],
     bypassDnd: true,
+    showBadge: true,
   });
   androidChannelsReady = true;
 }
@@ -128,33 +134,54 @@ async function registerExpoToken(userId: string): Promise<string | null> {
   const { status: existing } = await Notifications.getPermissionsAsync();
   let finalStatus = existing;
   if (existing !== 'granted') {
-    const { status } = await Notifications.requestPermissionsAsync();
+    const { status } = await Notifications.requestPermissionsAsync({
+      ios: {
+        allowAlert: true,
+        allowBadge: true,
+        allowSound: true,
+      },
+    });
     finalStatus = status;
   }
-  if (finalStatus !== 'granted') return null;
+  if (finalStatus !== 'granted') {
+    console.warn('[push] Notification permission not granted:', finalStatus);
+    return null;
+  }
 
   const projectId = getExpoProjectId();
+  if (!projectId) {
+    console.warn('[push] Missing EAS projectId — cannot fetch Expo push token');
+  }
+
   try {
     const tokenResult = projectId
       ? await Notifications.getExpoPushTokenAsync({ projectId })
       : await Notifications.getExpoPushTokenAsync();
     const token = tokenResult.data;
     if (!token) return null;
+    // Only store Expo tokens — raw FCM device tokens break Expo Push delivery.
+    if (!token.startsWith('ExponentPushToken')) {
+      console.warn('[push] Ignoring non-Expo push token shape');
+      return null;
+    }
     await api.notifications.registerToken({ token, platform: Platform.OS });
+    console.log('[push] Registered Expo push token for', Platform.OS);
     return token;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    // Local debug builds often omit google-services.json — push is optional.
+    // Local debug builds often omit google-services.json — push is optional there.
     if (
-      /FirebaseApp is not initialized|googleServicesFile|Firebase Messaging/i.test(msg)
+      /FirebaseApp is not initialized|googleServicesFile|Firebase Messaging|Default FirebaseApp/i.test(
+        msg
+      )
     ) {
-      if (__DEV__) {
-        console.log(
-          '[push] Skipping Expo push token (Firebase / google-services.json not configured). App works without it.'
-        );
-      }
+      console.warn(
+        '[push] Firebase / google-services.json missing in this build. ' +
+          'Add google-services.json and rebuild the APK for push to work.'
+      );
       return null;
     }
+    console.warn('[push] getExpoPushTokenAsync failed:', msg);
     throw err;
   }
 }
@@ -172,6 +199,7 @@ export function usePushNotifications(userId: string | undefined) {
     if (!token) return;
     registeredToken.current = null;
     void api.notifications.unregisterToken(token).catch(() => undefined);
+    void import('../lib/appBadge').then((m) => m.clearAppBadge());
   }, [userId]);
 
   useEffect(() => {
@@ -179,6 +207,7 @@ export function usePushNotifications(userId: string | undefined) {
 
     let active = true;
     let responseSub: { remove: () => void } | null = null;
+    let receivedSub: { remove: () => void } | null = null;
     let tokenSub: { remove: () => void } | null = null;
     let appStateSub: { remove: () => void } | null = null;
 
@@ -198,10 +227,14 @@ export function usePushNotifications(userId: string | undefined) {
         registeredToken.current = token;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        if (/FirebaseApp is not initialized|googleServicesFile|Firebase Messaging/i.test(msg)) {
-          if (__DEV__) {
-            console.log('[push] Push unavailable in this build (no Firebase). Continuing without it.');
-          }
+        if (
+          /FirebaseApp is not initialized|googleServicesFile|Firebase Messaging|Default FirebaseApp/i.test(
+            msg
+          )
+        ) {
+          console.warn(
+            '[push] Push unavailable in this build (no Firebase). Add google-services.json and rebuild.'
+          );
           return;
         }
         console.warn('[push] registration failed:', err);
@@ -219,14 +252,23 @@ export function usePushNotifications(userId: string | undefined) {
       consumeResponse(response);
     });
 
-    tokenSub = Notifications.addPushTokenListener((devicePushToken) => {
-      const next =
-        typeof devicePushToken?.data === 'string' ? devicePushToken.data : null;
-      if (!next || !userIdRef.current) return;
-      registeredToken.current = next;
-      void api.notifications
-        .registerToken({ token: next, platform: Platform.OS })
-        .catch(() => undefined);
+    // Foreground delivery — keep badge in sync before ChatList refreshes.
+    receivedSub = Notifications.addNotificationReceivedListener((notification) => {
+      const data = notification.request.content.data as PushData | undefined;
+      if (!data) return;
+      if (typeof data.badge === 'number' && Number.isFinite(data.badge)) {
+        void import('../lib/appBadge').then((m) => m.setAppBadgeCount(data.badge as number));
+        return;
+      }
+      if (data.type === 'message' && !isPushForActiveChat(data)) {
+        bumpAppBadgeCount(1);
+      }
+    });
+
+    // Device FCM token rotation — re-fetch the Expo token (never register the raw FCM id).
+    tokenSub = Notifications.addPushTokenListener(() => {
+      if (!userIdRef.current) return;
+      void syncToken();
     });
 
     appStateSub = AppState.addEventListener('change', (next: AppStateStatus) => {
@@ -238,6 +280,7 @@ export function usePushNotifications(userId: string | undefined) {
     return () => {
       active = false;
       responseSub?.remove();
+      receivedSub?.remove();
       tokenSub?.remove();
       appStateSub?.remove();
       // Keep the DB token across remounts; logout effect handles delete.

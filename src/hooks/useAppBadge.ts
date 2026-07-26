@@ -1,6 +1,5 @@
 import { useEffect } from 'react';
-import { Platform } from 'react-native';
-import * as Notifications from 'expo-notifications';
+import { setAppBadgeCount } from '../lib/appBadge';
 
 /**
  * Syncs the app icon badge count with the total unread count.
@@ -8,7 +7,6 @@ import * as Notifications from 'expo-notifications';
  */
 export function useAppBadge(totalUnread: number) {
   useEffect(() => {
-    if (Platform.OS === 'web') return;
-    Notifications.setBadgeCountAsync(Math.max(0, totalUnread)).catch(() => undefined);
+    setAppBadgeCount(totalUnread);
   }, [totalUnread]);
 }

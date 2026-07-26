@@ -25,7 +25,8 @@
         "EXPO_PUBLIC_API_URL": "https://chatreel-nerq.onrender.com",
         "EXPO_PUBLIC_WEB_URL": "https://chat-reel.vercel.app",
         "EXPO_PUBLIC_SUPABASE_URL": "https://npchtzfjcaqhlptqsqkg.supabase.co",
-        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5wY2h0emZqY2FxaGxwdHFzcWtnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQwNDIwOTksImV4cCI6MjA5OTYxODA5OX0.dXyVIqz5NzvwDDXssaTJ81U9sWTpnbutUapYaXKrZRE"
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5wY2h0emZqY2FxaGxwdHFzcWtnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQwNDIwOTksImV4cCI6MjA5OTYxODA5OX0.dXyVIqz5NzvwDDXssaTJ81U9sWTpnbutUapYaXKrZRE",
+        "EXPO_PUBLIC_EAS_PROJECT_ID": "f8e106cd-7d57-4cf7-b694-a038fea7fe3e"
       }
     },
     "production": {

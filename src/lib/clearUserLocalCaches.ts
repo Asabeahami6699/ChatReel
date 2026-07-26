@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { setLocalActiveChatFocus } from './activeChatFocus';
+import { clearAppBadge } from './appBadge';
 import { clearCallsPrefetchCache } from './callsPrefetch';
 import { clearCachedIdentityPub, clearCachedCleartexts, flushE2ECaches } from './e2eCache';
 import { messageStorage } from '../utils/messageStorage';
@@ -16,6 +17,7 @@ export async function clearUserLocalCaches(userId: string | null | undefined): P
     clearCachedCleartexts();
     clearCachedIdentityPub();
     await flushE2ECaches();
+    await clearAppBadge();
   } catch {
     /* ignore */
   }

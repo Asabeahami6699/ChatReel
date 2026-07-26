@@ -1,9 +1,27 @@
+const fs = require('fs');
 const path = require('path');
 const { withMainApplication } = require('@expo/config-plugins');
 
 // Ensure .env is loaded when Expo evaluates this file (Node). Metro web does not always
 // inline EXPO_PUBLIC_* from .env into the bundle; extra + expo-constants fixes that.
 require('@expo/env').load(path.resolve(__dirname));
+
+/** Firebase config for Android push (FCM). Prefer env path, else ./google-services.json. */
+function resolveGoogleServicesFile() {
+  const fromEnv = process.env.GOOGLE_SERVICES_JSON;
+  if (fromEnv && fs.existsSync(path.resolve(fromEnv))) return fromEnv;
+  if (fromEnv && fs.existsSync(path.resolve(__dirname, fromEnv))) return fromEnv;
+  const local = path.join(__dirname, 'google-services.json');
+  if (fs.existsSync(local)) return './google-services.json';
+  return undefined;
+}
+
+const googleServicesFile = resolveGoogleServicesFile();
+if (!googleServicesFile) {
+  console.warn(
+    '[app.config] google-services.json not found — Android push will not work until you add it and rebuild.'
+  );
+}
 
 /** Keep LiveKit native init across `expo prebuild`. */
 function withLiveKitSetup(config) {
@@ -75,7 +93,7 @@ module.exports = {
       'POST_NOTIFICATIONS',
       'VIBRATE',
     ],
-    googleServicesFile: process.env.GOOGLE_SERVICES_JSON || undefined,
+    googleServicesFile,
     intentFilters: [
       {
         action: 'VIEW',
@@ -155,7 +173,15 @@ module.exports = {
         microphonePermissionText: 'Allow ChatReel to access your microphone for voice messages.',
       },
     ],
-    'expo-notifications',
+    [
+      'expo-notifications',
+      {
+        // White silhouette on Android status bar; color tints the small icon on some OEMs.
+        icon: './assets/favIconChat.png',
+        color: '#007AFF',
+        defaultChannel: 'default',
+      },
+    ],
     'expo-sqlite',
     '@react-native-community/datetimepicker',
   ],
