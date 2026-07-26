@@ -18,11 +18,13 @@ import { useNavigation } from '@react-navigation/native';
 import { OfflineAvatar } from '../../components/OfflineAvatar';
 import { api } from '../../lib/api';
 import { useAuth } from '../../hooks/useAuth';
+import { useChatSettings } from '../../context/ChatSettingsContext';
 
 export default function JoinGroupScreen() {
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
+  const { theme } = useChatSettings();
 
   const [token, setToken] = useState('');
   const [loading, setLoading] = useState(false);
@@ -71,17 +73,36 @@ export default function JoinGroupScreen() {
 
   return (
     <KeyboardAvoidingView
-      style={styles.container}
+      style={[styles.container, { backgroundColor: theme.listBg }]}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <ScrollView contentContainerStyle={[styles.scrollContent, { paddingBottom: 20 + insets.bottom }]}>
-        <View style={styles.card}>
-          <Text style={styles.title}>Join Group</Text>
-          <Text style={styles.subtitle}>Enter the invite token shared with you</Text>
+        <View
+          style={[
+            styles.card,
+            {
+              backgroundColor: theme.listCardBg,
+              borderColor: theme.listBorder,
+              borderWidth: theme.isDark ? 1 : 0,
+            },
+          ]}
+        >
+          <Text style={[styles.title, { color: theme.listPrimaryText }]}>Join Group</Text>
+          <Text style={[styles.subtitle, { color: theme.listSecondaryText }]}>
+            Enter the invite token shared with you
+          </Text>
 
           <TextInput
-            style={styles.input}
+            style={[
+              styles.input,
+              {
+                backgroundColor: theme.searchBg,
+                borderColor: theme.listBorder,
+                color: theme.searchText,
+              },
+            ]}
             placeholder="Enter invite token"
+            placeholderTextColor={theme.searchPlaceholder}
             value={token}
             onChangeText={setToken}
             autoCapitalize="none"
@@ -89,7 +110,7 @@ export default function JoinGroupScreen() {
           />
 
           <TouchableOpacity
-            style={styles.verifyButton}
+            style={[styles.verifyButton, { backgroundColor: theme.primary }]}
             onPress={verifyToken}
             disabled={verifying || !token.trim()}
           >
@@ -101,17 +122,29 @@ export default function JoinGroupScreen() {
           </TouchableOpacity>
 
           {groupInfo && (
-            <View style={styles.groupCard}>
+            <View
+              style={[
+                styles.groupCard,
+                {
+                  backgroundColor: theme.listHeaderBg,
+                  borderColor: theme.listBorder,
+                  borderWidth: theme.isDark ? 1 : 0,
+                },
+              ]}
+            >
               <OfflineAvatar
                 uri={groupInfo.avatar_url}
                 name={groupInfo.name}
                 size={60}
-                style={styles.groupAvatar}
+                style={[styles.groupAvatar, { backgroundColor: theme.listBorder }]}
               />
               <View style={styles.groupInfo}>
-                <Text style={styles.groupName}>{groupInfo.name}</Text>
+                <Text style={[styles.groupName, { color: theme.listPrimaryText }]}>{groupInfo.name}</Text>
                 {groupInfo.description && (
-                  <Text style={styles.groupDescription} numberOfLines={2}>
+                  <Text
+                    style={[styles.groupDescription, { color: theme.listSecondaryText }]}
+                    numberOfLines={2}
+                  >
                     {groupInfo.description}
                   </Text>
                 )}
@@ -134,7 +167,7 @@ export default function JoinGroupScreen() {
           )}
 
           <TouchableOpacity style={styles.cancelButton} onPress={() => navigation.goBack()}>
-            <Text style={styles.cancelButtonText}>Cancel</Text>
+            <Text style={[styles.cancelButtonText, { color: theme.listSecondaryText }]}>Cancel</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -143,10 +176,9 @@ export default function JoinGroupScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f8f9fa' },
+  container: { flex: 1 },
   scrollContent: { flexGrow: 1, justifyContent: 'center', padding: 20 },
   card: {
-    backgroundColor: '#fff',
     borderRadius: 16,
     padding: 24,
     shadowColor: '#000',
@@ -155,19 +187,16 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 4,
   },
-  title: { fontSize: 24, fontWeight: 'bold', color: '#000', textAlign: 'center', marginBottom: 8 },
-  subtitle: { fontSize: 16, color: '#666', textAlign: 'center', marginBottom: 24 },
+  title: { fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: 8 },
+  subtitle: { fontSize: 16, textAlign: 'center', marginBottom: 24 },
   input: {
     borderWidth: 1,
-    borderColor: '#ddd',
     borderRadius: 12,
     padding: 16,
     fontSize: 16,
-    backgroundColor: '#fafafa',
     marginBottom: 16,
   },
   verifyButton: {
-    backgroundColor: '#007AFF',
     paddingVertical: 16,
     borderRadius: 12,
     alignItems: 'center',
@@ -177,15 +206,14 @@ const styles = StyleSheet.create({
   groupCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f8f9fa',
     borderRadius: 12,
     padding: 16,
     marginBottom: 20,
   },
-  groupAvatar: { width: 60, height: 60, borderRadius: 30, backgroundColor: '#e0e0e0' },
+  groupAvatar: { width: 60, height: 60, borderRadius: 30 },
   groupInfo: { flex: 1, marginLeft: 16 },
-  groupName: { fontSize: 18, fontWeight: '600', color: '#000', marginBottom: 4 },
-  groupDescription: { fontSize: 14, color: '#666', lineHeight: 18 },
+  groupName: { fontSize: 18, fontWeight: '600', marginBottom: 4 },
+  groupDescription: { fontSize: 14, lineHeight: 18 },
   joinButton: {
     backgroundColor: '#34C759',
     paddingVertical: 16,
@@ -195,5 +223,5 @@ const styles = StyleSheet.create({
   },
   joinButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   cancelButton: { paddingVertical: 16, alignItems: 'center' },
-  cancelButtonText: { color: '#666', fontSize: 16 },
+  cancelButtonText: { fontSize: 16 },
 });

@@ -14,11 +14,13 @@ import { api } from '../../lib/api';
 import { useAuth } from '../../hooks/useAuth';
 import { notifyRealtimeTopic } from '../../lib/realtimeHub';
 import { openChat } from '../../navigation/chatNavigationBridge';
+import { useChatSettings } from '../../context/ChatSettingsContext';
 
 export default function InviteScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
   const { user } = useAuth();
+  const { theme } = useChatSettings();
 
   const [loading, setLoading] = useState(true);
   const [joining, setJoining] = useState(false);
@@ -85,9 +87,9 @@ export default function InviteScreen() {
 
   if (loading) {
     return (
-      <View style={styles.container}>
-        <ActivityIndicator size="large" color="#007AFF" />
-        <Text style={styles.loadingText}>Loading invite…</Text>
+      <View style={[styles.container, { backgroundColor: theme.listBg }]}>
+        <ActivityIndicator size="large" color={theme.primary} />
+        <Text style={[styles.loadingText, { color: theme.listSecondaryText }]}>Loading invite…</Text>
       </View>
     );
   }
@@ -97,30 +99,56 @@ export default function InviteScreen() {
   }
 
   return (
-    <View style={styles.container}>
-      <View style={styles.card}>
+    <View style={[styles.container, { backgroundColor: theme.listBg }]}>
+      <View
+        style={[
+          styles.card,
+          {
+            backgroundColor: theme.listCardBg,
+            borderColor: theme.listBorder,
+            borderWidth: theme.isDark ? 1 : 0,
+          },
+        ]}
+      >
         <OfflineAvatar
           uri={groupInfo?.avatar_url}
           name={groupInfo?.name}
           size={80}
-          style={styles.groupAvatar}
+          style={[styles.groupAvatar, { backgroundColor: theme.listBorder }]}
         />
 
-        <Text style={styles.groupName}>{groupInfo?.name}</Text>
+        <Text style={[styles.groupName, { color: theme.listPrimaryText }]}>{groupInfo?.name}</Text>
 
         {groupInfo?.description ? (
-          <Text style={styles.groupDescription}>{groupInfo.description}</Text>
+          <Text style={[styles.groupDescription, { color: theme.listSecondaryText }]}>
+            {groupInfo.description}
+          </Text>
         ) : null}
 
-        <View style={styles.infoSection}>
-          <Text style={styles.infoTitle}>You're invited to join this group</Text>
-          <Text style={styles.infoText}>
+        <View
+          style={[
+            styles.infoSection,
+            {
+              backgroundColor: theme.listHeaderBg,
+              borderColor: theme.listBorder,
+              borderWidth: theme.isDark ? 1 : 0,
+            },
+          ]}
+        >
+          <Text style={[styles.infoTitle, { color: theme.listPrimaryText }]}>
+            You're invited to join this group
+          </Text>
+          <Text style={[styles.infoText, { color: theme.listSecondaryText }]}>
             Tap Join to enter the group chat and start messaging with members.
           </Text>
         </View>
 
         <TouchableOpacity
-          style={[styles.joinButton, joining && styles.joinButtonDisabled]}
+          style={[
+            styles.joinButton,
+            { backgroundColor: theme.primary },
+            joining && styles.joinButtonDisabled,
+          ]}
           onPress={acceptInvite}
           disabled={joining}
         >
@@ -136,7 +164,7 @@ export default function InviteScreen() {
           onPress={() => navigation.goBack()}
           disabled={joining}
         >
-          <Text style={styles.cancelButtonText}>Not now</Text>
+          <Text style={[styles.cancelButtonText, { color: theme.listSecondaryText }]}>Not now</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -146,13 +174,11 @@ export default function InviteScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f8f9fa',
     justifyContent: 'center',
     padding: 20,
   },
-  loadingText: { marginTop: 12, fontSize: 14, color: '#666', textAlign: 'center' },
+  loadingText: { marginTop: 12, fontSize: 14, textAlign: 'center' },
   card: {
-    backgroundColor: '#fff',
     borderRadius: 16,
     padding: 24,
     alignItems: 'center',
@@ -167,33 +193,28 @@ const styles = StyleSheet.create({
     height: 80,
     borderRadius: 40,
     marginBottom: 16,
-    backgroundColor: '#e0e0e0',
   },
   groupName: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#000',
     marginBottom: 8,
     textAlign: 'center',
   },
   groupDescription: {
     fontSize: 16,
-    color: '#666',
     textAlign: 'center',
     marginBottom: 24,
     lineHeight: 22,
   },
   infoSection: {
-    backgroundColor: '#f8f9fa',
     borderRadius: 12,
     padding: 16,
     marginBottom: 24,
     width: '100%',
   },
-  infoTitle: { fontSize: 16, fontWeight: '600', color: '#000', marginBottom: 8 },
-  infoText: { fontSize: 14, color: '#666', lineHeight: 20 },
+  infoTitle: { fontSize: 16, fontWeight: '600', marginBottom: 8 },
+  infoText: { fontSize: 14, lineHeight: 20 },
   joinButton: {
-    backgroundColor: '#007AFF',
     width: '100%',
     paddingVertical: 16,
     borderRadius: 12,
@@ -203,5 +224,5 @@ const styles = StyleSheet.create({
   joinButtonDisabled: { backgroundColor: '#a6c8ff' },
   joinButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   cancelButton: { width: '100%', paddingVertical: 16, alignItems: 'center' },
-  cancelButtonText: { color: '#666', fontSize: 16 },
+  cancelButtonText: { fontSize: 16 },
 });

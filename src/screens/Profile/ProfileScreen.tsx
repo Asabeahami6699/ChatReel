@@ -58,6 +58,7 @@ const AvatarPreview = ({
   onPress: () => void;
   loading: boolean;
 }) => {
+  const { theme } = useChatSettings();
   const scaleAnim = useRef(new Animated.Value(1)).current;
 
   const pulse = () => {
@@ -71,11 +72,11 @@ const AvatarPreview = ({
     <View style={styles.avatarContainer}>
       <TouchableOpacity onPress={onPress} disabled={loading} activeOpacity={0.8}>
         <Animated.View style={[styles.avatarWrapper, { transform: [{ scale: scaleAnim }] }]}>
-          <View style={styles.gradientBorder}>
+          <View style={[styles.gradientBorder, { backgroundColor: theme.listCardBg }]}>
             {uri ? (
               <Image source={{ uri }} style={styles.avatar} resizeMode="cover" />
             ) : (
-              <View style={styles.avatarPlaceholder}>
+              <View style={[styles.avatarPlaceholder, { backgroundColor: theme.inputBarBg }]}>
                 <Text style={styles.avatarText}>👤</Text>
               </View>
             )}
@@ -497,7 +498,7 @@ const FormField = ({
 
 // === Styles ===
 const styles = StyleSheet.create({
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f8f9fa' },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -505,7 +506,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 10,
     paddingBottom: 16,
-    backgroundColor: '#0066cc',
     elevation: 8,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
@@ -528,7 +528,6 @@ const styles = StyleSheet.create({
     paddingBottom: 100,
   },
   card: {
-    backgroundColor: '#fff',
     borderRadius: 20,
     padding: 24,
     elevation: 6,
@@ -546,7 +545,6 @@ const styles = StyleSheet.create({
     height: 70,
     borderRadius: 55,
     padding: 4,
-    backgroundColor: '#fff',
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 3,
@@ -566,7 +564,6 @@ const styles = StyleSheet.create({
     width: 60,
     height: 60,
     borderRadius: 50,
-    backgroundColor: '#e3f2fd',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -593,7 +590,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     marginBottom: 8,
-    color: '#1a1a1a',
     letterSpacing: 0.3,
   },
   input: {
@@ -602,12 +598,9 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 14,
     fontSize: 16,
-    backgroundColor: '#fafafa',
-    color: '#1a1a1a',
   },
   inputFocused: {
     borderColor: '#0066cc',
-    backgroundColor: '#fff',
     elevation: 3,
     shadowColor: '#0066cc',
     shadowOffset: { width: 0, height: 0 },
@@ -659,7 +652,6 @@ const styles = StyleSheet.create({
   statusBadgeText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#0066cc',
   },
   floatingButtonContainer: {
     position: 'absolute',

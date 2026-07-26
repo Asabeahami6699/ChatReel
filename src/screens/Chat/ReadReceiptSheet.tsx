@@ -12,7 +12,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { OfflineAvatar } from '../../components/OfflineAvatar';
 import { api } from '../../lib/api';
-import { chatTheme } from './chatTheme';
+import { useChatSettings } from '../../context/ChatSettingsContext';
 
 type Reader = {
   user_id: string;
@@ -28,6 +28,7 @@ type Props = {
 };
 
 export function ReadReceiptSheet({ messageId, visible, onClose }: Props) {
+  const { theme } = useChatSettings();
   const [loading, setLoading] = useState(false);
   const [readers, setReaders] = useState<Reader[]>([]);
 
@@ -54,13 +55,19 @@ export function ReadReceiptSheet({ messageId, visible, onClose }: Props) {
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={onClose}>
-        <TouchableOpacity activeOpacity={1} style={styles.sheet} onPress={() => undefined}>
-          <View style={styles.handle} />
-          <Text style={styles.title}>Read by</Text>
+        <TouchableOpacity
+          activeOpacity={1}
+          style={[styles.sheet, { backgroundColor: theme.listCardBg }]}
+          onPress={() => undefined}
+        >
+          <View style={[styles.handle, { backgroundColor: theme.listBorder }]} />
+          <Text style={[styles.title, { color: theme.listPrimaryText }]}>Read by</Text>
           {loading ? (
-            <ActivityIndicator color={chatTheme.primary} style={styles.loader} />
+            <ActivityIndicator color={theme.primary} style={styles.loader} />
           ) : readers.length === 0 ? (
-            <Text style={styles.empty}>No one has read this yet</Text>
+            <Text style={[styles.empty, { color: theme.listSecondaryText }]}>
+              No one has read this yet
+            </Text>
           ) : (
             <FlatList
               data={readers}
@@ -71,15 +78,17 @@ export function ReadReceiptSheet({ messageId, visible, onClose }: Props) {
                     uri={item.avatar_url}
                     name={item.display_name}
                     size={36}
-                    style={styles.avatar}
+                    style={[styles.avatar, { backgroundColor: theme.listBorder }]}
                   />
                   <View style={styles.rowBody}>
-                    <Text style={styles.name}>{item.display_name}</Text>
-                    <Text style={styles.time}>
+                    <Text style={[styles.name, { color: theme.listPrimaryText }]}>
+                      {item.display_name}
+                    </Text>
+                    <Text style={[styles.time, { color: theme.listSecondaryText }]}>
                       {new Date(item.read_at).toLocaleString()}
                     </Text>
                   </View>
-                  <Ionicons name="checkmark-done" size={18} color={chatTheme.readReceipt} />
+                  <Ionicons name="checkmark-done" size={18} color={theme.readReceipt} />
                 </View>
               )}
             />
@@ -97,7 +106,6 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   sheet: {
-    backgroundColor: '#fff',
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
     maxHeight: '55%',
@@ -108,7 +116,6 @@ const styles = StyleSheet.create({
     width: 40,
     height: 4,
     borderRadius: 2,
-    backgroundColor: '#ddd',
     marginTop: 10,
     marginBottom: 8,
   },
@@ -117,10 +124,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     paddingHorizontal: 20,
     paddingBottom: 12,
-    color: '#111',
   },
   loader: { marginVertical: 24 },
-  empty: { textAlign: 'center', color: '#888', padding: 24 },
+  empty: { textAlign: 'center', padding: 24 },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -128,8 +134,8 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     gap: 12,
   },
-  avatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#eee' },
+  avatar: { width: 36, height: 36, borderRadius: 18 },
   rowBody: { flex: 1 },
-  name: { fontSize: 15, fontWeight: '600', color: '#222' },
-  time: { fontSize: 12, color: '#888', marginTop: 2 },
+  name: { fontSize: 15, fontWeight: '600' },
+  time: { fontSize: 12, marginTop: 2 },
 });

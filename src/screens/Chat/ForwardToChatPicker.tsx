@@ -13,7 +13,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { OfflineAvatar } from '../../components/OfflineAvatar';
 import { api } from '../../lib/api';
-import { chatTheme } from './chatTheme';
+import { useChatSettings } from '../../context/ChatSettingsContext';
 
 export type ForwardTarget = {
   chatId: string;
@@ -42,6 +42,7 @@ export function ForwardToChatPicker({
   onClose,
   onSelect,
 }: Props) {
+  const { theme } = useChatSettings();
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState('');
   const [rows, setRows] = useState<ChatRow[]>([]);
@@ -105,20 +106,21 @@ export function ForwardToChatPicker({
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <View style={styles.container}>
-        <View style={styles.header}>
+      <View style={[styles.container, { backgroundColor: theme.listBg }]}>
+        <View style={[styles.header, { backgroundColor: theme.headerBg }]}>
           <TouchableOpacity onPress={onClose}>
-            <Ionicons name="close" size={26} color="#fff" />
+            <Ionicons name="close" size={26} color={theme.headerText} />
           </TouchableOpacity>
-          <Text style={styles.title}>Forward to</Text>
+          <Text style={[styles.title, { color: theme.headerText }]}>Forward to</Text>
           <View style={{ width: 26 }} />
         </View>
 
-        <View style={styles.searchWrap}>
-          <Ionicons name="search" size={18} color="#888" />
+        <View style={[styles.searchWrap, { backgroundColor: theme.inputBarBg }]}>
+          <Ionicons name="search" size={18} color={theme.listSecondaryText} />
           <TextInput
-            style={styles.searchInput}
+            style={[styles.searchInput, { color: theme.searchText }]}
             placeholder="Search chats"
+            placeholderTextColor={theme.searchPlaceholder}
             value={query}
             onChangeText={setQuery}
             autoCorrect={false}
@@ -126,17 +128,19 @@ export function ForwardToChatPicker({
         </View>
 
         {loading ? (
-          <ActivityIndicator style={styles.loader} color={chatTheme.primary} />
+          <ActivityIndicator style={styles.loader} color={theme.primary} />
         ) : (
           <FlatList
             data={filtered}
             keyExtractor={(item) => item.key}
             ListEmptyComponent={
-              <Text style={styles.empty}>No chats available to forward to</Text>
+              <Text style={[styles.empty, { color: theme.listSecondaryText }]}>
+                No chats available to forward to
+              </Text>
             }
             renderItem={({ item }) => (
               <TouchableOpacity
-                style={styles.row}
+                style={[styles.row, { borderBottomColor: theme.listBorder }]}
                 onPress={() => {
                   onSelect(item);
                   onClose();
@@ -146,11 +150,14 @@ export function ForwardToChatPicker({
                   uri={item.avatarUrl}
                   name={item.chatName}
                   size={44}
-                  style={styles.avatar}
+                  style={[styles.avatar, { backgroundColor: theme.listBorder }]}
                 />
                 <View style={styles.rowBody}>
-                  <Text style={styles.name}>{item.chatName}</Text>
-                  <Text style={styles.subtitle} numberOfLines={1}>
+                  <Text style={[styles.name, { color: theme.listPrimaryText }]}>{item.chatName}</Text>
+                  <Text
+                    style={[styles.subtitle, { color: theme.listSecondaryText }]}
+                    numberOfLines={1}
+                  >
                     {item.chatType === 'group' ? 'Group' : 'Chat'}
                     {item.subtitle ? ` · ${item.subtitle}` : ''}
                   </Text>
@@ -158,7 +165,7 @@ export function ForwardToChatPicker({
                 <Ionicons
                   name={item.chatType === 'group' ? 'people' : 'chatbubble-outline'}
                   size={18}
-                  color="#aaa"
+                  color={theme.listSecondaryText}
                 />
               </TouchableOpacity>
             )}
@@ -170,17 +177,16 @@ export function ForwardToChatPicker({
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
+  container: { flex: 1 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: chatTheme.headerBg,
     paddingTop: 48,
     paddingHorizontal: 14,
     paddingBottom: 14,
   },
-  title: { color: '#fff', fontSize: 18, fontWeight: '700' },
+  title: { fontSize: 18, fontWeight: '700' },
   searchWrap: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -188,23 +194,21 @@ const styles = StyleSheet.create({
     margin: 12,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    backgroundColor: '#f2f2f2',
     borderRadius: 10,
   },
   searchInput: { flex: 1, fontSize: 16 },
   loader: { marginTop: 40 },
-  empty: { textAlign: 'center', color: '#999', marginTop: 40 },
+  empty: { textAlign: 'center', marginTop: 40 },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#eee',
     gap: 12,
   },
-  avatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#eee' },
+  avatar: { width: 44, height: 44, borderRadius: 22 },
   rowBody: { flex: 1 },
-  name: { fontSize: 16, fontWeight: '600', color: '#111' },
-  subtitle: { fontSize: 13, color: '#888', marginTop: 2 },
+  name: { fontSize: 16, fontWeight: '600' },
+  subtitle: { fontSize: 13, marginTop: 2 },
 });
