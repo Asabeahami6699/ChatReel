@@ -105,6 +105,7 @@ import {
   syncGroupSenderKeysForMe,
 } from '../../lib/groupSenderKeys';
 import { rememberChatThread, recallChatThread, clearChatThread } from '../../lib/chatThreadCache';
+import { ChatLoadingSkeleton } from './ChatLoadingSkeleton';
 
 export default function ChatRoomScreen() {
   const { user } = useAuth();
@@ -2886,7 +2887,7 @@ export default function ChatRoomScreen() {
             }}
             ListEmptyComponent={
               !initialLoadComplete ? (
-                <ActivityIndicator style={styles.loadingIndicator} size="large" color={chatTheme.primary} />
+                <ChatLoadingSkeleton theme={theme} />
               ) : (
                 <View style={styles.empty}>
                   <Ionicons name="chatbubble-ellipses-outline" size={80} color="#c5c5c5" />
@@ -3413,12 +3414,6 @@ const styles = StyleSheet.create({
   },
   currentTime: {
     color: 'rgba(255, 255, 255, 0.7)',
-  },
-  loadingIndicator: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 100,
   },
   loadingMore: {
     marginVertical: 20,
