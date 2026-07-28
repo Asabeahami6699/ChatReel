@@ -12,13 +12,30 @@ import {
   openReelFromPush,
   openReelInboxFromPush,
 } from '../navigation/reelsNavigationBridge';
+import {
+  getPushNotificationsEnabled,
+  getRegisteredExpoPushToken,
+  setRegisteredExpoPushToken,
+} from '../lib/pushPrefs';
+
+const MESSAGE_REPLY_CATEGORY = 'message_reply';
+const REPLY_ACTION = 'REPLY';
 
 Notifications.setNotificationHandler({
   handleNotification: async (notification) => {
     const data = notification.request.content.data as PushData | undefined;
     const inThisChat = isPushForActiveChat(data ?? {});
     const isCall = data?.type === 'incoming_call';
-    // Quiet when already looking at that chat; always alert for calls.
+    // Honor Settings → Push notifications (calls still alert).
+    if (!getPushNotificationsEnabled() && !isCall) {
+      return {
+        shouldShowAlert: false,
+        shouldPlaySound: false,
+        shouldSetBadge: false,
+        shouldShowBanner: false,
+        shouldShowList: false,
+      };
+    }
     const show = isCall || !inThisChat;
     return {
       shouldShowAlert: show,
@@ -48,6 +65,7 @@ type PushData = {
   friendship_id?: string;
   message_id?: string;
   call_id?: string;
+  sender_id?: string;
   badge?: number;
 };
 
@@ -95,7 +113,50 @@ function handlePushOpen(data: PushData | undefined) {
   }
 }
 
+async function replyFromNotification(data: PushData, text: string) {
+  const chatId = data.chat_id;
+  if (!chatId || !text.trim()) return;
+  const payload =
+    data.chat_type === 'group'
+      ? {
+          content: text.trim(),
+          message_type: 'text',
+          group_id: chatId,
+          push_preview: text.trim().slice(0, 120),
+        }
+      : {
+          content: text.trim(),
+          message_type: 'text',
+          receiver_id: chatId,
+          push_preview: text.trim().slice(0, 120),
+        };
+  await api.messages.send(payload);
+}
+
 let androidChannelsReady = false;
+let categoriesReady = false;
+
+async function ensureNotificationCategories() {
+  if (categoriesReady || Platform.OS === 'web') return;
+  try {
+    await Notifications.setNotificationCategoryAsync(MESSAGE_REPLY_CATEGORY, [
+      {
+        identifier: REPLY_ACTION,
+        buttonTitle: 'Reply',
+        textInput: {
+          submitButtonTitle: 'Send',
+          placeholder: 'Message',
+        },
+        options: {
+          opensAppToForeground: false,
+        },
+      },
+    ]);
+    categoriesReady = true;
+  } catch (err) {
+    console.warn('[push] setNotificationCategoryAsync failed:', err);
+  }
+}
 
 async function ensureAndroidChannels() {
   if (Platform.OS !== 'android' || androidChannelsReady) return;
@@ -131,6 +192,10 @@ async function ensureAndroidChannels() {
 }
 
 async function registerExpoToken(userId: string): Promise<string | null> {
+  if (!getPushNotificationsEnabled()) {
+    return null;
+  }
+
   const { status: existing } = await Notifications.getPermissionsAsync();
   let finalStatus = existing;
   if (existing !== 'granted') {
@@ -195,9 +260,10 @@ export function usePushNotifications(userId: string | undefined) {
   // Unregister only on explicit logout (userId → undefined), not Strict Mode remounts.
   useEffect(() => {
     if (userId) return;
-    const token = registeredToken.current;
+    const token = registeredToken.current ?? getRegisteredExpoPushToken();
     if (!token) return;
     registeredToken.current = null;
+    setRegisteredExpoPushToken(null);
     void api.notifications.unregisterToken(token).catch(() => undefined);
     void import('../lib/appBadge').then((m) => m.clearAppBadge());
   }, [userId]);
@@ -214,17 +280,56 @@ export function usePushNotifications(userId: string | undefined) {
     const consumeResponse = (response: Notifications.NotificationResponse | null) => {
       if (!response) return;
       const id = response.notification.request.identifier;
+      const actionId = response.actionIdentifier;
+      const data = response.notification.request.content.data as PushData;
+
+      // Reply-from-notification (WhatsApp-style) — send without opening the chat.
+      if (
+        actionId === REPLY_ACTION &&
+        data?.type === 'message' &&
+        data.chat_id
+      ) {
+        const replyKey = `${id}:reply`;
+        if (handledResponseIds.current.has(replyKey)) return;
+        handledResponseIds.current.add(replyKey);
+        const text =
+          'userText' in response && typeof response.userText === 'string'
+            ? response.userText
+            : '';
+        if (text.trim()) {
+          void replyFromNotification(data, text).catch((err) => {
+            console.warn('[push] reply-from-notification failed:', err);
+          });
+        }
+        return;
+      }
+
       if (handledResponseIds.current.has(id)) return;
       handledResponseIds.current.add(id);
-      handlePushOpen(response.notification.request.content.data as PushData);
+      handlePushOpen(data);
     };
 
     const syncToken = async () => {
       try {
         await ensureAndroidChannels();
+        await ensureNotificationCategories();
+        // Pick up tokens registered via Settings toggle.
+        if (!registeredToken.current) {
+          registeredToken.current = getRegisteredExpoPushToken();
+        }
+        if (!getPushNotificationsEnabled()) {
+          const existing = registeredToken.current;
+          if (existing) {
+            registeredToken.current = null;
+            setRegisteredExpoPushToken(null);
+            await api.notifications.unregisterToken(existing).catch(() => undefined);
+          }
+          return;
+        }
         const token = await registerExpoToken(userId);
         if (!active || !token) return;
         registeredToken.current = token;
+        setRegisteredExpoPushToken(token);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if (
@@ -286,4 +391,34 @@ export function usePushNotifications(userId: string | undefined) {
       // Keep the DB token across remounts; logout effect handles delete.
     };
   }, [userId]);
+}
+
+/** Call when the Settings toggle changes so tokens register/unregister immediately. */
+export async function syncPushRegistrationForSetting(
+  userId: string | undefined,
+  enabled: boolean
+): Promise<void> {
+  const { setPushNotificationsEnabled, getRegisteredExpoPushToken } = await import(
+    '../lib/pushPrefs'
+  );
+  setPushNotificationsEnabled(enabled);
+  if (!userId) return;
+  if (!enabled) {
+    const token = getRegisteredExpoPushToken();
+    if (token) {
+      setRegisteredExpoPushToken(null);
+      await api.notifications.unregisterToken(token).catch(() => undefined);
+    }
+    return;
+  }
+  try {
+    await ensureAndroidChannels();
+    await ensureNotificationCategories();
+    const token = await registerExpoToken(userId);
+    if (token) {
+      setRegisteredExpoPushToken(token);
+    }
+  } catch (err) {
+    console.warn('[push] re-register after toggle failed:', err);
+  }
 }

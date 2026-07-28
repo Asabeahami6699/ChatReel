@@ -6,3 +6,11 @@
 export function usePushNotifications(_userId: string | undefined): void {
   /* intentionally empty */
 }
+
+export async function syncPushRegistrationForSetting(
+  _userId: string | undefined,
+  _enabled: boolean
+): Promise<void> {
+  /* no-op on web */
+}
+

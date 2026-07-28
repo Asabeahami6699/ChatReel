@@ -42,7 +42,10 @@ export function ReelMediaSlide({
   onRef,
 }: Props) {
   const isImage = media.media_type === 'image' || isImageReelUrl(media.media_url);
-  const playbackUri = videoUri ?? getMediaPlaybackUrl(media);
+  // Never use video-cache .mp4 URIs for image slides (legacy bad cache).
+  const playbackUri = isImage
+    ? getMediaPlaybackUrl(media)
+    : videoUri ?? getMediaPlaybackUrl(media);
   const useWebStream = Platform.OS === 'web' && !isImage;
   const posterUri = media.thumbnail_url ?? (isImage ? playbackUri : reel.thumbnail_url);
   const showPoster = Boolean(posterUri) && !isReady;

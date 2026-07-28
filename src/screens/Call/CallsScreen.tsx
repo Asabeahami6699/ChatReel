@@ -2,6 +2,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
+  Platform,
   RefreshControl,
   SectionList,
   StatusBar,
@@ -168,15 +169,23 @@ export default function CallsScreen() {
   }, [calls]);
 
   const startCallToUser = useCallback(
-    async (userId: string, type: 'voice' | 'video') => {
+    async (userId: string, type: 'voice' | 'video', peerHint?: { peerName?: string; peerAvatar?: string | null }) => {
       if (!requireAuth('Sign in to place a call.')) return;
       if (callsEnabled === false) {
         showAppToast('Calls are not enabled on this server yet', { isError: true });
         return;
       }
+      // Close the picker Modal first — on Android it sits above ActiveCallLayer.
+      setPickerOpen(false);
+      // Let the picker Modal finish dismissing before showing the call Modal.
+      if (Platform.OS === 'android') {
+        await new Promise((r) => setTimeout(r, 80));
+      }
       try {
-        const { call, live_kit } = await startCallGuarded({ type, callee_id: userId });
-        setPickerOpen(false);
+        const { call, live_kit } = await startCallGuarded(
+          { type, callee_id: userId },
+          peerHint
+        );
         const { navigateToOutgoingCall } = await import('../../navigation/rootNavigation');
         navigateToOutgoingCall({ call, token: live_kit.token, url: live_kit.url });
       } catch (err) {
@@ -208,7 +217,11 @@ export default function CallsScreen() {
           return;
         }
         try {
-          const { call, live_kit } = await startCallGuarded({ type, group_id: target.group_id });
+          setPickerOpen(false);
+          const { call, live_kit } = await startCallGuarded(
+            { type, group_id: target.group_id },
+            { peerName: callDisplayName(target), peerAvatar: target.group?.avatar_url ?? null }
+          );
           const { navigateToOutgoingCall } = await import('../../navigation/rootNavigation');
           navigateToOutgoingCall({ call, token: live_kit.token, url: live_kit.url });
         } catch (err) {
@@ -461,7 +474,7 @@ export default function CallsScreen() {
   );
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: theme.listBg }]} edges={['left', 'right', 'bottom']}>
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.listBg }]} edges={['left', 'right']}>
       {isFocused ? (
         <StatusBar barStyle="light-content" backgroundColor="#0d47a1" />
       ) : null}
@@ -532,7 +545,7 @@ export default function CallsScreen() {
         visible={pickerOpen}
         friends={friendContacts}
         onClose={() => setPickerOpen(false)}
-        onCall={(userId, type) => void startCallToUser(userId, type)}
+        onCall={(userId, type, peerHint) => void startCallToUser(userId, type, peerHint)}
       />
     </SafeAreaView>
   );

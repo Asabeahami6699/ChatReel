@@ -15,6 +15,7 @@ import giftsRoutes from './routes/gifts.routes';
 import walletRoutes from './routes/wallet.routes';
 import paystackWebhookRoutes from './routes/paystack.webhook.routes';
 import linkPreviewRoutes from './routes/linkpreview.routes';
+import translateRoutes from './routes/translate.routes';
 import ringtonesRoutes from './routes/ringtones.routes';
 import chatRouter from './routers/chat.router';
 import callsRouter from './routers/calls.router';
@@ -69,6 +70,7 @@ export function createApp() {
   app.use('/api/wallet', walletRoutes);
   app.use('/api/ringtones', ringtonesRoutes);
   app.use('/api/link-preview', linkPreviewRoutes);
+  app.use('/api/translate', translateRoutes);
 
   app.use(errorHandler);
 

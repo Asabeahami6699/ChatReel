@@ -15,6 +15,48 @@ const router = Router();
 
 const EDIT_WINDOW_MS = 15 * 60 * 1000;
 
+/** Drop recipients who muted this chat until a future time. */
+async function filterMutedChatPush(
+  userIds: string[],
+  chatId: string,
+  chatType: 'individual' | 'group'
+): Promise<string[]> {
+  if (userIds.length === 0) return [];
+  const { data } = await supabaseAdmin
+    .from('chat_preferences')
+    .select('user_id, muted_until')
+    .in('user_id', userIds)
+    .eq('chat_id', chatId)
+    .eq('chat_type', chatType);
+  const now = Date.now();
+  const muted = new Set(
+    (data ?? [])
+      .filter((row) => {
+        if (!row.muted_until) return false;
+        const until = new Date(row.muted_until as string).getTime();
+        return Number.isFinite(until) && until > now;
+      })
+      .map((row) => row.user_id as string)
+  );
+  return userIds.filter((id) => !muted.has(id));
+}
+
+function textPushPreview(body: {
+  message_type?: string;
+  content: string;
+  plaintext?: boolean;
+  push_preview?: string;
+}): string {
+  if (body.message_type && body.message_type !== 'text') {
+    if (body.message_type === 'reel') return 'Shared a reel';
+    if (body.message_type === 'moment') return 'Replied to your moment';
+    return `Sent a ${body.message_type}`;
+  }
+  const preview = body.push_preview?.trim() || (body.plaintext === false ? '' : body.content);
+  const sliced = preview.slice(0, 120).trim();
+  return sliced || 'New message';
+}
+
 function mapMessageForClient(m: Record<string, unknown>) {
   return withCdnMediaFields(m);
 }
@@ -37,6 +79,8 @@ const messageSchema = z.object({
   reply_to_id: z.string().uuid().optional(),
   expires_at: z.string().datetime().optional(),
   view_once: z.boolean().optional(),
+  /** Cleartext preview for push notifications when content is E2E ciphertext. Not stored. */
+  push_preview: z.string().max(200).optional(),
   /** Client-generated id for idempotent / offline retries (unique per sender). */
   client_message_id: z
     .string()
@@ -376,23 +420,18 @@ router.post(
 
       const senderName =
         senderProfile?.display_name || senderProfile?.email?.split('@')[0] || 'New message';
-      const preview =
-        body.message_type === 'text'
-          ? body.plaintext === false
-            ? 'New message'
-            : body.content.slice(0, 120)
-          : body.message_type === 'reel'
-            ? 'Shared a reel'
-            : body.message_type === 'moment'
-              ? 'Replied to your moment'
-              : `Sent a ${body.message_type}`;
+      const preview = textPushPreview(body);
 
       // Skip Expo when recipient already has this DM open (Realtime covers them).
-      const [needsPush] = filterUsersNeedingMessagePush(
+      let [needsPush] = filterUsersNeedingMessagePush(
         [body.receiver_id],
         userId,
         'individual'
       );
+      if (needsPush) {
+        const unmuted = await filterMutedChatPush([needsPush], userId, 'individual');
+        needsPush = unmuted[0];
+      }
       if (needsPush) {
         sendPushToUserSafe(needsPush, {
           title: senderName,
@@ -403,6 +442,7 @@ router.post(
             chat_type: 'individual',
             chat_name: senderName,
             message_id: data.id,
+            sender_id: userId,
           },
         });
       }
@@ -421,15 +461,9 @@ router.post(
         senderProfile?.display_name || senderProfile?.email?.split('@')[0] || 'Someone';
       const groupName = (group?.name as string | undefined) || 'Group';
       const preview =
-        body.message_type === 'text'
-          ? body.content.slice(0, 120)
-          : body.message_type === 'reel'
-            ? 'Shared a reel'
-            : body.message_type === 'moment'
-              ? 'Shared a moment'
-              : `Sent a ${body.message_type}`;
+        body.message_type === 'moment' ? 'Shared a moment' : textPushPreview(body);
 
-      const recipientIds = filterUsersNeedingMessagePush(
+      let recipientIds = filterUsersNeedingMessagePush(
         [
           ...new Set(
             (members ?? [])
@@ -440,6 +474,7 @@ router.post(
         body.group_id,
         'group'
       );
+      recipientIds = await filterMutedChatPush(recipientIds, body.group_id, 'group');
 
       if (recipientIds.length) {
         sendPushToUsersSafe(recipientIds, {
@@ -451,6 +486,7 @@ router.post(
             chat_type: 'group',
             chat_name: groupName,
             message_id: data.id,
+            sender_id: userId,
           },
         });
       }

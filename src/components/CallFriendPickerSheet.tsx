@@ -18,7 +18,11 @@ type Props = {
   visible: boolean;
   friends: CallFriendRow[];
   onClose: () => void;
-  onCall: (userId: string, type: 'voice' | 'video') => void;
+  onCall: (
+    userId: string,
+    type: 'voice' | 'video',
+    peerHint?: { peerName?: string; peerAvatar?: string | null }
+  ) => void;
 };
 
 export function CallFriendPickerSheet({ visible, friends, onClose, onCall }: Props) {
@@ -97,14 +101,24 @@ export function CallFriendPickerSheet({ visible, friends, onClose, onCall }: Pro
                 <View style={styles.actions}>
                   <TouchableOpacity
                     style={[styles.callBtn, styles.voiceBtn]}
-                    onPress={() => onCall(item.userId, 'voice')}
+                    onPress={() =>
+                      onCall(item.userId, 'voice', {
+                        peerName: item.name,
+                        peerAvatar: item.avatar,
+                      })
+                    }
                     accessibilityLabel={`Voice call ${item.name}`}
                   >
                     <Ionicons name="call" size={18} color="#fff" />
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.callBtn, styles.videoBtn]}
-                    onPress={() => onCall(item.userId, 'video')}
+                    onPress={() =>
+                      onCall(item.userId, 'video', {
+                        peerName: item.name,
+                        peerAvatar: item.avatar,
+                      })
+                    }
                     accessibilityLabel={`Video call ${item.name}`}
                   >
                     <Ionicons name="videocam" size={18} color="#fff" />

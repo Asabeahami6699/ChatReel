@@ -134,6 +134,7 @@ type Props = {
   isSearchHit?: boolean;
   onReadReceiptPress?: (message: ChatListMessage) => void;
   onReply?: (message: ChatListMessage) => void;
+  translatedText?: string | null;
 };
 
 export function ChatMessageRow({
@@ -156,6 +157,7 @@ export function ChatMessageRow({
   isSearchHit,
   onReadReceiptPress,
   onReply,
+  translatedText,
 }: Props) {
   const { theme } = useChatSettings();
   const swipeRef = useRef<Swipeable>(null);
@@ -433,6 +435,12 @@ export function ChatMessageRow({
             void openFileUrl(url).catch(() => undefined);
           }}
         />
+        {!!translatedText && (
+          <View style={[styles.translationBox, { borderTopColor: isOutgoing ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.12)' }]}>
+            <Text style={[styles.translationLabel, { color: metaColor }]}>Translated</Text>
+            <Text style={[styles.translationText, { color: textColor }]}>{translatedText}</Text>
+          </View>
+        )}
         {previewUrl && (
           <LinkPreviewCard
             url={previewUrl}
@@ -554,6 +562,22 @@ const styles = StyleSheet.create({
   content: { maxWidth: '82%' },
   contentOut: { alignItems: 'flex-end' },
   contentIn: { alignItems: 'flex-start' },
+  translationBox: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  translationLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    marginBottom: 2,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  translationText: {
+    fontSize: 15,
+    lineHeight: 20,
+  },
   senderName: {
     fontSize: 12.5,
     fontWeight: '600',

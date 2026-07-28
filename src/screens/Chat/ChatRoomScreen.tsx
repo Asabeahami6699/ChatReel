@@ -155,6 +155,7 @@ export default function ChatRoomScreen() {
   const [searchVisible, setSearchVisible] = useState(false);
   const [searchHitId, setSearchHitId] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<Message | null>(null);
+  const [translations, setTranslations] = useState<Record<string, string>>({});
   const [momentPreviewId, setMomentPreviewId] = useState<string | null>(null);
   const [wallpaper, setWallpaper] = useState<string | null>(null);
   const [starredIds, setStarredIds] = useState<string[]>([]);
@@ -245,7 +246,7 @@ export default function ChatRoomScreen() {
     flatListRef,
     showScrollDown,
     isKeyboardVisible,
-    keyboardHeight,
+    keyboardHeight: _keyboardHeight,
     shouldStickToBottomRef: shouldScrollToBottomRef,
     scrollToBottom,
     scrollToBottomAndStick,
@@ -420,6 +421,30 @@ export default function ChatRoomScreen() {
             ? getMessageDisplayText(msg)
             : msg.file_name || getMessageDisplayText(msg) || '';
         await setStringAsync(text);
+        return;
+      }
+      if (action === 'translate') {
+        const text = getMessageDisplayText(msg)?.trim();
+        if (!text) {
+          showAppToast('Nothing to translate');
+          return;
+        }
+        try {
+          const me = await api.profiles.me();
+          const { normalizeLanguageValue } = await import('../../lib/profileLocaleOptions');
+          const rawLang =
+            typeof me.profile?.language === 'string' ? me.profile.language : null;
+          const lang = normalizeLanguageValue(rawLang) || 'en';
+          const to = lang.split(/[-_]/)[0] || 'en';
+          const { translatedText } = await api.translate.text({ text, to });
+          setTranslations((prev) => ({ ...prev, [msg.id]: translatedText }));
+          showAppToast('Translated');
+        } catch (err) {
+          showAppToast(
+            err instanceof ApiError ? err.message : 'Could not translate',
+            { isError: true }
+          );
+        }
         return;
       }
       if (action === 'edit') {
@@ -956,6 +981,10 @@ export default function ChatRoomScreen() {
         content: cleartext,
         message_type: message.message_type || 'text',
         client_message_id: clientMessageId,
+        // Plaintext preview for push (E2E ciphertext is not readable on the server).
+        ...((message.message_type || 'text') === 'text' && cleartext
+          ? { push_preview: String(cleartext).slice(0, 120) }
+          : {}),
         ...(message.reply_to_id ? { reply_to_id: message.reply_to_id } : {}),
       });
 
@@ -1297,6 +1326,7 @@ export default function ChatRoomScreen() {
         content: messageContent,
         message_type: 'text',
         client_message_id: clientMessageId,
+        push_preview: messageContent.slice(0, 120),
         ...(replyId ? { reply_to_id: replyId } : {}),
       });
       // Encrypt now if keys are ready; flush will retry encrypt if still plaintext.
@@ -2747,6 +2777,7 @@ export default function ChatRoomScreen() {
         isSearchHit={searchHitId === msg.id}
         onReadReceiptPress={(m) => setReadReceiptMessageId(m.id)}
         onReply={(m) => setReplyTo(m as Message)}
+        translatedText={translations[msg.id] ?? null}
       />
     );
   };
@@ -2837,12 +2868,7 @@ export default function ChatRoomScreen() {
       )}
 
       <KeyboardAvoidingView
-        style={{
-          flex: 1,
-          // Android SoftInput often doesn't resize under our root SafeArea shell — pad manually.
-          paddingBottom:
-            Platform.OS === 'android' && keyboardHeight > 0 ? keyboardHeight : 0,
-        }}
+        style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={keyboardVerticalOffset}
       >
@@ -2870,7 +2896,7 @@ export default function ChatRoomScreen() {
           <FlatList
             ref={flatListRef}
             data={chatRows}
-            extraData={`${visibleMessages.length}:${listTailId}:${chatRows.length}:${isPlayingAudio ?? ''}:${searchHitId ?? ''}:${wallpaper ?? ''}`}
+            extraData={`${visibleMessages.length}:${listTailId}:${chatRows.length}:${isPlayingAudio ?? ''}:${searchHitId ?? ''}:${wallpaper ?? ''}:${Object.keys(translations).length}`}
             renderItem={renderChatRow}
             keyExtractor={(item) => item.key}
             style={{ flex: 1, backgroundColor: 'transparent' }}

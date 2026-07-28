@@ -1038,7 +1038,13 @@ export default function ReelsScreen() {
 
   if (loading && reels.length === 0) {
     return (
-      <View style={[styles.container, styles.center]}>
+      <View
+        style={[
+          styles.container,
+          styles.center,
+          !usePhoneFrame && { marginTop: -insets.top },
+        ]}
+      >
         {isFocused ? <StatusBar barStyle="light-content" backgroundColor="#000" /> : null}
         <ActivityIndicator size="large" color="#fff" />
         <Text style={styles.emptyText}>Loading reels…</Text>
@@ -1048,7 +1054,13 @@ export default function ReelsScreen() {
 
   if (error && reels.length === 0) {
     return (
-      <View style={[styles.container, styles.center]}>
+      <View
+        style={[
+          styles.container,
+          styles.center,
+          !usePhoneFrame && { marginTop: -insets.top },
+        ]}
+      >
         {isFocused ? <StatusBar barStyle="light-content" backgroundColor="#000" /> : null}
         <Ionicons name="cloud-offline-outline" size={48} color="#fff" />
         <Text style={styles.emptyText}>{error}</Text>
@@ -1061,7 +1073,11 @@ export default function ReelsScreen() {
 
   return (
     <View
-      style={[styles.container, usePhoneFrame && styles.containerPhoneFrame]}
+      style={[
+        styles.container,
+        usePhoneFrame && styles.containerPhoneFrame,
+        !usePhoneFrame && { marginTop: -insets.top },
+      ]}
       onLayout={(e) => {
         const h = Math.round(e.nativeEvent.layout.height);
         if (h > 0) setViewportHeight(h);

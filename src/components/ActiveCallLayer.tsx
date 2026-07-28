@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Modal, Platform, StyleSheet, View } from 'react-native';
 import { ActiveCallContent } from '../screens/Call/ActiveCallScreen';
 import { OutgoingConnectingView } from '../screens/Call/OutgoingConnectingView';
 import {
@@ -9,44 +9,68 @@ import {
 } from '../screens/Call/callPipBridge';
 
 /**
- * Hosts the active call outside the navigation stack.
- * Minimize shrinks this host to 1×1 (pointerEvents none) so Main is tappable
- * while LiveKit stays mounted — no disconnect / reconnect.
+ * Hosts the active / connecting call outside the navigation stack.
+ * Uses a full-screen Modal on Android so friend-picker Modals cannot cover it.
+ * When minimized, LiveKit stays mounted in a 1×1 host under Main.
  */
 export function ActiveCallLayer() {
   const [snap, setSnap] = useState<CallPipSnapshot>(getCallPipSnapshot);
 
   useEffect(() => subscribeCallPip(() => setSnap(getCallPipSnapshot())), []);
 
-  if (snap.connecting && !snap.token) {
+  const showConnecting = snap.connecting && !snap.token;
+  const showActive = snap.active && !!snap.call && !!snap.token && !!snap.url;
+  const showFullScreen = showConnecting || (showActive && !snap.minimized);
+
+  if (!showConnecting && !showActive) {
+    return null;
+  }
+
+  const content = showConnecting ? (
+    <OutgoingConnectingView
+      peerName={snap.peerName}
+      peerAvatar={snap.peerAvatar}
+      callType={snap.callType}
+    />
+  ) : snap.call && snap.token && snap.url ? (
+    <ActiveCallContent
+      embedded
+      call={snap.call}
+      token={snap.token}
+      url={snap.url}
+      layerMinimized={snap.minimized}
+    />
+  ) : null;
+
+  // Minimized: keep LiveKit alive in a tiny off-screen host (not a Modal).
+  if (showActive && snap.minimized) {
     return (
-      <View style={styles.fullHost} pointerEvents="auto" collapsable={false}>
-        <OutgoingConnectingView
-          peerName={snap.peerName}
-          peerAvatar={snap.peerAvatar}
-          callType={snap.callType}
-        />
+      <View style={styles.pipHost} pointerEvents="none" collapsable={false}>
+        {content}
       </View>
     );
   }
 
-  if (!snap.active || !snap.call || !snap.token || !snap.url) {
-    return null;
+  // Full-screen: Modal on Android so it stacks above other Modals (picker, sheets).
+  if (Platform.OS === 'android' && showFullScreen) {
+    return (
+      <Modal
+        visible
+        animationType="fade"
+        presentationStyle="fullScreen"
+        statusBarTranslucent
+        onRequestClose={() => undefined}
+      >
+        <View style={styles.modalFill} collapsable={false}>
+          {content}
+        </View>
+      </Modal>
+    );
   }
 
   return (
-    <View
-      style={snap.minimized ? styles.pipHost : styles.fullHost}
-      pointerEvents={snap.minimized ? 'none' : 'auto'}
-      collapsable={false}
-    >
-      <ActiveCallContent
-        embedded
-        call={snap.call}
-        token={snap.token}
-        url={snap.url}
-        layerMinimized={snap.minimized}
-      />
+    <View style={styles.fullHost} pointerEvents="auto" collapsable={false}>
+      {content}
     </View>
   );
 }
@@ -59,7 +83,11 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     zIndex: 9000,
-    elevation: 9000,
+    elevation: 10000,
+  },
+  modalFill: {
+    flex: 1,
+    backgroundColor: '#000',
   },
   pipHost: {
     position: 'absolute',

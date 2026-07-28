@@ -1,9 +1,10 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   FlatList,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   StyleSheet,
@@ -13,6 +14,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useReelComments } from '../../hooks/useReelComments';
 import { useCurrentProfileId } from '../../hooks/useCurrentProfileId';
 import { ApiError, type ReelCommentDTO } from '../../lib/api';
@@ -56,9 +58,11 @@ export default function ReelCommentSheet({
   onCommentAdded,
   onCommentRemoved,
 }: Props) {
+  const insets = useSafeAreaInsets();
   const currentProfileId = useCurrentProfileId();
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const {
     comments,
     loading,
@@ -81,6 +85,19 @@ export default function ReelCommentSheet({
     () => comments.find((c) => c.id === replyToId) ?? null,
     [comments, replyToId]
   );
+
+  useEffect(() => {
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvt, (e) => {
+      setKeyboardHeight(e.endCoordinates?.height ?? 0);
+    });
+    const hideSub = Keyboard.addListener(hideEvt, () => setKeyboardHeight(0));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   const rows = useMemo(() => {
     const byId = new Map(comments.map((c) => [c.id, c]));
@@ -193,7 +210,16 @@ export default function ReelCommentSheet({
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={0}
     >
+      <View
+        style={[
+          styles.sheetBody,
+          Platform.OS === 'android' && keyboardHeight > 0
+            ? { paddingBottom: Math.max(0, keyboardHeight - insets.bottom) }
+            : { paddingBottom: insets.bottom },
+        ]}
+      >
       <View style={styles.handle} />
       <View style={styles.header}>
         <Text style={styles.title}>
@@ -224,6 +250,7 @@ export default function ReelCommentSheet({
           renderItem={renderRow}
           style={styles.commentList}
           contentContainerStyle={{ paddingBottom: 16 }}
+          keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
           onEndReached={() => {
             if (hasMore && !loadingMore) loadMore();
@@ -265,10 +292,22 @@ export default function ReelCommentSheet({
           maxLength={1000}
           multiline
         />
-        <TouchableOpacity onPress={send} disabled={!draft.trim() || posting}>
-          <Text style={[styles.sendText, (!draft.trim() || posting) && styles.sendTextDisabled]}>
-            {posting ? '...' : 'Post'}
-          </Text>
+        <TouchableOpacity
+          onPress={send}
+          disabled={!draft.trim() || posting}
+          style={styles.sendBtn}
+          hitSlop={8}
+          accessibilityLabel="Send comment"
+        >
+          {posting ? (
+            <ActivityIndicator size="small" color={REEL_ACCENT} />
+          ) : (
+            <Ionicons
+              name="send"
+              size={22}
+              color={draft.trim() ? REEL_ACCENT : '#555'}
+            />
+          )}
         </TouchableOpacity>
       </View>
 
@@ -311,12 +350,14 @@ export default function ReelCommentSheet({
           </View>
         </View>
       )}
+      </View>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#111' },
+  sheetBody: { flex: 1 },
   handle: {
     width: 40,
     height: 4,
@@ -381,8 +422,14 @@ const styles = StyleSheet.create({
     fontSize: 15,
     maxHeight: 120,
   },
-  sendText: { color: '#1e90ff', fontWeight: '600', marginLeft: 12, paddingVertical: 10 },
-  sendTextDisabled: { color: '#666' },
+  sendBtn: {
+    marginLeft: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    minWidth: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   emptyText: { color: '#aaa', marginTop: 12 },
   errorText: { color: '#ff6b6b', marginHorizontal: 24, textAlign: 'center' },

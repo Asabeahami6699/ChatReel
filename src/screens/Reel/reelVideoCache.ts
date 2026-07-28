@@ -1,7 +1,12 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import { Platform } from 'react-native';
 import type { ReelDTO } from '../../lib/api';
-import { getReelPlaybackUrl, isHlsUrl, stripMediaFragment } from '../../lib/reelPlayback';
+import {
+  getReelPlaybackUrl,
+  isHlsUrl,
+  isImageReelUrl,
+  stripMediaFragment,
+} from '../../lib/reelPlayback';
 
 const CACHE_DIR = `${FileSystem.cacheDirectory ?? ''}reels-cache/`;
 const PREFETCH_AHEAD = 10;
@@ -50,10 +55,20 @@ async function ensureCacheDir() {
   }
 }
 
+function isImageReel(reel: ReelLike): boolean {
+  const first = (reel as { media?: Array<{ media_type?: string; media_url?: string }> }).media?.[0];
+  if (first?.media_type === 'image') return true;
+  if (first?.media_url && isImageReelUrl(first.media_url)) return true;
+  return isImageReelUrl(reel.video_url);
+}
+
 /** MP4 URL suitable for full-file cache (HLS stays streamed when no MP4). */
 function mp4CacheUrl(reel: ReelLike): string | null {
+  // Never cache image reels as .mp4 — that breaks <Image> on Android.
+  if (isImageReel(reel)) return null;
   const mp4 = stripMediaFragment(reel.video_url);
   if (!mp4 || isHlsUrl(mp4)) return null;
+  if (isImageReelUrl(mp4)) return null;
   return mp4;
 }
 
@@ -170,6 +185,8 @@ export function getCachedReelUri(reelId: string, remoteUrl: string): string {
  * (MP4 on web to avoid HLS segment QUIC errors; HLS on native when ready).
  */
 export function resolveReelPlaybackUri(reel: ReelLike): string {
+  // Never serve a cached .mp4 for image reels (legacy bad cache).
+  if (isImageReel(reel)) return getReelPlaybackUrl(reel);
   const entry = memory.get(reel.id);
   if (entry) return cachedPlaybackUri(entry);
   return getReelPlaybackUrl(reel);

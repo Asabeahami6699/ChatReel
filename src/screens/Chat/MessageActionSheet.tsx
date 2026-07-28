@@ -11,12 +11,14 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { REACTION_EMOJIS } from './chatMessageUtils';
+import { getMessageDisplayText } from '../../lib/messageCrypto';
 import type { ChatListMessage } from './chatListModel';
 import { useChatSettings } from '../../context/ChatSettingsContext';
 
 export type MessageAction =
   | 'reply'
   | 'copy'
+  | 'translate'
   | 'edit'
   | 'delete_me'
   | 'delete_all'
@@ -61,6 +63,10 @@ export function MessageActionSheet({
     { key: 'reply', label: 'Reply', icon: 'arrow-undo-outline' },
     { key: 'copy', label: 'Copy', icon: 'copy-outline' },
   ];
+
+  if (message.message_type === 'text' && getMessageDisplayText(message).trim()) {
+    actions.push({ key: 'translate', label: 'Translate', icon: 'language-outline' });
+  }
 
   if (canEdit) {
     actions.push({ key: 'edit', label: 'Edit', icon: 'create-outline' });

@@ -1170,6 +1170,14 @@ export const api = {
       }>(`/api/link-preview?url=${encodeURIComponent(url)}`),
   },
 
+  translate: {
+    text: (data: { text: string; to: string; from?: string }) =>
+      apiRequest<{ translatedText: string; detectedSourceLanguage?: string }>(
+        '/api/translate',
+        { method: 'POST', body: data }
+      ),
+  },
+
   notifications: {
     registerToken: (data: { token: string; platform?: string }) =>
       apiRequest<{ success: boolean }>('/api/notifications/register', {

@@ -42,18 +42,19 @@ export async function startCallGuarded(
   },
   peerHint?: { peerName?: string; peerAvatar?: string | null }
 ) {
-  const permErr = await ensureCallMediaPermissions(data.type);
-  if (permErr) {
-    throw new ApiError(permErr, 403);
-  }
-
-  // Show outgoing UI immediately so the installed app doesn't sit on a blank
-  // screen while the start API + LiveKit token mint (often cold on Render).
+  // Show outgoing chrome BEFORE the permission sheet so the physical device
+  // never looks like the call did nothing.
   beginOutgoingConnecting({
     peerName: peerHint?.peerName,
     peerAvatar: peerHint?.peerAvatar,
     callType: data.type,
   });
+
+  const permErr = await ensureCallMediaPermissions(data.type);
+  if (permErr) {
+    clearCallPip();
+    throw new ApiError(permErr, 403);
+  }
 
   const busyCallId = await getCallBusyMessage();
   if (busyCallId) {
@@ -84,7 +85,6 @@ export async function startCallGuarded(
       live_kit: { ...liveKit, url, token },
     };
   } catch (err) {
-    // Only tear down if we still own the connecting placeholder (user may have cancelled).
     const snap = getCallPipSnapshot();
     if (snap.connecting && !snap.token) {
       clearCallPip();

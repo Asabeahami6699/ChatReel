@@ -74,6 +74,7 @@ async function postExpoPush(
     channelId: string;
     priority: 'high';
     badge?: number;
+    categoryId?: string;
     _contentAvailable?: boolean;
     interruptionLevel?: 'active' | 'critical' | 'passive' | 'timeSensitive';
   }>
@@ -174,6 +175,8 @@ export async function sendPushToUsers(userIds: string[], payload: PushPayload): 
       channelId,
       priority: 'high' as const,
       ...(badge != null ? { badge } : {}),
+      // WhatsApp-style reply action on message notifications.
+      ...(isMessage ? { categoryId: 'message_reply' } : {}),
       // Wake path for ringing while backgrounded (best-effort on iOS).
       ...(isCall
         ? {

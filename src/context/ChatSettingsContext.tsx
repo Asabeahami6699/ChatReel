@@ -3,6 +3,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import { chatThemePresets, isChatThemeId, type ChatThemeId, type ChatThemeTokens } from '../lib/chatThemes';
 import { api, type UserRingtoneDTO } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
+import { setPushNotificationsEnabled } from '../lib/pushPrefs';
 
 export type ChatAppSettings = {
   themeId: ChatThemeId;
@@ -62,10 +63,16 @@ export function ChatSettingsProvider({ children }: { children: React.ReactNode }
     let alive = true;
     AsyncStorage.getItem(STORAGE_KEY)
       .then((raw) => {
-        if (!alive || !raw) return;
+        if (!alive) return;
+        if (!raw) {
+          setPushNotificationsEnabled(DEFAULT_SETTINGS.pushNotifications);
+          return;
+        }
         const parsed = JSON.parse(raw) as Partial<ChatAppSettings>;
         const themeId = isChatThemeId(parsed.themeId) ? parsed.themeId : DEFAULT_SETTINGS.themeId;
-        setSettings({ ...DEFAULT_SETTINGS, ...parsed, themeId });
+        const next = { ...DEFAULT_SETTINGS, ...parsed, themeId };
+        setSettings(next);
+        setPushNotificationsEnabled(next.pushNotifications);
       })
       .catch(() => undefined)
       .finally(() => {
@@ -76,13 +83,33 @@ export function ChatSettingsProvider({ children }: { children: React.ReactNode }
     };
   }, []);
 
-  const updateSettings = useCallback(async (patch: Partial<ChatAppSettings>) => {
-    setSettings((prev) => {
-      const next = { ...prev, ...patch };
-      void AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      return next;
-    });
-  }, []);
+  // Keep module-level push flag in sync after hydrate.
+  useEffect(() => {
+    if (!ready) return;
+    setPushNotificationsEnabled(settings.pushNotifications);
+  }, [ready, settings.pushNotifications]);
+
+  const updateSettings = useCallback(
+    async (patch: Partial<ChatAppSettings>) => {
+      setSettings((prev) => {
+        const next = { ...prev, ...patch };
+        void AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+        return next;
+      });
+      if (typeof patch.pushNotifications === 'boolean') {
+        setPushNotificationsEnabled(patch.pushNotifications);
+        try {
+          const { syncPushRegistrationForSetting } = await import(
+            '../hooks/usePushNotifications'
+          );
+          await syncPushRegistrationForSetting(user?.id, patch.pushNotifications);
+        } catch (err) {
+          console.warn('[settings] push toggle sync failed:', err);
+        }
+      }
+    },
+    [user?.id]
+  );
 
   const refreshRingtoneLibrary = useCallback(async () => {
     if (!user?.id) {

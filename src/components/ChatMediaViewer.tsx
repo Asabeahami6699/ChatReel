@@ -17,7 +17,7 @@ import { ChatVideoPlayer } from './ChatVideoPlayer';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
-const VIDEO_FRAME = { width: SCREEN_W, height: SCREEN_H * 0.72 };
+const VIDEO_FRAME = { width: SCREEN_W, height: SCREEN_H };
 
 export type ChatMediaItem = {
   id: string;
@@ -146,7 +146,26 @@ export function ChatMediaViewer({ items, initialIndex, visible, onClose }: Props
     <Modal visible={visible} animationType="fade" onRequestClose={onClose}>
       <StatusBar barStyle="light-content" />
       <View style={styles.root}>
-        <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+        <FlatList
+          ref={listRef}
+          style={styles.list}
+          data={items}
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          keyExtractor={(item) => item.id}
+          initialScrollIndex={initialIndex}
+          getItemLayout={(_, i) => ({
+            length: SCREEN_W,
+            offset: SCREEN_W * i,
+            index: i,
+          })}
+          onMomentumScrollEnd={onScrollEnd}
+          extraData={index}
+          renderItem={renderItem}
+        />
+
+        <View style={[styles.header, { paddingTop: insets.top + 8 }]} pointerEvents="box-none">
           <TouchableOpacity onPress={onClose} style={styles.headerBtn} hitSlop={12}>
             <Ionicons name="close" size={28} color="#fff" />
           </TouchableOpacity>
@@ -165,24 +184,6 @@ export function ChatMediaViewer({ items, initialIndex, visible, onClose }: Props
           </Text>
         </View>
 
-        <FlatList
-          ref={listRef}
-          data={items}
-          horizontal
-          pagingEnabled
-          showsHorizontalScrollIndicator={false}
-          keyExtractor={(item) => item.id}
-          initialScrollIndex={initialIndex}
-          getItemLayout={(_, i) => ({
-            length: SCREEN_W,
-            offset: SCREEN_W * i,
-            index: i,
-          })}
-          onMomentumScrollEnd={onScrollEnd}
-          extraData={index}
-          renderItem={renderItem}
-        />
-
         {items.length > 1 && (
           <View style={[styles.footer, { paddingBottom: insets.bottom + 12 }]}>
             <Text style={styles.footerHint}>Swipe to view more</Text>
@@ -198,12 +199,24 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#000',
   },
+  list: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
   header: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 2,
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 12,
     paddingBottom: 10,
-    backgroundColor: 'rgba(0,0,0,0.85)',
+    backgroundColor: 'rgba(0,0,0,0.45)',
   },
   headerBtn: {
     padding: 4,
@@ -235,10 +248,11 @@ const styles = StyleSheet.create({
     height: SCREEN_H,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: '#000',
   },
   mediaFrame: {
     width: SCREEN_W,
-    height: SCREEN_H * 0.72,
+    height: SCREEN_H,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -267,6 +281,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     alignItems: 'center',
+    zIndex: 2,
   },
   footerHint: {
     color: 'rgba(255,255,255,0.5)',
