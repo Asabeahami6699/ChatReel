@@ -9,6 +9,7 @@
 // the same device (same behavior as the previous AsyncStorage implementation).
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SQLite from 'expo-sqlite';
+import { notifyLocalStore } from '../lib/localMessageBus';
 
 export type MessageOutboxUpload = {
   kind: 'audio' | 'image' | 'video' | 'file';
@@ -32,8 +33,20 @@ export type MessageOutboxItem = {
 };
 
 const DB_NAME = 'chatreel_messages.db';
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const LEGACY_IMPORT_FLAG = 'legacy_asyncstorage_import_v1';
+const SYNC_CURSOR_META = 'sync_cursor_at';
+
+export type ChatIndexRow = {
+  chatId: string;
+  chatType: 'individual' | 'group';
+  lastMessagePreview: string;
+  lastMessageAt: string;
+  lastMessageId: string | null;
+  lastMessageType: string | null;
+  unreadCount: number;
+  updatedAt: number;
+};
 
 // Legacy AsyncStorage keys (must match messageStorage.ts).
 const LEGACY_MESSAGES_PREFIX = 'messages_';
@@ -104,7 +117,26 @@ async function migrateSchema(db: SQLite.SQLiteDatabase) {
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );
-      PRAGMA user_version = ${SCHEMA_VERSION};
+      PRAGMA user_version = 1;
+      COMMIT;
+    `);
+  }
+
+  if (version < 2) {
+    await db.execAsync(`
+      BEGIN;
+      CREATE TABLE IF NOT EXISTS chat_index (
+        chat_id TEXT PRIMARY KEY,
+        chat_type TEXT NOT NULL,
+        last_preview TEXT,
+        last_at TEXT,
+        last_id TEXT,
+        last_type TEXT,
+        unread_count INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_chat_index_last_at ON chat_index (last_at DESC);
+      PRAGMA user_version = 2;
       COMMIT;
     `);
   }
@@ -219,9 +251,35 @@ function sanitizeMessage(m: any) {
   return copy;
 }
 
+function rowFromDb(r: {
+  chat_id: string;
+  chat_type: string;
+  last_preview: string | null;
+  last_at: string | null;
+  last_id: string | null;
+  last_type: string | null;
+  unread_count: number;
+  updated_at: number;
+}): ChatIndexRow {
+  return {
+    chatId: r.chat_id,
+    chatType: r.chat_type === 'group' ? 'group' : 'individual',
+    lastMessagePreview: r.last_preview ?? '',
+    lastMessageAt: r.last_at ?? '',
+    lastMessageId: r.last_id,
+    lastMessageType: r.last_type,
+    unreadCount: r.unread_count ?? 0,
+    updatedAt: r.updated_at ?? 0,
+  };
+}
+
 export const messageStorage = {
   /** Transactionally replaces the entire cached thread for one chat. */
-  saveMessages: async (chatId: string, messages: any[]) => {
+  saveMessages: async (
+    chatId: string,
+    messages: any[],
+    opts?: { chatType?: 'individual' | 'group' }
+  ) => {
     try {
       const sanitized = messages.map(sanitizeMessage);
       await enqueue(async (db) => {
@@ -242,6 +300,11 @@ export const messageStorage = {
             [chatId, Date.now()]
           );
         });
+      });
+      notifyLocalStore({
+        reason: 'messages',
+        chatId,
+        chatType: opts?.chatType,
       });
     } catch (error) {
       console.error('❌ Error saving messages locally:', error);
@@ -292,8 +355,10 @@ export const messageStorage = {
         await db.withTransactionAsync(async () => {
           await db.runAsync('DELETE FROM messages WHERE chat_id = ?', [chatId]);
           await db.runAsync('DELETE FROM chat_sync WHERE chat_id = ?', [chatId]);
+          await db.runAsync('DELETE FROM chat_index WHERE chat_id = ?', [chatId]);
         });
       });
+      notifyLocalStore({ reason: 'clear', chatId });
     } catch (error) {
       console.error('❌ Error clearing local messages:', error);
     }
@@ -343,8 +408,6 @@ export const messageStorage = {
   enqueueOutbox: async (item: MessageOutboxItem) => {
     try {
       await enqueue(async (db) => {
-        // Delete-then-insert (instead of REPLACE) so a re-enqueued item moves
-        // to the end of the queue, matching the legacy array semantics.
         await db.withTransactionAsync(async () => {
           await db.runAsync('DELETE FROM outbox WHERE client_message_id = ?', [
             item.client_message_id,
@@ -355,6 +418,7 @@ export const messageStorage = {
           );
         });
       });
+      notifyLocalStore({ reason: 'outbox', chatId: item.chatId, chatType: item.chatType });
     } catch (error) {
       console.error('❌ Error enqueueing outbox:', error);
     }
@@ -365,6 +429,7 @@ export const messageStorage = {
       await enqueue((db) =>
         db.runAsync('DELETE FROM outbox WHERE client_message_id = ?', [clientMessageId])
       );
+      notifyLocalStore({ reason: 'outbox' });
     } catch (error) {
       console.error('❌ Error removing outbox item:', error);
     }
@@ -395,6 +460,98 @@ export const messageStorage = {
     }
   },
 
+  upsertChatIndex: async (row: ChatIndexRow) => {
+    try {
+      await enqueue((db) =>
+        db.runAsync(
+          `INSERT OR REPLACE INTO chat_index
+            (chat_id, chat_type, last_preview, last_at, last_id, last_type, unread_count, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            row.chatId,
+            row.chatType,
+            row.lastMessagePreview,
+            row.lastMessageAt,
+            row.lastMessageId,
+            row.lastMessageType,
+            row.unreadCount,
+            row.updatedAt,
+          ]
+        )
+      );
+    } catch (error) {
+      console.error('❌ Error upserting chat_index:', error);
+    }
+  },
+
+  getChatIndex: async (): Promise<ChatIndexRow[]> => {
+    try {
+      const rows = await enqueue((db) =>
+        db.getAllAsync<{
+          chat_id: string;
+          chat_type: string;
+          last_preview: string | null;
+          last_at: string | null;
+          last_id: string | null;
+          last_type: string | null;
+          unread_count: number;
+          updated_at: number;
+        }>('SELECT * FROM chat_index ORDER BY last_at DESC')
+      );
+      return rows.map(rowFromDb);
+    } catch (error) {
+      console.error('❌ Error loading chat_index:', error);
+      return [];
+    }
+  },
+
+  getChatIndexRow: async (chatId: string): Promise<ChatIndexRow | null> => {
+    try {
+      const row = await enqueue((db) =>
+        db.getFirstAsync<{
+          chat_id: string;
+          chat_type: string;
+          last_preview: string | null;
+          last_at: string | null;
+          last_id: string | null;
+          last_type: string | null;
+          unread_count: number;
+          updated_at: number;
+        }>('SELECT * FROM chat_index WHERE chat_id = ?', [chatId])
+      );
+      return row ? rowFromDb(row) : null;
+    } catch {
+      return null;
+    }
+  },
+
+  getGlobalSyncCursor: async (): Promise<string | null> => {
+    try {
+      const row = await enqueue((db) =>
+        db.getFirstAsync<{ value: string }>(
+          'SELECT value FROM meta WHERE key = ?',
+          [SYNC_CURSOR_META]
+        )
+      );
+      return row?.value ?? null;
+    } catch {
+      return null;
+    }
+  },
+
+  setGlobalSyncCursor: async (iso: string) => {
+    try {
+      await enqueue((db) =>
+        db.runAsync('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)', [
+          SYNC_CURSOR_META,
+          iso,
+        ])
+      );
+    } catch (error) {
+      console.error('❌ Error saving sync cursor:', error);
+    }
+  },
+
   /** Clear all account-scoped chat state on sign-out. */
   clearAll: async () => {
     try {
@@ -404,8 +561,11 @@ export const messageStorage = {
           await db.runAsync('DELETE FROM chat_sync');
           await db.runAsync('DELETE FROM drafts');
           await db.runAsync('DELETE FROM outbox');
+          await db.runAsync('DELETE FROM chat_index');
+          await db.runAsync('DELETE FROM meta WHERE key = ?', [SYNC_CURSOR_META]);
         });
       });
+      notifyLocalStore({ reason: 'clear' });
     } catch (error) {
       console.error('❌ Error clearing local chat storage:', error);
     }

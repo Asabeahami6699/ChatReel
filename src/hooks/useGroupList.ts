@@ -8,6 +8,10 @@ import { useAuth } from './useAuth';
 import { useRealtimeTopic } from './useRealtimeTopic';
 import { subscribeChatListMessageEvents } from '../lib/chatListRealtimeBridge';
 import { isEncryptedMessage, resolveChatListPreview } from '../lib/messageCrypto';
+import { subscribeLocalStore } from '../lib/localMessageBus';
+import { mergeGroupsWithIndex } from '../lib/mergeChatListWithIndex';
+import { resetChatIndexUnread } from '../lib/chatIndex';
+import { messageStorage } from '../utils/messageStorage';
 
 export type Group = {
   id: string;
@@ -91,6 +95,11 @@ export const useGroupList = (searchQuery = '') => {
   const [isDataStale, setIsDataStale] = useState(false);
   const paintedLocalRef = useRef(false);
   const safetyRefetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const groupsRef = useRef<Group[]>([]);
+
+  useEffect(() => {
+    groupsRef.current = groups;
+  }, [groups]);
 
   // -----------------------
   // Storage helpers
@@ -223,6 +232,7 @@ export const useGroupList = (searchQuery = '') => {
     async (groupId: string) => {
       if (!user?.id) return;
       try {
+        void resetChatIndexUnread(groupId);
         const { error } = await api.messages.markRead({ group_id: groupId }).then(
           () => ({ error: null }),
           (e) => ({ error: e })
@@ -244,6 +254,24 @@ export const useGroupList = (searchQuery = '') => {
     [user?.id]
   );
 
+  const paintFromLocalIndex = useCallback(async () => {
+    if (!user?.id) return;
+    try {
+      const [cached, index] = await Promise.all([
+        loadGroupsCache(),
+        messageStorage.getChatIndex(),
+      ]);
+      const merged = mergeGroupsWithIndex(cached ?? groupsRef.current, index);
+      if (merged.length === 0) return;
+      const withPreviews = await withDecryptedGroupPreviews(merged, user.id);
+      setGroups((prev) => mergeGroupsPreservingProfiles(prev, withPreviews));
+      paintedLocalRef.current = true;
+      setLoading(false);
+    } catch (e) {
+      console.warn('[useGroupList] local index paint failed', e);
+    }
+  }, [user?.id, loadGroupsCache]);
+
   // -----------------------
   // Main fetchGroups implementation
   // -----------------------
@@ -260,13 +288,16 @@ export const useGroupList = (searchQuery = '') => {
         const online = Boolean(net.isConnected);
         setIsOnline(online);
 
-        // Always paint local first (WhatsApp-style).
+        // Always paint local first (WhatsApp-style index + cache).
         if (!forceRefresh || !paintedLocalRef.current) {
-          const cached = await loadGroupsCache();
-          if (cached) {
-            setGroups(cached);
-            paintedLocalRef.current = true;
-            setLoading(false);
+          await paintFromLocalIndex();
+          if (!paintedLocalRef.current) {
+            const cached = await loadGroupsCache();
+            if (cached) {
+              setGroups(cached);
+              paintedLocalRef.current = true;
+              setLoading(false);
+            }
           }
         }
 
@@ -283,10 +314,12 @@ export const useGroupList = (searchQuery = '') => {
           formatted as Group[],
           user.id
         );
+        const index = await messageStorage.getChatIndex();
+        const withIndex = mergeGroupsWithIndex(withPreviews, index);
 
         try {
           const lastMessagesCache: Record<string, unknown> = {};
-          withPreviews.forEach((g) => {
+          withIndex.forEach((g) => {
             lastMessagesCache[g.id] = {
               message: g.last_message,
               timestamp: g.last_message_at,
@@ -302,7 +335,7 @@ export const useGroupList = (searchQuery = '') => {
         }
 
         setGroups((prev) => {
-          const merged = mergeGroupsPreservingProfiles(prev, withPreviews);
+          const merged = mergeGroupsPreservingProfiles(prev, withIndex);
           void saveGroupsCache(merged);
           return merged;
         });
@@ -321,7 +354,7 @@ export const useGroupList = (searchQuery = '') => {
         setRefreshing(false);
       }
     },
-    [user?.id]
+    [user?.id, paintFromLocalIndex]
   );
 
   const scheduleSafetyRefetch = useCallback(() => {
@@ -332,6 +365,20 @@ export const useGroupList = (searchQuery = '') => {
       void fetchGroups(true, true);
     }, 1200);
   }, [isOnline, fetchGroups]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    return subscribeLocalStore((event) => {
+      if (
+        event.reason === 'index' ||
+        event.reason === 'messages' ||
+        event.reason === 'sync' ||
+        event.reason === 'clear'
+      ) {
+        void paintFromLocalIndex();
+      }
+    });
+  }, [user?.id, paintFromLocalIndex]);
 
   // -----------------------
   // Initial load (cache-first) and profiles cache load/cleanup
@@ -411,7 +458,6 @@ export const useGroupList = (searchQuery = '') => {
       if (!senderId) return;
 
       const createdAt = String(row.created_at ?? new Date().toISOString());
-      const isIncoming = senderId !== user.id;
       const messageType = (row.message_type as string) || 'text';
       const encrypted = isEncryptedMessage({
         content: row.content as string | undefined,
@@ -442,9 +488,8 @@ export const useGroupList = (searchQuery = '') => {
           last_message_iv: (row.iv as string | null | undefined) ?? null,
           last_message_ephemeral_public_key:
             (row.ephemeral_public_key as string | null | undefined) ?? null,
-          unread_count: isIncoming
-            ? (next[idx].unread_count || 0) + 1
-            : next[idx].unread_count,
+          // Unread comes from local chat_index (push/sync/persist projector).
+          unread_count: next[idx].unread_count,
         };
         next.splice(idx, 1);
         return [updated, ...next];

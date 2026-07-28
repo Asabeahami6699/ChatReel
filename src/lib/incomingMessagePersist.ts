@@ -93,7 +93,9 @@ async function persistChat(entry: PendingChat, userId: string): Promise<void> {
   }
 
   if (isOpen(entry.chatId, entry.chatType)) return;
-  await messageStorage.saveMessages(entry.chatId, decrypted);
+  await messageStorage.saveMessages(entry.chatId, decrypted, {
+    chatType: entry.chatType,
+  });
   rememberChatThread(entry.chatId, decrypted);
 }
 

@@ -5,11 +5,14 @@
 // Note: this API has no authenticated-owner parameter, so storage is
 // device-scoped and shared across accounts on the same device.
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { notifyLocalStore } from '../lib/localMessageBus';
 
 const MESSAGES_KEY = (chatId: string) => `messages_${chatId}`;
 const LAST_SYNC_KEY = (chatId: string) => `last_sync_${chatId}`;
 const DRAFT_KEY = (chatId: string) => `draft_${chatId}`;
 const OUTBOX_KEY = 'message_send_outbox_v1';
+const CHAT_INDEX_KEY = 'chat_index_v1';
+const SYNC_CURSOR_KEY = 'sync_cursor_at_v1';
 
 export type MessageOutboxUpload = {
   kind: 'audio' | 'image' | 'video' | 'file';
@@ -32,6 +35,17 @@ export type MessageOutboxItem = {
   upload?: MessageOutboxUpload;
 };
 
+export type ChatIndexRow = {
+  chatId: string;
+  chatType: 'individual' | 'group';
+  lastMessagePreview: string;
+  lastMessageAt: string;
+  lastMessageId: string | null;
+  lastMessageType: string | null;
+  unreadCount: number;
+  updatedAt: number;
+};
+
 async function readOutbox(): Promise<MessageOutboxItem[]> {
   try {
     const raw = await AsyncStorage.getItem(OUTBOX_KEY);
@@ -47,9 +61,27 @@ async function writeOutbox(items: MessageOutboxItem[]) {
   await AsyncStorage.setItem(OUTBOX_KEY, JSON.stringify(items));
 }
 
+async function readIndex(): Promise<ChatIndexRow[]> {
+  try {
+    const raw = await AsyncStorage.getItem(CHAT_INDEX_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as ChatIndexRow[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function writeIndex(rows: ChatIndexRow[]) {
+  await AsyncStorage.setItem(CHAT_INDEX_KEY, JSON.stringify(rows));
+}
+
 export const messageStorage = {
-  // Save messages to local storage
-  saveMessages: async (chatId: string, messages: any[]) => {
+  saveMessages: async (
+    chatId: string,
+    messages: any[],
+    opts?: { chatType?: 'individual' | 'group' }
+  ) => {
     try {
       const sanitized = messages.map((m) => {
         const copy = { ...m };
@@ -64,6 +96,11 @@ export const messageStorage = {
       });
       await AsyncStorage.setItem(MESSAGES_KEY(chatId), JSON.stringify(sanitized));
       await AsyncStorage.setItem(LAST_SYNC_KEY(chatId), Date.now().toString());
+      notifyLocalStore({
+        reason: 'messages',
+        chatId,
+        chatType: opts?.chatType,
+      });
     } catch (error) {
       console.error('❌ Error saving messages locally:', error);
     }
@@ -93,6 +130,9 @@ export const messageStorage = {
     try {
       await AsyncStorage.removeItem(MESSAGES_KEY(chatId));
       await AsyncStorage.removeItem(LAST_SYNC_KEY(chatId));
+      const idx = await readIndex();
+      await writeIndex(idx.filter((r) => r.chatId !== chatId));
+      notifyLocalStore({ reason: 'clear', chatId });
     } catch (error) {
       console.error('❌ Error clearing local messages:', error);
     }
@@ -128,13 +168,13 @@ export const messageStorage = {
     }
   },
 
-  /** Durable offline send queue (survives app restart). */
   enqueueOutbox: async (item: MessageOutboxItem) => {
     try {
       const items = await readOutbox();
       const next = items.filter((x) => x.client_message_id !== item.client_message_id);
       next.push(item);
       await writeOutbox(next);
+      notifyLocalStore({ reason: 'outbox', chatId: item.chatId, chatType: item.chatType });
     } catch (error) {
       console.error('❌ Error enqueueing outbox:', error);
     }
@@ -144,6 +184,7 @@ export const messageStorage = {
     try {
       const items = await readOutbox();
       await writeOutbox(items.filter((x) => x.client_message_id !== clientMessageId));
+      notifyLocalStore({ reason: 'outbox' });
     } catch (error) {
       console.error('❌ Error removing outbox item:', error);
     }
@@ -155,7 +196,46 @@ export const messageStorage = {
     return items.filter((x) => x.chatId === chatId);
   },
 
-  /** Clear all account-scoped chat state on sign-out. */
+  upsertChatIndex: async (row: ChatIndexRow) => {
+    try {
+      const idx = await readIndex();
+      const next = idx.filter((r) => r.chatId !== row.chatId);
+      next.push(row);
+      next.sort((a, b) => String(b.lastMessageAt).localeCompare(String(a.lastMessageAt)));
+      await writeIndex(next);
+    } catch (error) {
+      console.error('❌ Error upserting chat_index:', error);
+    }
+  },
+
+  getChatIndex: async (): Promise<ChatIndexRow[]> => {
+    const idx = await readIndex();
+    return [...idx].sort((a, b) =>
+      String(b.lastMessageAt).localeCompare(String(a.lastMessageAt))
+    );
+  },
+
+  getChatIndexRow: async (chatId: string): Promise<ChatIndexRow | null> => {
+    const idx = await readIndex();
+    return idx.find((r) => r.chatId === chatId) ?? null;
+  },
+
+  getGlobalSyncCursor: async (): Promise<string | null> => {
+    try {
+      return (await AsyncStorage.getItem(SYNC_CURSOR_KEY)) ?? null;
+    } catch {
+      return null;
+    }
+  },
+
+  setGlobalSyncCursor: async (iso: string) => {
+    try {
+      await AsyncStorage.setItem(SYNC_CURSOR_KEY, iso);
+    } catch (error) {
+      console.error('❌ Error saving sync cursor:', error);
+    }
+  },
+
   clearAll: async () => {
     try {
       const all = await AsyncStorage.getAllKeys();
@@ -164,9 +244,12 @@ export const messageStorage = {
           key.startsWith('messages_') ||
           key.startsWith('last_sync_') ||
           key.startsWith('draft_') ||
-          key === OUTBOX_KEY
+          key === OUTBOX_KEY ||
+          key === CHAT_INDEX_KEY ||
+          key === SYNC_CURSOR_KEY
       );
       if (keys.length) await AsyncStorage.multiRemove(keys);
+      notifyLocalStore({ reason: 'clear' });
     } catch (error) {
       console.error('❌ Error clearing local chat storage:', error);
     }

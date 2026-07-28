@@ -10,6 +10,10 @@ import { useFriendshipsRealtime } from './useFriendshipsRealtime';
 import { useRealtimeTopic } from './useRealtimeTopic';
 import { subscribeChatListMessageEvents } from '../lib/chatListRealtimeBridge';
 import { isEncryptedMessage, resolveChatListPreview } from '../lib/messageCrypto';
+import { subscribeLocalStore } from '../lib/localMessageBus';
+import { mergeIndividualChatsWithIndex } from '../lib/mergeChatListWithIndex';
+import { resetChatIndexUnread } from '../lib/chatIndex';
+import { messageStorage } from '../utils/messageStorage';
 
 export type IndividualChat = {
   id: string;
@@ -101,6 +105,11 @@ export const useIndividualChats = (searchQuery: string = '') => {
   const [isDataStale, setIsDataStale] = useState(false);
   const paintedLocalRef = useRef(false);
   const safetyRefetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const chatsRef = useRef<IndividualChat[]>([]);
+
+  useEffect(() => {
+    chatsRef.current = chats;
+  }, [chats]);
 
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener((state) => {
@@ -137,6 +146,25 @@ export const useIndividualChats = (searchQuery: string = '') => {
     return null;
   };
 
+  /** Paint from local chat_index + profile cache (WhatsApp-style). */
+  const paintFromLocalIndex = useCallback(async () => {
+    if (!user?.id) return;
+    try {
+      const [cached, index] = await Promise.all([
+        loadChatsFromStorage(),
+        messageStorage.getChatIndex(),
+      ]);
+      const merged = mergeIndividualChatsWithIndex(cached ?? chatsRef.current, index);
+      if (merged.length === 0) return;
+      const decoded = await withDecryptedPreviews(merged, user.id);
+      setChats((prev) => mergeChatsPreservingProfiles(prev, decoded));
+      paintedLocalRef.current = true;
+      setLoading(false);
+    } catch (error) {
+      console.warn('[useIndividualChats] local index paint failed', error);
+    }
+  }, [user?.id]);
+
   const fetchChats = useCallback(async (forceRefresh = false, silent = false) => {
     if (!user?.id) {
       setChats([]);
@@ -151,12 +179,15 @@ export const useIndividualChats = (searchQuery: string = '') => {
       setIsOnline(online || false);
 
       if (!forceRefresh || !paintedLocalRef.current) {
-        const cachedChats = await loadChatsFromStorage();
-        if (cachedChats) {
-          const decoded = await withDecryptedPreviews(cachedChats, user.id);
-          setChats(decoded);
-          paintedLocalRef.current = true;
-          setLoading(false);
+        await paintFromLocalIndex();
+        if (!paintedLocalRef.current) {
+          const cachedChats = await loadChatsFromStorage();
+          if (cachedChats) {
+            const decoded = await withDecryptedPreviews(cachedChats, user.id);
+            setChats(decoded);
+            paintedLocalRef.current = true;
+            setLoading(false);
+          }
         }
         if (!online) {
           setLoading(false);
@@ -171,8 +202,10 @@ export const useIndividualChats = (searchQuery: string = '') => {
         formatted as IndividualChat[],
         user.id
       );
+      const index = await messageStorage.getChatIndex();
+      const withIndex = mergeIndividualChatsWithIndex(decoded, index);
       setChats((prev) => {
-        const merged = mergeChatsPreservingProfiles(prev, decoded);
+        const merged = mergeChatsPreservingProfiles(prev, withIndex);
         void saveChatsToStorage(merged);
         return merged;
       });
@@ -182,17 +215,20 @@ export const useIndividualChats = (searchQuery: string = '') => {
       if (!(err instanceof ApiError && err.isAuthError)) {
         console.error('useIndividualChats error:', err);
       }
-      const cachedChats = await loadChatsFromStorage();
-      if (cachedChats) {
-        const decoded = await withDecryptedPreviews(cachedChats, user.id);
-        setChats(decoded);
-        paintedLocalRef.current = true;
+      await paintFromLocalIndex();
+      if (!paintedLocalRef.current) {
+        const cachedChats = await loadChatsFromStorage();
+        if (cachedChats) {
+          const decoded = await withDecryptedPreviews(cachedChats, user.id);
+          setChats(decoded);
+          paintedLocalRef.current = true;
+        }
       }
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [user?.id]);
+  }, [user?.id, paintFromLocalIndex]);
 
   const scheduleSafetyRefetch = useCallback(() => {
     if (safetyRefetchTimer.current) clearTimeout(safetyRefetchTimer.current);
@@ -216,6 +252,21 @@ export const useIndividualChats = (searchQuery: string = '') => {
       if (safetyRefetchTimer.current) clearTimeout(safetyRefetchTimer.current);
     };
   }, [user?.id, fetchChats]);
+
+  // Local DB is source of truth for previews/unread — react to writes.
+  useEffect(() => {
+    if (!user?.id) return;
+    return subscribeLocalStore((event) => {
+      if (
+        event.reason === 'index' ||
+        event.reason === 'messages' ||
+        event.reason === 'sync' ||
+        event.reason === 'clear'
+      ) {
+        void paintFromLocalIndex();
+      }
+    });
+  }, [user?.id, paintFromLocalIndex]);
 
   useFriendshipsRealtime(profileId, () => scheduleSafetyRefetch());
 
@@ -273,9 +324,8 @@ export const useIndividualChats = (searchQuery: string = '') => {
               (row.ephemeral_public_key as string | null | undefined) ?? null,
             last_message_sender_id: senderId,
             last_message_receiver_id: receiverId,
-            unread_count: isIncoming
-              ? (existing.unread_count || 0) + 1
-              : existing.unread_count,
+            // Unread comes from local chat_index (push/sync/persist projector).
+            unread_count: existing.unread_count,
           };
           next.splice(idx, 1);
           const reordered = [updated, ...next];
@@ -336,6 +386,7 @@ export const useIndividualChats = (searchQuery: string = '') => {
             void saveChatsToStorage(next);
             return next;
           });
+          void resetChatIndexUnread(partnerId);
         }
       }
     });
@@ -364,6 +415,7 @@ export const useIndividualChats = (searchQuery: string = '') => {
   const markMessagesAsRead = async (partnerUserId: string) => {
     if (!user?.id) return;
     try {
+      void resetChatIndexUnread(partnerUserId);
       if (!isOnline) {
         setChats((prev) =>
           prev.map((chat) =>

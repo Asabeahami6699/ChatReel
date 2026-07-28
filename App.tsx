@@ -20,6 +20,7 @@ import { ConfirmToastHost } from './src/components/ConfirmToastHost';
 import { AppToastHost } from './src/components/AppToastHost';
 import { PresenceSyncRegistrar } from './src/components/PresenceSyncRegistrar';
 import { MessageOutboxFlushRegistrar } from './src/components/MessageOutboxFlushRegistrar';
+import { MessageSyncCatchUpRegistrar } from './src/components/MessageSyncCatchUpRegistrar';
 import { KeysRegistrar } from './src/components/KeysRegistrar';
 import { ChatSocketRegistrar } from './src/components/ChatSocketRegistrar';
 import { ReelInboxRealtimeRegistrar } from './src/components/ReelInboxRealtimeRegistrar';
@@ -47,6 +48,7 @@ export default function App() {
                 <PresenceSyncRegistrar />
                 <KeysRegistrar />
                 <MessageOutboxFlushRegistrar />
+                <MessageSyncCatchUpRegistrar />
                 <AppPrefetchRegistrar />
                 <ChatListRealtimeRegistrar />
                 <ReelInboxRealtimeRegistrar />

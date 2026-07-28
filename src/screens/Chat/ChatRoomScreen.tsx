@@ -271,11 +271,11 @@ export default function ChatRoomScreen() {
       setMessages((prev) => {
         const next = deduplicateMessages(updater(prev));
         rememberChatThread(chatId, next);
-        void messageStorage.saveMessages(chatId, next);
+        void messageStorage.saveMessages(chatId, next, { chatType });
         return next;
       });
     },
-    [chatId]
+    [chatId, chatType]
   );
 
   const loadChatSettings = useCallback(async () => {
@@ -425,8 +425,17 @@ export default function ChatRoomScreen() {
       }
       if (action === 'translate') {
         const text = getMessageDisplayText(msg)?.trim();
-        if (!text) {
+        if (!text || text === 'Message') {
           showAppToast('Nothing to translate');
+          return;
+        }
+        // Toggle off if this bubble already shows a translation.
+        if (translations[msg.id]) {
+          setTranslations((prev) => {
+            const next = { ...prev };
+            delete next[msg.id];
+            return next;
+          });
           return;
         }
         try {
@@ -437,7 +446,11 @@ export default function ChatRoomScreen() {
           const lang = normalizeLanguageValue(rawLang) || 'en';
           const to = lang.split(/[-_]/)[0] || 'en';
           const { translatedText } = await api.translate.text({ text, to });
-          setTranslations((prev) => ({ ...prev, [msg.id]: translatedText }));
+          if (!translatedText?.trim()) {
+            showAppToast('Could not translate', { isError: true });
+            return;
+          }
+          setTranslations((prev) => ({ ...prev, [msg.id]: translatedText.trim() }));
           showAppToast('Translated');
         } catch (err) {
           showAppToast(
@@ -531,6 +544,7 @@ export default function ChatRoomScreen() {
       chatId,
       user?.id,
       persistMessages,
+      translations,
     ]
   );
 
@@ -879,6 +893,7 @@ export default function ChatRoomScreen() {
     if (!user?.id || !isValidUuid(chatId)) return;
 
     try {
+      void import('../../lib/chatIndex').then((m) => m.resetChatIndexUnread(chatId));
       if (chatType === 'individual') {
         await api.messages.markRead({ partner_user_id: chatId });
         setMessages((prev) =>

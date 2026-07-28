@@ -357,13 +357,21 @@ export function usePushNotifications(userId: string | undefined) {
       consumeResponse(response);
     });
 
-    // Foreground delivery — keep badge in sync before ChatList refreshes.
+    // Foreground/background delivery — hydrate local DB, then badge.
     receivedSub = Notifications.addNotificationReceivedListener((notification) => {
       const data = notification.request.content.data as PushData | undefined;
       if (!data) return;
       if (typeof data.badge === 'number' && Number.isFinite(data.badge)) {
         void import('../lib/appBadge').then((m) => m.setAppBadgeCount(data.badge as number));
         return;
+      }
+      if (data.type === 'message' && data.chat_id && userIdRef.current) {
+        const chatId = data.chat_id;
+        const chatType = data.chat_type === 'group' ? 'group' : 'individual';
+        const uid = userIdRef.current;
+        void import('../lib/pushMessageHydrate').then((m) =>
+          m.hydrateChatFromPush({ userId: uid, chatId, chatType })
+        );
       }
       if (data.type === 'message' && !isPushForActiveChat(data)) {
         bumpAppBadgeCount(1);
