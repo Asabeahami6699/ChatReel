@@ -14,6 +14,11 @@ import {
   syncGroupSenderKeysForMe,
 } from './groupSenderKeys';
 import {
+  decryptSignalDm,
+  encryptSignalDm,
+  isSignalWire,
+} from './signal/protocol';
+import {
   getSecretItem,
   identityPrivateKeyId,
   setSecretItem,
@@ -223,14 +228,21 @@ export function clearIdentityPubCache(userId?: string) {
 }
 
 /**
- * Encrypt cleartext for a DM recipient using mutual identity ECDH.
- * Stores BOTH public keys on the wire so either party can decrypt later.
+ * Encrypt cleartext for a DM recipient.
+ * Prefers Signal (X3DH + Double Ratchet); falls back to legacy secp ECDH.
  */
 export async function encryptTextForRecipient(
   senderUserId: string,
   recipientUserId: string,
   cleartext: string
 ): Promise<E2EWireFields> {
+  try {
+    const signal = await encryptSignalDm(senderUserId, recipientUserId, cleartext);
+    return signal;
+  } catch (err) {
+    console.warn('[e2e] Signal encrypt unavailable, using legacy ECDH:', err);
+  }
+
   const { privateKeyHex: myPriv, publicKeyHex: myPub } =
     await getLocalIdentity(senderUserId);
   const recipientPub = await fetchRecipientIdentityPublicKey(recipientUserId);
@@ -331,9 +343,36 @@ export async function decryptChatMessage<T extends DecryptableMessage>(
   const remembered = recallDecryptedText(msg.id);
   if (remembered) return { ...msg, decrypted: remembered };
   if (!isEncryptedMessage(msg)) return msg;
-  if (!msg.content || !msg.iv || !msg.ephemeral_public_key) return msg;
+  if (!msg.content || !msg.ephemeral_public_key) return msg;
+  // Legacy ECDH requires iv; Signal also sets iv (GCM nonce material stored).
+  if (!msg.iv && !isSignalWire(msg.ephemeral_public_key)) return msg;
 
   try {
+    // Signal Double Ratchet messages
+    if (isSignalWire(msg.ephemeral_public_key)) {
+      const iAmSender = msg.sender_id === myUserId;
+      const peerId = iAmSender
+        ? msg.receiver_id || undefined
+        : msg.sender_id || undefined;
+      if (peerId) {
+        const clear = await decryptSignalDm(
+          myUserId,
+          peerId,
+          {
+            content: msg.content,
+            ephemeral_public_key: msg.ephemeral_public_key,
+          },
+          iAmSender
+        );
+        if (clear != null) {
+          rememberDecryptedText(msg.id, clear);
+          return { ...msg, decrypted: clear };
+        }
+      }
+      // Fall through only if sender cleartext cache may still apply later.
+      return msg;
+    }
+
     // Group sender-key messages
     if (msg.group_id && isGroupSenderKeyWire(msg.ephemeral_public_key)) {
       if (!msg.sender_id) return msg;

@@ -764,10 +764,32 @@ export const api = {
   keys: {
     getIdentity: (userId: string) =>
       apiRequest<{ public_key: string }>(`/api/keys/${userId}/identity`),
-    register: (public_key: string, type: 'identity' | 'signed_prekey') =>
-      apiRequest('/api/keys', { method: 'POST', body: { public_key, type } }),
+    getBundle: (userId: string) =>
+      apiRequest<{
+        identity_key: string;
+        signing_key: string;
+        registration_id: number;
+        signed_prekey: {
+          key_id: number;
+          public_key: string;
+          signature: string;
+        };
+        one_time_prekey: { key_id: number; public_key: string } | null;
+      }>(`/api/keys/${userId}/bundle`),
+    register: (
+      public_key: string,
+      type: 'identity' | 'signed_prekey' | 'identity_x25519' | 'signing',
+      extra?: { key_id?: number; signature?: string; registration_id?: number }
+    ) =>
+      apiRequest('/api/keys', {
+        method: 'POST',
+        body: { public_key, type, ...extra },
+      }),
     registerPrekeys: (public_keys: string[]) =>
       apiRequest('/api/keys/prekeys', { method: 'POST', body: { public_keys } }),
+    registerSignalPrekeys: (
+      keys: Array<{ key_id: number; public_key: string }>
+    ) => apiRequest('/api/keys/prekeys', { method: 'POST', body: { keys } }),
     prekeyCount: () => apiRequest<{ count: number }>('/api/keys/prekeys/count'),
   },
 

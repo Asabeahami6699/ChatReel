@@ -119,6 +119,21 @@ export async function ensureGroupSenderKeyDistributed(
 
     for (const peerId of peers) {
       try {
+        // Prefer Signal session wrap; fall back to legacy identity ECDH.
+        try {
+          const { encryptSignalDm } = await import('./signal/protocol');
+          const wrapped = await encryptSignalDm(myUserId, peerId, senderKeyHex);
+          distributions.push({
+            recipient_id: peerId,
+            ciphertext: wrapped.content,
+            iv: wrapped.iv,
+            sender_identity_pub: wrapped.ephemeral_public_key,
+          });
+          continue;
+        } catch {
+          /* peer may not have Signal bundle yet */
+        }
+
         const { public_key } = await api.keys.getIdentity(peerId);
         const shared = await deriveSharedSecret(myPriv, public_key);
         const { iv, ciphertext } = await encryptMessage(senderKeyHex, shared);
@@ -160,9 +175,26 @@ export async function syncGroupSenderKeysForMe(
     for (const row of keys) {
       if (!row.sender_id || row.sender_id === myUserId) continue;
       try {
-        const shared = await deriveSharedSecret(myPriv, row.sender_identity_pub);
-        const keyHex = await decryptMessage(row.ciphertext, row.iv, shared);
-        if (/^[0-9a-fA-F]+$/.test(keyHex) && keyHex.length === 64) {
+        let keyHex: string | null = null;
+        if (
+          typeof row.sender_identity_pub === 'string' &&
+          row.sender_identity_pub.startsWith('dr1:')
+        ) {
+          const { decryptSignalDm } = await import('./signal/protocol');
+          keyHex = await decryptSignalDm(
+            myUserId,
+            row.sender_id,
+            {
+              content: row.ciphertext,
+              ephemeral_public_key: row.sender_identity_pub,
+            },
+            false
+          );
+        } else {
+          const shared = await deriveSharedSecret(myPriv, row.sender_identity_pub);
+          keyHex = await decryptMessage(row.ciphertext, row.iv, shared);
+        }
+        if (keyHex && /^[0-9a-fA-F]+$/.test(keyHex) && keyHex.length === 64) {
           await storePeerSenderKey(myUserId, groupId, row.sender_id, keyHex);
         }
       } catch (err) {
