@@ -49,7 +49,9 @@ import {
   unhideChatFromList,
   type ChatListEntryKind,
 } from '../../lib/chatListHidden'
+import { loadChatListMeta, patchChatListMeta, type ChatListMeta } from '../../lib/chatListMeta'
 import { messageStorage } from '../../utils/messageStorage'
+import { rememberChatThread, recallChatThread } from '../../lib/chatThreadCache'
 import { useAppBadge } from '../../hooks/useAppBadge'
 
 type Props = { setSelectedChat?: (chat: any) => void }
@@ -61,7 +63,6 @@ const MAX_SEARCH_HISTORY = 8
 
 const ALL_FAB_ACTIONS = [
   { key: 'add-friend', label: 'Add friend', icon: 'person-add' as const, route: 'AddFriend' },
-  { key: 'new-group', label: 'New group', icon: 'people' as const, route: 'NewGroup' },
   { key: 'friends-list', label: 'Friends list', icon: 'people-circle' as const, route: 'FriendsList' },
 ] as const
 
@@ -133,12 +134,13 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
   const { width } = useWindowDimensions()
   const insets = useSafeAreaInsets()
   const isNarrow = width < 400
-  const fabBottom = Math.max(2, insets.bottom) + (setSelectedChat ? 4 : 28)
+  const fabBottom = Math.max(16, insets.bottom + 12) + (setSelectedChat ? 4 : 20)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchHistory, setSearchHistory] = useState<string[]>([])
   const [friends, setFriends] = useState<FriendSearchRow[]>([])
   const [hiddenChatKeys, setHiddenChatKeys] = useState<Set<string>>(new Set())
+  const [listMeta, setListMeta] = useState<Record<string, ChatListMeta>>({})
   const [chatMenu, setChatMenu] = useState<{
     x: number
     y: number
@@ -276,6 +278,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
 
   const reloadHiddenChats = useCallback(async () => {
     setHiddenChatKeys(await loadHiddenChatKeys())
+    setListMeta(await loadChatListMeta())
   }, [])
 
   useFocusEffect(
@@ -285,13 +288,21 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
   )
 
   const visibleIndividualChats = useMemo(
-    () => individualChats.filter((c) => !hiddenChatKeys.has(chatListKey('individual', c.user_id))),
-    [individualChats, hiddenChatKeys]
+    () =>
+      individualChats.filter((c) => {
+        const key = chatListKey('individual', c.user_id)
+        return !hiddenChatKeys.has(key) && !listMeta[key]?.archived
+      }),
+    [individualChats, hiddenChatKeys, listMeta]
   )
 
   const visibleGroupChats = useMemo(
-    () => groupChats.filter((g) => !hiddenChatKeys.has(chatListKey('group', g.id))),
-    [groupChats, hiddenChatKeys]
+    () =>
+      groupChats.filter((g) => {
+        const key = chatListKey('group', g.id)
+        return !hiddenChatKeys.has(key) && !listMeta[key]?.archived
+      }),
+    [groupChats, hiddenChatKeys, listMeta]
   )
 
   const fetchFriends = useCallback(async () => {
@@ -668,7 +679,19 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
       avatarUrl: item.avatar_url,
     }
 
-    // Navigate immediately — mark-read must not block the tap.
+    // Local-first: warm memory from SQLite/AsyncStorage before opening so the room
+    // paints stored messages immediately (WhatsApp-style), then syncs in background.
+    if (!recallChatThread(chatId)) {
+      try {
+        const local = await messageStorage.getMessages(chatId)
+        if (Array.isArray(local) && local.length > 0) {
+          rememberChatThread(chatId, local)
+        }
+      } catch {
+        /* open anyway */
+      }
+    }
+
     if (setSelectedChat) {
       setSelectedChat(params)
     } else {
@@ -704,6 +727,11 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
     },
     []
   )
+
+  const handleArchiveChat = useCallback(async (kind: ChatListEntryKind, id: string) => {
+    setListMeta(await patchChatListMeta(kind, id, { archived: true }))
+    void api.chatSettings.update(kind, id, { is_archived: true }).catch(() => undefined)
+  }, [])
 
   const openChatMenu = useCallback(
     (e: { nativeEvent: { pageX: number; pageY: number } }, item: any, isGroup: boolean) => {
@@ -1366,6 +1394,11 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
         actions={
           chatMenu
             ? [
+                {
+                  key: 'archive',
+                  label: 'Archive',
+                  onPress: () => void handleArchiveChat(chatMenu.kind, chatMenu.id),
+                },
                 {
                   key: 'hide',
                   label: 'Hide',

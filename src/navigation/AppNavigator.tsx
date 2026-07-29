@@ -29,6 +29,9 @@ import ReelPreviewScreen from '../screens/Reel/ReelPreviewScreen';
 import NewGroupScreen from '../screens/Group/NewGroupScreen';
 import GroupsListScreen from '../screens/Group/GroupsListScreen';
 import ChatSettingsScreen from '../screens/Chat/ChatSettingsScreen';
+import GlobalSearchScreen from '../screens/Chat/GlobalSearchScreen';
+import StarredMessagesScreen from '../screens/Chat/StarredMessagesScreen';
+import ArchivedChatsScreen from '../screens/Chat/ArchivedChatsScreen';
 import QRCodeScreen from '../screens/QR/QRCodeScreen';
 import QRScannerScreen from '../screens/QR/QRScannerScreen';
 import AddFriendScreen from '../screens/Friends/AddFriendScreen';
@@ -86,6 +89,9 @@ export const ChatStack = ({ setSelectedChat }: ChatStackProps) => {
     {!setSelectedChat && <Stack.Screen name="EmptyChat" component={EmptyChatScreen} />}
     <Stack.Screen name="Profile" component={ProfileScreen} />
     <Stack.Screen name="Settings" component={ChatSettingsScreen} />
+    <Stack.Screen name="GlobalSearch" component={GlobalSearchScreen} />
+    <Stack.Screen name="StarredMessages" component={StarredMessagesScreen} />
+    <Stack.Screen name="ArchivedChats" component={ArchivedChatsScreen} />
     <Stack.Screen name="Contact" component={ContactScreen} />
     <Stack.Screen name="NewGroup" component={NewGroupScreen} />
     <Stack.Screen name="QRCode" component={QRCodeScreen} />

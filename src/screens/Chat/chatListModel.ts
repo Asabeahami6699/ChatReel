@@ -31,6 +31,7 @@ export type ChatListMessage = {
     user_id?: string;
   };
   _status?: 'sending' | 'sent' | 'pending' | 'failed';
+  _uploadProgress?: number;
   local_audio_uri?: string;
   expires_at?: string | null;
   view_once?: boolean;

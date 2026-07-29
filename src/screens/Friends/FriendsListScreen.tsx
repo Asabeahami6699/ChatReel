@@ -12,7 +12,7 @@ import {
   Platform,
   Alert,
 } from 'react-native'
-import { SafeAreaView } from 'react-native-safe-area-context'
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useNavigation, useRoute } from '@react-navigation/native'
 import { api, ApiError } from '../../lib/api'
 import { useAuth } from '../../hooks/useAuth'
@@ -38,6 +38,7 @@ type Props = {
 export default function FriendsListScreen({ setSelectedChat }: Props) {
   const { user } = useAuth()
   const { theme } = useChatSettings()
+  const insets = useSafeAreaInsets()
   const navigation = useNavigation()
   const route = useRoute<any>()
 
@@ -334,7 +335,7 @@ export default function FriendsListScreen({ setSelectedChat }: Props) {
 
       {!isSelectionMode && (
         <FAB
-          style={styles.fab}
+          style={[styles.fab, { bottom: Math.max(16, insets.bottom + 12) }]}
           icon="plus"
           onPress={() => navigation.navigate('AddFriend')}
           color="#fff"
@@ -449,5 +450,5 @@ const styles = StyleSheet.create({
   emptyText: { fontSize: 16, color: '#666' },
   emptySubtext: { fontSize: 14, color: '#999', marginTop: 4, textAlign: 'center' },
   loading: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  fab: { position: 'absolute', margin: 16, right: 0, bottom: 0, backgroundColor: '#007AFF' },
+  fab: { position: 'absolute', margin: 16, right: 0, bottom: 16, backgroundColor: '#007AFF' },
 })

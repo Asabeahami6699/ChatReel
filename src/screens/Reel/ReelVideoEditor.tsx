@@ -196,11 +196,18 @@ export function ReelVideoEditor({
         setLoadedDurationSec(durSec);
         if (!durationSyncedRef.current) {
           durationSyncedRef.current = true;
-          const hasTrim = video.trimEndSec > MIN_TRIM_GAP;
+          const priorDuration = video.duration && video.duration > 0 ? video.duration : null;
+          const userTrimmed =
+            video.trimStartSec > 0.05 ||
+            (priorDuration != null && video.trimEndSec < priorDuration - 0.05);
           onChange({
             duration: durSec,
-            trimStartSec: hasTrim ? video.trimStartSec : 0,
-            trimEndSec: hasTrim ? Math.min(video.trimEndSec, durSec) : durSec,
+            trimStartSec: userTrimmed
+              ? Math.min(video.trimStartSec, Math.max(0, durSec - MIN_TRIM_GAP))
+              : 0,
+            trimEndSec: userTrimmed
+              ? Math.max(MIN_TRIM_GAP, Math.min(video.trimEndSec, durSec))
+              : durSec,
           });
         }
       }

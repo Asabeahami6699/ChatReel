@@ -29,6 +29,9 @@ export type ReelRow = {
   original_audio_volume: number | null;
   sound_volume: number | null;
   scheduled_publish_at: string | null;
+  trim_start_sec?: number | null;
+  trim_end_sec?: number | null;
+  filter_id?: string | null;
   created_at: string;
 };
 

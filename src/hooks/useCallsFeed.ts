@@ -78,7 +78,10 @@ export function useCallsFeed(myProfileId: string | null) {
       try {
         await fetchBundle();
       } catch (err) {
-        const message = err instanceof ApiError ? err.message : 'Failed to load call history';
+        const message =
+          err instanceof ApiError
+            ? err.message
+            : "Can't reach the server right now. Check your connection and try again.";
         setError(message);
       } finally {
         setLoading(false);

@@ -3,7 +3,7 @@ import { supabaseAdmin } from '../lib/supabaseAdmin';
 import { moderateReelById } from '../services/reelModeration.service';
 import {
   isReelHlsEnabled,
-  muxSoundIntoReelMp4,
+  processReelMp4,
   transcodeReelToHls,
 } from '../services/reelTranscode.service';
 
@@ -26,6 +26,9 @@ type StuckReelRow = {
   transcode_status: string;
   moderation_status: string;
   created_at: string;
+  trim_start_sec?: number | null;
+  trim_end_sec?: number | null;
+  filter_id?: string | null;
 };
 
 let running = false;
@@ -40,7 +43,9 @@ function staleCutoffIso(): string {
 async function refetchReel(reelId: string): Promise<StuckReelRow | null> {
   const { data, error } = await supabaseAdmin
     .from('reels')
-    .select('id, video_url, sound_id, transcode_status, moderation_status, created_at')
+    .select(
+      'id, video_url, sound_id, transcode_status, moderation_status, created_at, trim_start_sec, trim_end_sec, filter_id'
+    )
     .eq('id', reelId)
     .maybeSingle();
   if (error || !data) return null;
@@ -86,14 +91,15 @@ async function recoverStuckTranscode(row: StuckReelRow): Promise<void> {
   }
 
   try {
+    const trim = {
+      trimStartSec: reel.trim_start_sec ?? undefined,
+      trimEndSec: reel.trim_end_sec ?? undefined,
+      filterId: reel.filter_id ?? undefined,
+    };
     if (isReelHlsEnabled()) {
-      // Trim options aren't persisted, so a retry encodes the full source.
-      // Playback already falls back to the untrimmed MP4 while stuck, so this
-      // is no worse for viewers and it unblocks moderation + HLS delivery.
-      await transcodeReelToHls(reel.id, reel.video_url);
+      await transcodeReelToHls(reel.id, reel.video_url, trim);
     } else {
-      // Sets 'ready' after muxing when a sound is attached, else 'skipped'.
-      await muxSoundIntoReelMp4(reel.id, reel.video_url);
+      await processReelMp4(reel.id, reel.video_url, trim);
     }
   } catch (err) {
     console.warn('[reconcile] transcode retry failed:', reel.id, err);
@@ -118,7 +124,9 @@ export async function reconcileStuckReels(): Promise<{
 
     const { data: stuckTranscode, error: tErr } = await supabaseAdmin
       .from('reels')
-      .select('id, video_url, sound_id, transcode_status, moderation_status, created_at')
+      .select(
+      'id, video_url, sound_id, transcode_status, moderation_status, created_at, trim_start_sec, trim_end_sec, filter_id'
+    )
       .in('transcode_status', ['pending', 'processing'])
       .lt('created_at', cutoff)
       .order('created_at', { ascending: true })
@@ -136,7 +144,9 @@ export async function reconcileStuckReels(): Promise<{
 
     const { data: stuckModeration, error: mErr } = await supabaseAdmin
       .from('reels')
-      .select('id, video_url, sound_id, transcode_status, moderation_status, created_at')
+      .select(
+      'id, video_url, sound_id, transcode_status, moderation_status, created_at, trim_start_sec, trim_end_sec, filter_id'
+    )
       .eq('moderation_status', 'pending')
       .in('transcode_status', ['ready', 'failed', 'skipped'])
       .lt('created_at', cutoff)

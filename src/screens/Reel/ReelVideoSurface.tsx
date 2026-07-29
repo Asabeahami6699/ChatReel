@@ -5,6 +5,7 @@ import { getReelPlaybackUrl, isImageReelUrl } from '../../lib/reelPlayback';
 import { ReelPlayer, type ReelPlaybackStatus, type ReelPlayerHandle } from '../../components/ReelPlayer';
 import { isReelNearViewport } from './reelVideoCache';
 import { WebHlsVideo } from './WebHlsVideo';
+import { getReelFilterOverlay } from './reelFilters';
 
 type Props = {
   reel: ReelDTO;
@@ -59,6 +60,10 @@ export function ReelVideoSurface({
   const imageReadyRef = useRef(false);
   const [loadTimedOut, setLoadTimedOut] = useState(false);
   const hint = playbackHint(reel);
+  const filterOverlay = getReelFilterOverlay(reel.filter_id);
+  // Videos bake the filter during encode; keep overlay for images + while processing.
+  const showFilter =
+    Boolean(filterOverlay) && (isImage || reel.transcode_status !== 'ready');
 
   useEffect(() => {
     if (!isNear || isReady || isImage) {
@@ -90,6 +95,12 @@ export function ReelVideoSurface({
           resizeMode="cover"
           onLoad={() => onReady(reel.id)}
         />
+        {showFilter ? (
+          <View
+            style={[StyleSheet.absoluteFill, { backgroundColor: filterOverlay! }]}
+            pointerEvents="none"
+          />
+        ) : null}
       </View>
     );
   }
@@ -147,6 +158,12 @@ export function ReelVideoSurface({
             )}
           </View>
         )}
+      {showFilter ? (
+        <View
+          style={[StyleSheet.absoluteFill, { backgroundColor: filterOverlay! }]}
+          pointerEvents="none"
+        />
+      ) : null}
     </View>
   );
 }

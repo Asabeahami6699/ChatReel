@@ -30,13 +30,20 @@ import { PostReelVideoComposer } from './PostReelVideoComposer';
 import { PostReelImageComposer } from './PostReelImageComposer';
 import { VideoAudioPrompt, type VideoAudioChoice } from './VideoAudioPrompt';
 import type { ReelFilterId } from './reelFilters';
+import { getReelFilterOverlay } from './reelFilters';
 import { api, type ReelSoundDTO } from '../../lib/api';
 import { defaultSoundRange, IMAGE_SOUND_CLIP_SEC } from './reelSoundUtils';
 
 function MediaTilePreview({ item }: { item: MediaDraft }) {
+  const overlay = getReelFilterOverlay(item.filterId);
   if (item.mediaType === 'image') {
     return (
-      <Image source={{ uri: item.uri }} style={styles.mediaTileImage} resizeMode="contain" />
+      <View style={styles.mediaTileImage}>
+        <Image source={{ uri: item.uri }} style={StyleSheet.absoluteFill} resizeMode="contain" />
+        {overlay ? (
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: overlay }]} pointerEvents="none" />
+        ) : null}
+      </View>
     );
   }
   return (
@@ -50,6 +57,9 @@ function MediaTilePreview({ item }: { item: MediaDraft }) {
         isMuted
         nativeControls={false}
       />
+      {overlay ? (
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: overlay }]} pointerEvents="none" />
+      ) : null}
     </View>
   );
 }
@@ -77,6 +87,7 @@ type MediaDraft =
       duration: number;
       trimStartSec: number;
       trimEndSec: number;
+      filterId?: ReelFilterId;
       thumbUri?: string | null;
     };
 
@@ -433,9 +444,14 @@ export default function PostReelScreen() {
         duration: item.mediaType === 'video' ? item.duration : undefined,
         trimStartSec: item.mediaType === 'video' ? item.trimStartSec : undefined,
         trimEndSec: item.mediaType === 'video' ? item.trimEndSec : undefined,
+        filterId: item.filterId && item.filterId !== 'none' ? item.filterId : undefined,
         thumbUri:
           item.mediaType === 'video' ? item.thumbUri ?? thumbUri : item.uri,
       })),
+      filterId: (() => {
+        const first = items[0];
+        return first?.filterId && first.filterId !== 'none' ? first.filterId : undefined;
+      })(),
       thumbUri,
       caption,
       visibility,

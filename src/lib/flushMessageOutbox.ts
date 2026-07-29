@@ -27,8 +27,16 @@ export async function flushOutboxItem(
     let payload = { ...item.payload };
 
     if (item.upload) {
-      const { kind, localUri, mime, fileName, audioDuration, expires_at, view_once } =
-        item.upload;
+      const {
+        kind,
+        localUri,
+        mime,
+        fileName,
+        audioDuration,
+        expires_at,
+        view_once,
+        content: uploadContent,
+      } = item.upload;
       const stamp = Date.now();
       const ext =
         kind === 'audio'
@@ -56,13 +64,20 @@ export async function flushOutboxItem(
           client_message_id: item.client_message_id,
         };
       } else {
+        const mediaContent =
+          typeof uploadContent === 'string' && uploadContent.trim()
+            ? uploadContent.trim()
+            : kind === 'file'
+              ? fileName
+              : '';
         payload = {
-          content: fileName,
+          content: mediaContent,
           message_type: kind === 'image' ? 'image' : kind === 'video' ? 'video' : 'file',
           file_url: publicUrl,
           file_name: fileName,
           file_type: mime,
           client_message_id: item.client_message_id,
+          ...(mediaContent ? { push_preview: mediaContent.slice(0, 120) } : {}),
           ...(expires_at ? { expires_at } : {}),
           ...(view_once ? { view_once: true } : {}),
         };

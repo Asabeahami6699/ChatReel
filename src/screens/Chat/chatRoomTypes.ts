@@ -29,6 +29,8 @@ export type ChatMessage = {
     user_id?: string;
   };
   _status?: 'sending' | 'sent' | 'pending' | 'failed';
+  /** 0–1 while media is uploading (client-only). */
+  _uploadProgress?: number;
   /** Stable client id for idempotent retries (survives offline / double-tap). */
   client_message_id?: string;
   local_audio_uri?: string;
@@ -50,6 +52,7 @@ export type ChatRouteParams = {
   chatType: 'individual' | 'group';
   chatName: string;
   avatarUrl?: string;
+  focusMessageId?: string;
 };
 
 export type AttachmentFile = {
@@ -65,6 +68,11 @@ export type AttachmentFile = {
   expiresInSeconds?: number | null;
   /** View-once media: removed after the recipient opens it. */
   viewOnce?: boolean;
+  /** Video trim window (seconds). Playback uses this range. */
+  trimStartSec?: number;
+  trimEndSec?: number;
+  /** Optional caption sent with this media. */
+  caption?: string;
 };
 
 /** UUID-like client id used for idempotent inserts. */

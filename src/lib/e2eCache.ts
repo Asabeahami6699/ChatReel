@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Durable caches for end-to-end encryption.
  *
  * Two problems these solve:
@@ -143,4 +143,3 @@ export function clearCachedCleartexts(): void {
   cleartextDirty = true;
   scheduleFlush();
 }
-

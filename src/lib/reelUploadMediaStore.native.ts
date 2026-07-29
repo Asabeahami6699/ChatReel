@@ -75,6 +75,7 @@ function draftItems(draft: ReelUploadDraft): ReelUploadMediaItem[] {
         duration: draft.video.duration,
         trimStartSec: draft.video.trimStartSec,
         trimEndSec: draft.video.trimEndSec,
+        filterId: draft.video.filterId ?? draft.filterId,
       },
     ];
   }
@@ -127,6 +128,7 @@ export async function stashReelUploadDraft(
       duration: first.duration,
       trimStartSec: first.trimStartSec,
       trimEndSec: first.trimEndSec,
+      filterId: first.filterId ?? draft.filterId,
     },
   };
 }

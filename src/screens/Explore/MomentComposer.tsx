@@ -30,6 +30,7 @@ import { ComposeVideoPreview } from '../../components/ComposeVideoPreview';
 import { fitMediaInBounds } from '../Reel/reelVideoLayout';
 import { ReelSoundPicker, soundLabel } from '../Reel/ReelSoundPicker';
 import { ReelSoundTrimTimeline } from '../Reel/ReelSoundTrimTimeline';
+import { ReelTrimTimeline } from '../Reel/ReelTrimTimeline';
 import { defaultSoundRange, IMAGE_SOUND_CLIP_SEC, soundClipWindow, soundTrackDurationSec } from '../Reel/reelSoundUtils';
 import { useOverlaySoundLoop } from '../../hooks/useOverlaySoundLoop';
 
@@ -47,6 +48,9 @@ export type MomentDraftItem = {
   soundEndSec?: number;
   originalAudioVolume?: number;
   soundVolume?: number;
+  /** Video clip trim (playback window). */
+  trimStartSec?: number;
+  trimEndSec?: number;
 };
 
 export type MomentDraft = {
@@ -453,6 +457,26 @@ export function MomentComposer({
               </View>
             )}
           </ComposeVideoPreview>
+
+          {currentItem.mediaType === 'video' && videoDurationSec > 0 ? (
+            <View style={styles.section}>
+              <Text style={styles.sectionLabel}>Trim video</Text>
+              <ReelTrimTimeline
+                duration={videoDurationSec}
+                trimStart={currentItem.trimStartSec ?? 0}
+                trimEnd={
+                  currentItem.trimEndSec && currentItem.trimEndSec > 0
+                    ? Math.min(currentItem.trimEndSec, videoDurationSec)
+                    : videoDurationSec
+                }
+                position={currentItem.trimStartSec ?? 0}
+                onTrimStartChange={(v) => onUpdateItem(previewIndex, { trimStartSec: v })}
+                onTrimEndChange={(v) => onUpdateItem(previewIndex, { trimEndSec: v })}
+                onScrubStart={() => {}}
+                onScrubComplete={() => {}}
+              />
+            </View>
+          ) : null}
 
           {isPhotoOrVideo ? (
             <View style={styles.section}>

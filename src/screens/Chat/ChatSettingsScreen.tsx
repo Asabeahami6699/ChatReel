@@ -35,7 +35,7 @@ import { api } from '../../lib/api';
 import { startBackgroundRingtoneSave } from '../../components/RingtoneSaveToast';
 import { OfflineAvatar } from '../../components/OfflineAvatar';
 import { messageStorage } from '../../utils/messageStorage';
-import { getCachedProfile, setCachedProfile } from '../../lib/profileCache';
+import { getCachedProfile, prefetchMyProfile, hydrateProfileCache, subscribeCachedProfile } from '../../lib/profileCache';
 
 type SettingsPage =
   | 'hub'
@@ -179,7 +179,15 @@ export default function ChatSettingsScreen() {
     display_name?: string;
     email?: string;
     avatar_url?: string;
-  } | null>(null);
+  } | null>(() => {
+    const cached = getCachedProfile();
+    if (!cached) return null;
+    return {
+      display_name: cached.display_name,
+      email: cached.email,
+      avatar_url: cached.avatar_url,
+    };
+  });
   const [trimUri, setTrimUri] = useState<string | null>(null);
   const [trimLabel, setTrimLabel] = useState('Custom tone');
   const [trimMime, setTrimMime] = useState<string | null>(null);
@@ -191,44 +199,37 @@ export default function ChatSettingsScreen() {
 
   useEffect(() => {
     let alive = true;
-    const cached = getCachedProfile();
-    if (cached) {
+    void hydrateProfileCache().then(() => {
+      if (!alive) return;
+      const cached = getCachedProfile();
+      if (cached) {
+        setProfile({
+          display_name: cached.display_name,
+          email: cached.email || user?.email || undefined,
+          avatar_url: cached.avatar_url,
+        });
+      }
+    });
+    const unsub = subscribeCachedProfile(() => {
+      const cached = getCachedProfile();
+      if (!cached || !alive) return;
       setProfile({
         display_name: cached.display_name,
         email: cached.email || user?.email || undefined,
         avatar_url: cached.avatar_url,
       });
-    }
-    void (async () => {
-      try {
-        const { profile: me } = await api.profiles.me();
-        if (!alive) return;
-        if (me) {
-          const next = {
-            display_name: (me.display_name as string) || undefined,
-            email: (me.email as string) || user?.email || undefined,
-            avatar_url: (me.avatar_url as string) || undefined,
-            bio: (me.bio as string) || undefined,
-            country: (me.country as string) || undefined,
-            region: (me.region as string) || undefined,
-            language: (me.language as string) || undefined,
-            status: me.status === 'Online' ? 'Online' : 'Offline',
-          };
-          setCachedProfile(next);
-          setProfile({
-            display_name: next.display_name,
-            email: next.email,
-            avatar_url: next.avatar_url,
-          });
-        }
-      } catch {
-        if (alive) {
-          setProfile((prev) => prev ?? { email: user?.email || undefined });
-        }
-      }
-    })();
+    });
+    void prefetchMyProfile(user?.email).then((next) => {
+      if (!alive || !next) return;
+      setProfile({
+        display_name: next.display_name,
+        email: next.email || user?.email || undefined,
+        avatar_url: next.avatar_url,
+      });
+    });
     return () => {
       alive = false;
+      unsub();
     };
   }, [user?.email]);
 
@@ -407,21 +408,29 @@ export default function ChatSettingsScreen() {
       <>
         <TouchableOpacity
           style={[styles.profileCard, { backgroundColor: cardBg, borderColor: border }]}
-          onPress={() => navigation.navigate('Profile')}
+          onPress={() => {
+            void prefetchMyProfile(user?.email);
+            navigation.navigate('Profile');
+          }}
           activeOpacity={0.85}
         >
           <OfflineAvatar
             uri={profile?.avatar_url}
-            name={profile?.display_name || profile?.email || 'You'}
+            name={profile?.display_name || profile?.email || user?.email || 'You'}
             size={64}
             style={styles.profileAvatar}
           />
           <View style={styles.profileText}>
             <Text style={[styles.profileName, { color: tc }]} numberOfLines={1}>
-              {profile?.display_name || 'Your profile'}
+              {profile?.display_name ||
+                profile?.email ||
+                user?.email ||
+                (profile ? 'Profile' : 'Loading…')}
             </Text>
             <Text style={[styles.profileEmail, { color: sc }]} numberOfLines={1}>
-              {profile?.email || user?.email || 'Tap to edit profile'}
+              {profile?.display_name
+                ? profile?.email || user?.email || 'Tap to edit profile'
+                : 'Tap to edit profile'}
             </Text>
           </View>
           <Ionicons name="chevron-forward" size={20} color={sc} />
@@ -587,6 +596,16 @@ export default function ChatSettingsScreen() {
             subColor={sc}
             iconBg={a.privacy.bg}
             iconColor={a.privacy.color}
+          />
+          <LinkRow
+            icon="search-outline"
+            label="Search messages"
+            subtitle="Find text across all chats on this device"
+            onPress={() => navigation.navigate('GlobalSearch')}
+            textColor={tc}
+            subColor={sc}
+            iconBg="#e8eaf6"
+            iconColor="#3949ab"
           />
           <LinkRow
             icon="folder-outline"

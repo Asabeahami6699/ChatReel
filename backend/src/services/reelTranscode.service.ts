@@ -18,6 +18,8 @@ export function isReelHlsEnabled(): boolean {
 export type ReelTrimOptions = {
   trimStartSec?: number;
   trimEndSec?: number;
+  /** Color filter preset baked into the encode when possible. */
+  filterId?: string | null;
 };
 
 export type ReelSoundMixOptions = {
@@ -34,13 +36,64 @@ type ResolvedSoundMix = {
   soundVolume: number;
 };
 
-async function loadSoundMixOptions(reelId: string): Promise<ResolvedSoundMix | null> {
+export function hasMeaningfulTrim(trim?: ReelTrimOptions | null): boolean {
+  if (!trim) return false;
+  const start = Number(trim.trimStartSec ?? 0);
+  const end = trim.trimEndSec != null ? Number(trim.trimEndSec) : null;
+  if (start > 0.05) return true;
+  if (end != null && Number.isFinite(end) && end > start + 0.05) {
+    // Meaningful only when end is clearly shorter than a "full clip" sentinel.
+    // Callers usually omit trimEnd when it equals full duration.
+    return true;
+  }
+  return false;
+}
+
+/** Map UI filter presets to FFmpeg video filters (approx. the preview overlays). */
+export function reelFilterToVf(filterId?: string | null): string | null {
+  switch (filterId) {
+    case 'warm':
+      return 'eq=saturation=1.12:gamma_r=1.06,colorbalance=rs=0.06:gs=0.02:bs=-0.05';
+    case 'cool':
+      return 'eq=saturation=1.05,colorbalance=rs=-0.04:bs=0.08';
+    case 'vivid':
+      return 'eq=contrast=1.1:saturation=1.35';
+    case 'fade':
+      return 'eq=saturation=0.72:brightness=0.04';
+    case 'mono':
+      return 'hue=s=0';
+    default:
+      return null;
+  }
+}
+
+function buildVideoVf(filterId?: string | null): string {
+  const scale = 'scale=trunc(iw/2)*2:trunc(ih/2)*2';
+  const color = reelFilterToVf(filterId);
+  return color ? `${scale},${color}` : scale;
+}
+
+async function loadReelProcessOptions(
+  reelId: string
+): Promise<{ sound: ResolvedSoundMix | null; filterId: string | null; trim: ReelTrimOptions }> {
   const { data, error } = await supabaseAdmin
     .from('reels')
-    .select('sound_id, sound_start_sec, original_audio_volume, sound_volume')
+    .select(
+      'sound_id, sound_start_sec, original_audio_volume, sound_volume, trim_start_sec, trim_end_sec, filter_id'
+    )
     .eq('id', reelId)
     .maybeSingle();
-  if (error || !data?.sound_id) return null;
+
+  const trim: ReelTrimOptions = {
+    trimStartSec:
+      data?.trim_start_sec != null ? Number(data.trim_start_sec) : undefined,
+    trimEndSec: data?.trim_end_sec != null ? Number(data.trim_end_sec) : undefined,
+    filterId: (data?.filter_id as string | null) ?? null,
+  };
+
+  if (error || !data?.sound_id) {
+    return { sound: null, filterId: trim.filterId ?? null, trim };
+  }
 
   const { data: sound, error: soundErr } = await supabaseAdmin
     .from('reel_sounds')
@@ -48,14 +101,25 @@ async function loadSoundMixOptions(reelId: string): Promise<ResolvedSoundMix | n
     .eq('id', data.sound_id)
     .eq('is_active', true)
     .maybeSingle();
-  if (soundErr || !sound?.audio_url) return null;
+  if (soundErr || !sound?.audio_url) {
+    return { sound: null, filterId: trim.filterId ?? null, trim };
+  }
 
   return {
-    audioUrl: sound.audio_url as string,
-    soundStartSec: Number(data.sound_start_sec ?? 0),
-    originalAudioVolume: Number(data.original_audio_volume ?? 1),
-    soundVolume: Number(data.sound_volume ?? 1),
+    sound: {
+      audioUrl: sound.audio_url as string,
+      soundStartSec: Number(data.sound_start_sec ?? 0),
+      originalAudioVolume: Number(data.original_audio_volume ?? 1),
+      soundVolume: Number(data.sound_volume ?? 1),
+    },
+    filterId: trim.filterId ?? null,
+    trim,
   };
+}
+
+async function loadSoundMixOptions(reelId: string): Promise<ResolvedSoundMix | null> {
+  const loaded = await loadReelProcessOptions(reelId);
+  return loaded.sound;
 }
 
 async function downloadToFile(url: string, destPath: string): Promise<void> {
@@ -83,22 +147,27 @@ async function mixSoundIntoVideo(
   const soundStart = Math.max(0, sound.soundStartSec);
 
   let filterComplex: string;
+  const color = reelFilterToVf(trim?.filterId);
+  const vchain = color
+    ? `[0:v]scale=trunc(iw/2)*2:trunc(ih/2)*2,${color}[vout]`
+    : `[0:v]scale=trunc(iw/2)*2:trunc(ih/2)*2[vout]`;
+
   if (origVol <= 0.001) {
     filterComplex =
       trimDuration != null
-        ? `[1:a]atrim=duration=${trimDuration},asetpts=PTS-STARTPTS,volume=${musicVol}[aout]`
-        : `[1:a]asetpts=PTS-STARTPTS,volume=${musicVol}[aout]`;
+        ? `${vchain};[1:a]atrim=duration=${trimDuration},asetpts=PTS-STARTPTS,volume=${musicVol}[aout]`
+        : `${vchain};[1:a]asetpts=PTS-STARTPTS,volume=${musicVol}[aout]`;
   } else if (musicVol <= 0.001) {
     filterComplex =
       trimDuration != null
-        ? `[0:a]atrim=duration=${trimDuration},asetpts=PTS-STARTPTS,volume=${origVol}[aout]`
-        : `[0:a]volume=${origVol}[aout]`;
+        ? `${vchain};[0:a]atrim=duration=${trimDuration},asetpts=PTS-STARTPTS,volume=${origVol}[aout]`
+        : `${vchain};[0:a]volume=${origVol}[aout]`;
   } else {
     const soundChain =
       trimDuration != null
         ? `[1:a]atrim=duration=${trimDuration},asetpts=PTS-STARTPTS,volume=${musicVol}[a1]`
         : `[1:a]asetpts=PTS-STARTPTS,volume=${musicVol}[a1]`;
-    filterComplex = `[0:a]volume=${origVol}[a0];${soundChain};[a0][a1]amix=inputs=2:duration=first:dropout_transition=0[aout]`;
+    filterComplex = `${vchain};[0:a]volume=${origVol}[a0];${soundChain};[a0][a1]amix=inputs=2:duration=first:dropout_transition=0[aout]`;
   }
 
   const videoInputOpts: string[] = [];
@@ -117,7 +186,7 @@ async function mixSoundIntoVideo(
       .complexFilter(filterComplex)
       .outputOptions([
         '-map',
-        '0:v:0',
+        '[vout]',
         '-map',
         '[aout]',
         '-c:v',
@@ -135,6 +204,37 @@ async function mixSoundIntoVideo(
   });
 
   await fs.rm(tmpSound, { force: true }).catch(() => undefined);
+}
+
+/** Trim (and optionally color-filter) a video without remixing audio. */
+async function trimAndFilterVideo(
+  inputPath: string,
+  outputPath: string,
+  trim?: ReelTrimOptions
+): Promise<void> {
+  const trimStart = trim?.trimStartSec ?? 0;
+  const trimEnd = trim?.trimEndSec;
+  const trimDuration =
+    trimEnd != null && trimEnd > trimStart ? trimEnd - trimStart : undefined;
+
+  const inputOpts: string[] = [];
+  if (trimStart > 0) inputOpts.push('-ss', String(trimStart));
+  if (trimDuration != null) inputOpts.push('-t', String(trimDuration));
+
+  const vf = buildVideoVf(trim?.filterId);
+
+  await new Promise<void>((resolve, reject) => {
+    const cmd = ffmpeg(inputPath);
+    if (inputOpts.length) cmd.inputOptions(inputOpts);
+    cmd
+      .videoCodec('libx264')
+      .audioCodec('aac')
+      .outputOptions(['-vf', vf, '-profile:v', 'baseline', '-movflags', '+faststart'])
+      .output(outputPath)
+      .on('end', () => resolve())
+      .on('error', (err) => reject(err))
+      .run();
+  });
 }
 
 export async function transcodeReelToHls(
@@ -189,7 +289,8 @@ export async function transcodeReelToHls(
       try {
         await mixSoundIntoVideo(inputPath, mixedPath, soundMix, trim);
         encodeInputPath = mixedPath;
-        trim = undefined;
+        // Sound mix already applied trim + color filter.
+        trim = { filterId: undefined };
       } catch (mixErr) {
         console.error('[reels] sound mix failed, continuing with original audio:', mixErr);
       }
@@ -209,7 +310,7 @@ export async function transcodeReelToHls(
 
     const outputOpts = [
       '-vf',
-      'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+      buildVideoVf(trim?.filterId),
       '-profile:v baseline',
       '-level 3.0',
       '-start_number 0',
@@ -278,22 +379,42 @@ export function queueReelHlsTranscode(
   if (!isReelHlsEnabled()) {
     return;
   }
-  void transcodeReelToHls(reelId, videoUrl, trim);
+  void (async () => {
+    const loaded = await loadReelProcessOptions(reelId);
+    const merged: ReelTrimOptions = {
+      trimStartSec: trim?.trimStartSec ?? loaded.trim.trimStartSec,
+      trimEndSec: trim?.trimEndSec ?? loaded.trim.trimEndSec,
+      filterId: trim?.filterId ?? loaded.filterId,
+    };
+    await transcodeReelToHls(reelId, videoUrl, merged);
+  })();
 }
 
-/** Mix background music into MP4 when HLS transcode is disabled. */
-export async function muxSoundIntoReelMp4(
+/**
+ * When HLS is disabled: trim and/or mix sound and/or bake color filter into MP4.
+ * Previously this path only ran when a soundtrack was attached — trim was dropped.
+ */
+export async function processReelMp4(
   reelId: string,
   videoUrl: string,
   trim?: ReelTrimOptions
 ): Promise<void> {
-  const soundMix = await loadSoundMixOptions(reelId);
-  if (!soundMix) {
+  const loaded = await loadReelProcessOptions(reelId);
+  const merged: ReelTrimOptions = {
+    trimStartSec: trim?.trimStartSec ?? loaded.trim.trimStartSec,
+    trimEndSec: trim?.trimEndSec ?? loaded.trim.trimEndSec,
+    filterId: trim?.filterId ?? loaded.filterId,
+  };
+  const soundMix = loaded.sound;
+  const needsTrim = hasMeaningfulTrim(merged);
+  const needsFilter = Boolean(reelFilterToVf(merged.filterId));
+
+  if (!soundMix && !needsTrim && !needsFilter) {
     await supabaseAdmin.from('reels').update({ transcode_status: 'skipped' }).eq('id', reelId);
     return;
   }
 
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), `reel-mix-${reelId}-`));
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), `reel-mp4-${reelId}-`));
   try {
     await supabaseAdmin.from('reels').update({ transcode_status: 'processing' }).eq('id', reelId);
 
@@ -302,11 +423,15 @@ export async function muxSoundIntoReelMp4(
     const inputPath = path.join(tmpDir, 'input.mp4');
     await fs.writeFile(inputPath, Buffer.from(await res.arrayBuffer()));
 
-    const mixedPath = path.join(tmpDir, 'mixed.mp4');
-    await mixSoundIntoVideo(inputPath, mixedPath, soundMix, trim);
+    const outPath = path.join(tmpDir, 'out.mp4');
+    if (soundMix) {
+      await mixSoundIntoVideo(inputPath, outPath, soundMix, merged);
+    } else {
+      await trimAndFilterVideo(inputPath, outPath, merged);
+    }
 
-    const storagePath = `mixed/${reelId}.mp4`;
-    const body = await fs.readFile(mixedPath);
+    const storagePath = `processed/${reelId}.mp4`;
+    const body = await fs.readFile(outPath);
     const { error: upErr } = await supabaseAdmin.storage
       .from('reels')
       .upload(storagePath, body, { contentType: 'video/mp4', upsert: true });
@@ -320,11 +445,20 @@ export async function muxSoundIntoReelMp4(
       .update({ video_url: publicUrl, transcode_status: 'ready' })
       .eq('id', reelId);
   } catch (err) {
-    console.error('[reels] MP4 sound mux failed:', err);
+    console.error('[reels] MP4 process failed:', err);
     await supabaseAdmin.from('reels').update({ transcode_status: 'failed' }).eq('id', reelId);
   } finally {
     await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
   }
+}
+
+/** @deprecated Prefer processReelMp4 — kept for reconcile imports. */
+export async function muxSoundIntoReelMp4(
+  reelId: string,
+  videoUrl: string,
+  trim?: ReelTrimOptions
+): Promise<void> {
+  return processReelMp4(reelId, videoUrl, trim);
 }
 
 export function queueReelSoundMux(
@@ -333,5 +467,15 @@ export function queueReelSoundMux(
   trim?: ReelTrimOptions
 ): void {
   if (isReelHlsEnabled()) return;
-  void muxSoundIntoReelMp4(reelId, videoUrl, trim);
+  void processReelMp4(reelId, videoUrl, trim);
+}
+
+/** Queue MP4 trim/filter/sound processing when HLS is off. */
+export function queueReelMp4Process(
+  reelId: string,
+  videoUrl: string,
+  trim?: ReelTrimOptions
+): void {
+  if (isReelHlsEnabled()) return;
+  void processReelMp4(reelId, videoUrl, trim);
 }

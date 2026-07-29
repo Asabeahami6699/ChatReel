@@ -8,6 +8,7 @@ export type OpenChatParams = {
   chatType: 'individual' | 'group';
   chatName: string;
   avatarUrl?: string;
+  focusMessageId?: string;
 };
 
 type ChatOpener = (params: OpenChatParams) => void;

@@ -4,6 +4,7 @@ import {
   View,
   Modal,
   Text,
+  TextInput,
   TouchableOpacity,
   FlatList,
   Image,
@@ -13,6 +14,9 @@ import {
   Animated,
   PanResponder,
   ScrollView,
+  Platform,
+  useWindowDimensions,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useDrawingState } from './MediaEditor/useDrawingState';
@@ -21,10 +25,13 @@ import DrawingToolbar from './MediaEditor/DrawingToolbar';
 import { exportEditedImage } from './MediaEditor/exportEditedImage';
 import ImageEditor from './MediaEditor/ImageEditor';
 import { ChatVideoPlayer } from './ChatVideoPlayer';
+import { VideoTrimmer } from './MediaEditor/VideoTrimmer';
 import { USE_NATIVE_DRIVER } from '../lib/animation';
 import { computeAlbumGrid } from '../lib/mediaGridLayout';
 
-const { width, height } = Dimensions.get('window');
+const { width: WINDOW_W, height: WINDOW_H } = Dimensions.get('window');
+const width = WINDOW_W;
+const height = WINDOW_H;
 
 /* -------------------------------- Types -------------------------------- */
 
@@ -39,6 +46,9 @@ type AttachmentFile = {
   duration?: number;
   expiresInSeconds?: number | null;
   viewOnce?: boolean;
+  trimStartSec?: number;
+  trimEndSec?: number;
+  caption?: string;
 };
 
 const VISIBILITY_OPTIONS: Array<{
@@ -63,6 +73,8 @@ type Props = {
   onRemove: (id: string) => void;
   onClearAll: () => void;
   onSendAll: (attachments: AttachmentFile[]) => void;
+  /** Called immediately when Send is tapped (before edit export finishes). */
+  onBeginSend?: () => void;
   /** Optional: send a single attachment (used by ChatRoomScreen for inline preview). */
   onSendSingle?: (attachment: AttachmentFile) => void;
 };
@@ -76,6 +88,7 @@ const AttachmentPreview: React.FC<Props> = ({
   onRemove,
   onClearAll,
   onSendAll,
+  onBeginSend,
 }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [drawMode, setDrawMode] = useState(false);
@@ -88,13 +101,20 @@ const AttachmentPreview: React.FC<Props> = ({
   const [cropKey, setCropKey] = useState(0); // Added back for remounting
   const [viewMode, setViewMode] = useState<'grid' | 'detail'>('detail');
   const [visibilityKey, setVisibilityKey] = useState('everyone');
-  
+  const [videoTrim, setVideoTrim] = useState<Record<string, { start: number; end: number }>>({});
+  const [caption, setCaption] = useState('');
+  const [sending, setSending] = useState(false);
+  const { width: layoutW, height: layoutH } = useWindowDimensions();
+  // Always size pages to the actual window — avoid nested % heights that collapse on web.
+  const pageWidth = Math.max(1, layoutW);
+  const pageHeight = Math.max(1, layoutH - 180);
+
   const visualCount = attachments.filter(
     (a) => a.type === 'photo' || a.type === 'video'
   ).length;
   const canShowGrid = attachments.length >= 2 && visualCount === attachments.length;
-  const gridHeight = height - 180;
-  const gridCells = computeAlbumGrid(attachments.length, width - 24, gridHeight - 24, 3);
+  const gridHeight = pageHeight;
+  const gridCells = computeAlbumGrid(attachments.length, pageWidth - 24, gridHeight - 24, 3);
   const gridOverflow = attachments.length > 4 ? attachments.length - 4 : 0;
   // Refs
   const flatListRef = useRef<FlatList>(null);
@@ -163,6 +183,7 @@ const AttachmentPreview: React.FC<Props> = ({
     setStrokeColor('#ff3b3b');
     setStrokeWidth(4);
     setCropKey(0);
+    setCaption('');
     setViewMode(
       attachments.length >= 2 &&
         attachments.every((a) => a.type === 'photo' || a.type === 'video')
@@ -208,26 +229,76 @@ const AttachmentPreview: React.FC<Props> = ({
     return baseUri;
   };
 
-  // Handle sending edited images
+  // Handle sending — close preview immediately, then hand off for upload.
   const handleSendAll = async () => {
+    if (sending || attachments.length === 0) return;
+    setSending(true);
+
     const visibility =
       VISIBILITY_OPTIONS.find((o) => o.key === visibilityKey) ?? VISIBILITY_OPTIONS[0];
+    const captionText = caption.trim();
+    const toSend = [...attachments];
     const applyVisibility = (a: AttachmentFile): AttachmentFile => ({
       ...a,
       expiresInSeconds: visibility.seconds,
       viewOnce: visibility.once,
+      caption: captionText || a.caption,
     });
 
-    const finalAttachments = await Promise.all(
-      attachments.map(async (attachment) => {
+    // Close the modal right away so the chatroom paints bubbles without waiting.
+    onBeginSend?.();
+
+    try {
+      const needsStrokeExport = toSend.some((attachment) => {
+        if (attachment.type !== 'photo') return false;
+        const strokes =
+          attachment.id === currentFile?.id && drawingState.strokes.length > 0
+            ? drawingState.strokes
+            : drawingData[attachment.id];
+        return Boolean(strokes?.length);
+      });
+
+      const withCurrentUris = (attachment: AttachmentFile): AttachmentFile => {
         if (attachment.type === 'photo') {
-          return applyVisibility({ ...attachment, uri: await resolvePhotoUri(attachment) });
+          return applyVisibility({
+            ...attachment,
+            uri: editedImages[attachment.id] || attachment.uri,
+          });
+        }
+        if (attachment.type === 'video') {
+          const trim = videoTrim[attachment.id];
+          return applyVisibility({
+            ...attachment,
+            trimStartSec: trim?.start ?? 0,
+            trimEndSec: trim?.end ?? attachment.duration,
+          });
         }
         return applyVisibility(attachment);
-      })
-    );
+      };
 
-    onSendAll(finalAttachments);
+      if (!needsStrokeExport) {
+        // Instant path — show in chatroom immediately.
+        onSendAll(toSend.map(withCurrentUris));
+        return;
+      }
+
+      const finalAttachments = await Promise.all(
+        toSend.map(async (attachment) => {
+          if (attachment.type === 'photo') {
+            return applyVisibility({
+              ...attachment,
+              uri: await resolvePhotoUri(attachment),
+            });
+          }
+          return withCurrentUris(attachment);
+        })
+      );
+
+      onSendAll(finalAttachments);
+    } finally {
+      setSending(false);
+      setCaption('');
+    }
   };
 
   // Save edited image
@@ -363,7 +434,7 @@ const AttachmentPreview: React.FC<Props> = ({
   // Handle scroll end
   const handleScrollEnd = (e: any) => {
     const contentOffsetX = e.nativeEvent.contentOffset.x;
-    const newIndex = Math.round(contentOffsetX / width);
+    const newIndex = Math.round(contentOffsetX / pageWidth);
     
     if (newIndex !== currentIndex) {
       console.log('🔄 Scroll ended, new index:', newIndex);
@@ -479,7 +550,13 @@ const AttachmentPreview: React.FC<Props> = ({
   if (!visible || attachments.length === 0) return null;
 
   return (
-    <Modal visible={visible} animationType="fade">
+    <Modal
+      visible={visible}
+      animationType="fade"
+      transparent={false}
+      presentationStyle="fullScreen"
+      onRequestClose={onClose}
+    >
       <StatusBar barStyle="light-content" />
       <View style={styles.container}>
         {/* Header */}
@@ -515,7 +592,7 @@ const AttachmentPreview: React.FC<Props> = ({
         </View>
 
         {viewMode === 'grid' && canShowGrid ? (
-          <View style={[styles.gridPage, { height: gridHeight }]}>
+          <View style={[styles.gridPage, { width: pageWidth, height: gridHeight }]}>
             {gridCells.map((cell) => {
               const item = attachments[cell.index];
               if (!item) return null;
@@ -541,133 +618,73 @@ const AttachmentPreview: React.FC<Props> = ({
             <Text style={styles.gridHint}>Tap a tile to preview or edit</Text>
           </View>
         ) : (
-        /* Main Content Area — detail / edit */
-        <FlatList
-          ref={flatListRef}
-          data={attachments}
-          horizontal
-          pagingEnabled
-          showsHorizontalScrollIndicator={false}
-          keyExtractor={item => item.id}
-          onMomentumScrollEnd={handleScrollEnd}
-          onViewableItemsChanged={handleViewableItemsChanged}
-          viewabilityConfig={viewabilityConfig}
-          getItemLayout={(data, index) => ({
-            length: width,
-            offset: width * index,
-            index,
-          })}
-          initialScrollIndex={currentIndex}
-          extraData={{ currentIndex, editedImages, drawingData, cropMode }}
-          renderItem={({ item, index: itemIndex }) => {
-            const isCurrentItem = itemIndex === currentIndex;
-            
-            return (
-              <View style={styles.page}>
-                {item.type === 'photo' && (
-                  <View style={styles.photoContainer}>
-                    {cropMode && isCurrentItem ? (
-                      // Crop Mode with react-native-image-crop-picker
-                      <ImageEditor
-                        key={`crop-${item.id}-${cropKey}`} // Force remount
-                        source={{ uri: editedImages[item.id] || item.uri }}
-                        onSave={saveCrop}
-                        onCancel={cancelCrop}
-                        aspectRatio="free" // Options: 'free' | '1:1' | '4:3' | '16:9'
-                      />
-                    ) : drawMode && isCurrentItem ? (
-                      // Drawing Canvas Mode
-                      <View style={styles.canvasContainer}>
-                        <Image
-                          source={{ uri: editedImages[item.id] || item.uri }}
-                          style={styles.backgroundImage}
-                          resizeMode="contain"
-                        />
-                        <SimpleDrawingCanvas
-                          width={width}
-                          height={height - 220}
-                          color={strokeColor}
-                          strokeWidth={strokeWidth}
-                          drawing={drawingState}
-                        />
-                      </View>
-                    ) : (
-                      // Normal Image View
-                      <Animated.View
-                        style={[
-                          styles.imageWrapper,
-                          {
-                            transform: [
-                              { scale: isCurrentItem ? scale : 1 },
-                              { translateX: isCurrentItem ? translateX : 0 },
-                              { translateY: isCurrentItem ? translateY : 0 },
-                            ],
-                          },
-                        ]}
-                        {...(isCurrentItem ? panResponder.panHandlers : {})}
-                      >
-                        <Image
-                          source={{ uri: editedImages[item.id] || item.uri }}
-                          style={styles.media}
-                          resizeMode="contain"
-                        />
-                        {drawingData[item.id] && drawingData[item.id].length > 0 && (
-                          <View style={styles.persistentDrawingOverlay}>
-                            <SimpleDrawingCanvas
-                              width={width}
-                              height={height - 220}
-                              color={strokeColor}
-                              strokeWidth={strokeWidth}
-                              drawing={{
-                                strokes: drawingData[item.id],
-                                clear: () => {},
-                                addStroke: () => {},
-                                undo: () => {},
-                                redoStroke: () => {},
-                                loadStrokes: () => {},
-                                currentStroke: null,
-                                currentPoints: []
-                              }}
-                            />
-                          </View>
-                        )}
-                      </Animated.View>
-                    )}
-                  </View>
-                )}
+        /* Main Content Area — detail / edit (no horizontal FlatList — unreliable on web) */
+        <View style={[styles.page, { width: pageWidth, flex: 1 }]}>
+          {currentFile?.type === 'photo' ? (
+            <View style={styles.photoContainer}>
+              {cropMode ? (
+                <ImageEditor
+                  key={`crop-${currentFile.id}-${cropKey}`}
+                  source={{ uri: editedImages[currentFile.id] || currentFile.uri }}
+                  onSave={saveCrop}
+                  onCancel={cancelCrop}
+                  aspectRatio="free"
+                />
+              ) : drawMode ? (
+                <View style={styles.canvasContainer}>
+                  <Image
+                    source={{ uri: editedImages[currentFile.id] || currentFile.uri }}
+                    style={styles.backgroundImage}
+                    resizeMode="contain"
+                  />
+                  <SimpleDrawingCanvas
+                    width={pageWidth}
+                    height={Math.max(120, pageHeight - 40)}
+                    color={strokeColor}
+                    strokeWidth={strokeWidth}
+                    drawing={drawingState}
+                  />
+                </View>
+              ) : (
+                <Image
+                  source={{ uri: editedImages[currentFile.id] || currentFile.uri }}
+                  style={styles.media}
+                  resizeMode="contain"
+                  accessibilityLabel={currentFile.name || 'Selected photo'}
+                />
+              )}
+            </View>
+          ) : null}
 
-                {item.type === 'video' && (
-                  <View style={styles.videoContainer}>
-                    <ChatVideoPlayer
-                      uri={item.uri}
-                      thumbnailUri={item.thumbnail}
-                      previewMode
-                      style={{ width, height: height - 180 }}
-                    />
-                  </View>
-                )}
+          {currentFile?.type === 'video' ? (
+            <View style={styles.videoContainer}>
+              <ChatVideoPlayer
+                uri={currentFile.uri}
+                thumbnailUri={currentFile.thumbnail}
+                previewMode
+                style={{ width: pageWidth, height: Math.min(pageHeight, 480) }}
+              />
+            </View>
+          ) : null}
 
-                {(item.type === 'audio' || item.type === 'document') && (
-                  <View style={styles.fileCard}>
-                    <Ionicons 
-                      name={item.type === 'audio' ? 'musical-notes' : 'document'} 
-                      size={80} 
-                      color="#fff" 
-                    />
-                    <Text style={styles.fileName} numberOfLines={2}>
-                      {item.name || `Untitled ${item.type}`}
-                    </Text>
-                    {item.size && (
-                      <Text style={styles.fileSize}>
-                        {(item.size / (1024 * 1024)).toFixed(2)} MB
-                      </Text>
-                    )}
-                  </View>
-                )}
-              </View>
-            );
-          }}
-        />
+          {(currentFile?.type === 'audio' || currentFile?.type === 'document') && (
+            <View style={styles.fileCard}>
+              <Ionicons
+                name={currentFile.type === 'audio' ? 'musical-notes' : 'document'}
+                size={80}
+                color="#fff"
+              />
+              <Text style={styles.fileName} numberOfLines={2}>
+                {currentFile.name || `Untitled ${currentFile.type}`}
+              </Text>
+              {currentFile.size ? (
+                <Text style={styles.fileSize}>
+                  {(currentFile.size / (1024 * 1024)).toFixed(2)} MB
+                </Text>
+              ) : null}
+            </View>
+          )}
+        </View>
         )}
 
         {/* Floating Tools (Collapsible) */}
@@ -727,6 +744,15 @@ const AttachmentPreview: React.FC<Props> = ({
             </TouchableOpacity>
           </View>
         )}
+
+        {viewMode === 'detail' && currentFile?.type === 'video' && !drawMode && !cropMode ? (
+          <VideoTrimmer
+            duration={Math.max(currentFile.duration || 0, videoTrim[currentFile.id]?.end || 0)}
+            onChange={(start, end) => {
+              setVideoTrim((prev) => ({ ...prev, [currentFile.id]: { start, end } }));
+            }}
+          />
+        ) : null}
 
         {!drawMode && !cropMode && viewMode === 'detail' && canShowGrid && (
           <TouchableOpacity
@@ -813,6 +839,19 @@ const AttachmentPreview: React.FC<Props> = ({
           </ScrollView>
         </View>
 
+        {/* Caption + footer */}
+        <View style={styles.captionBar}>
+          <TextInput
+            style={styles.captionInput}
+            value={caption}
+            onChangeText={setCaption}
+            placeholder="Add a caption…"
+            placeholderTextColor="#9aa0a6"
+            maxLength={1000}
+            multiline
+          />
+        </View>
+
         {/* Combined Footer with Thumbnails and Send Button */}
         <View style={styles.combinedFooter}>
           {/* Thumbnail Strip (takes 3/4 width) */}
@@ -877,13 +916,18 @@ const AttachmentPreview: React.FC<Props> = ({
 
           {/* Send Button (takes 1/4 width) */}
           <TouchableOpacity 
-            style={styles.sendButton} 
+            style={[styles.sendButton, sending && { opacity: 0.7 }]} 
             onPress={handleSendAll}
             activeOpacity={0.8}
+            disabled={sending}
           >
             <View style={styles.sendButtonContent}>
-              <Ionicons name="send" size={22} color="#fff" />
-              <Text style={styles.sendText}>Send</Text>
+              {sending ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Ionicons name="send" size={22} color="#fff" />
+              )}
+              <Text style={styles.sendText}>{sending ? 'Sending' : 'Send'}</Text>
             </View>
           </TouchableOpacity>
         </View>
@@ -900,6 +944,22 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#0b0b0b',
+  },
+  containerDesktopWrap: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  containerDesktop: {
+    width: '100%',
+    maxWidth: 520,
+    maxHeight: '92%',
+    borderRadius: 16,
+    overflow: 'hidden',
+    flex: 0,
+    height: '92%',
   },
   header: {
     height: 56,
@@ -923,13 +983,10 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   page: {
-    width,
-    height: height - 180,
     justifyContent: 'center',
     alignItems: 'center',
   },
   gridPage: {
-    width,
     position: 'relative',
     paddingBottom: 8,
   },
@@ -944,13 +1001,13 @@ const styles = StyleSheet.create({
     height: '100%',
   },
   gridVideoBadge: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.25)',
   },
   gridOverflow: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.55)',
@@ -1022,7 +1079,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
     fontSize: 16,
     textAlign: 'center',
-    maxWidth: width - 40,
+    maxWidth: 480,
   },
   fileSize: {
     color: '#aaa',
@@ -1128,6 +1185,23 @@ const styles = StyleSheet.create({
   },
   visibilityChipTextActive: {
     color: '#fff',
+  },
+  captionBar: {
+    backgroundColor: 'rgba(11, 11, 11, 0.95)',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#333',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  captionInput: {
+    minHeight: 40,
+    maxHeight: 88,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: '#1c1c1e',
+    color: '#fff',
+    fontSize: 15,
   },
   combinedFooter: {
     flexDirection: 'row',

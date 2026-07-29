@@ -13,6 +13,7 @@ export function VideoTrimmer({ duration = 0, onChange }: Props) {
   const [end, setEnd] = useState(safeDuration);
 
   useEffect(() => {
+    setStart(0);
     setEnd(safeDuration);
   }, [safeDuration]);
 

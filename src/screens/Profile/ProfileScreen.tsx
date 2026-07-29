@@ -33,7 +33,7 @@ import {
   optionsWithCurrentValue,
 } from '../../lib/profileLocaleOptions';
 import { useChatSettings } from '../../context/ChatSettingsContext';
-import { getCachedProfile, setCachedProfile, patchCachedProfile } from '../../lib/profileCache';
+import { getCachedProfile, setCachedProfile, patchCachedProfile, hydrateProfileCache, prefetchMyProfile } from '../../lib/profileCache';
 
 // === Schema ===
 const profileSchema = z.object({
@@ -178,6 +178,7 @@ const ProfileScreen = ({ navigation }: { navigation: any }) => {
 
       setUserId(user.id);
 
+      await hydrateProfileCache();
       // Instant fill from Settings (or prior visit) while network refresh runs.
       const cached = getCachedProfile();
       if (cached) {
@@ -199,9 +200,18 @@ const ProfileScreen = ({ navigation }: { navigation: any }) => {
         setLoading(false);
       }
 
-      const { profile: data } = await api.profiles.me();
-
-      const profile = data || {};
+      const refreshed = await prefetchMyProfile(user.email);
+      const profile = refreshed ?? {
+        display_name: undefined,
+        email: user.email || undefined,
+        avatar_url: undefined,
+        bio: undefined,
+        country: undefined,
+        region: undefined,
+        language: undefined,
+        status: undefined as string | undefined,
+        fetchedAt: 0,
+      };
       const country = normalizeCountryValue(profile.country);
       const language = normalizeLanguageValue(profile.language);
       const formData = {
@@ -222,14 +232,14 @@ const ProfileScreen = ({ navigation }: { navigation: any }) => {
         country: formData.country,
         region: formData.region,
         language: formData.language,
-        status: profile.status === 'Online' ? 'Online' : 'Offline',
+        status: refreshed?.status === 'Online' ? 'Online' : 'Offline',
       });
 
       setCountryOptions(optionsWithCurrentValue(COUNTRY_OPTIONS, country));
       setLanguageOptions(optionsWithCurrentValue(LANGUAGE_OPTIONS, language));
       reset(formData);
       setAvatarUrl(formData.avatar_url);
-      setCurrentAppStatus(profile.status === 'Online' ? 'Online' : 'Offline');
+      setCurrentAppStatus(refreshed?.status === 'Online' ? 'Online' : 'Offline');
     } catch (err: any) {
       if (!getCachedProfile()) {
         Alert.alert('Error', err.message);

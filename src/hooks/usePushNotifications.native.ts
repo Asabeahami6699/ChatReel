@@ -113,24 +113,59 @@ function handlePushOpen(data: PushData | undefined) {
   }
 }
 
-async function replyFromNotification(data: PushData, text: string) {
+async function replyFromNotification(
+  data: PushData,
+  text: string,
+  myUserId?: string | null
+) {
   const chatId = data.chat_id;
   if (!chatId || !text.trim()) return;
-  const payload =
-    data.chat_type === 'group'
+  const cleartext = text.trim();
+  const chatType = data.chat_type === 'group' ? 'group' : 'individual';
+  const payload: Record<string, unknown> =
+    chatType === 'group'
       ? {
-          content: text.trim(),
+          content: cleartext,
           message_type: 'text',
           group_id: chatId,
-          push_preview: text.trim().slice(0, 120),
+          push_preview: cleartext.slice(0, 120),
         }
       : {
-          content: text.trim(),
+          content: cleartext,
           message_type: 'text',
           receiver_id: chatId,
-          push_preview: text.trim().slice(0, 120),
+          push_preview: cleartext.slice(0, 120),
         };
+
+  if (myUserId) {
+    try {
+      const { tryEncryptChatText } = await import('../lib/messageCrypto');
+      const enc = await tryEncryptChatText({
+        chatType,
+        senderUserId: myUserId,
+        chatId,
+        cleartext,
+      });
+      if (enc) Object.assign(payload, enc);
+    } catch (err) {
+      console.warn('[push] reply encrypt skipped:', err);
+    }
+  }
+
   await api.messages.send(payload);
+}
+
+function extractReplyText(response: Notifications.NotificationResponse): string {
+  if ('userText' in response && typeof (response as { userText?: unknown }).userText === 'string') {
+    return (response as { userText: string }).userText;
+  }
+  const anyResp = response as {
+    userText?: string;
+    notification?: { request?: { content?: { data?: { userText?: string } } } };
+  };
+  if (typeof anyResp.userText === 'string') return anyResp.userText;
+  const nested = anyResp.notification?.request?.content?.data?.userText;
+  return typeof nested === 'string' ? nested : '';
 }
 
 let androidChannelsReady = false;
@@ -148,7 +183,8 @@ async function ensureNotificationCategories() {
           placeholder: 'Message',
         },
         options: {
-          opensAppToForeground: false,
+          // Android needs foreground for reliable text-input capture on some OEMs.
+          opensAppToForeground: Platform.OS === 'android',
         },
       },
     ]);
@@ -285,19 +321,16 @@ export function usePushNotifications(userId: string | undefined) {
 
       // Reply-from-notification (WhatsApp-style) — send without opening the chat.
       if (
-        actionId === REPLY_ACTION &&
+        (actionId === REPLY_ACTION || actionId === 'REPLY') &&
         data?.type === 'message' &&
         data.chat_id
       ) {
         const replyKey = `${id}:reply`;
         if (handledResponseIds.current.has(replyKey)) return;
         handledResponseIds.current.add(replyKey);
-        const text =
-          'userText' in response && typeof response.userText === 'string'
-            ? response.userText
-            : '';
+        const text = extractReplyText(response);
         if (text.trim()) {
-          void replyFromNotification(data, text).catch((err) => {
+          void replyFromNotification(data, text, userIdRef.current).catch((err) => {
             console.warn('[push] reply-from-notification failed:', err);
           });
         }

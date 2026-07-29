@@ -27,6 +27,7 @@ export type ReelUploadMediaItem = {
   duration?: number;
   trimStartSec?: number;
   trimEndSec?: number;
+  filterId?: string;
   thumbUri?: string | null;
 };
 
@@ -41,6 +42,7 @@ export type ReelUploadDraft = {
     duration?: number;
     trimStartSec?: number;
     trimEndSec?: number;
+    filterId?: string;
   };
   items?: ReelUploadMediaItem[];
   thumbUri?: string | null;
@@ -52,6 +54,8 @@ export type ReelUploadDraft = {
   original_audio_volume?: number;
   sound_volume?: number;
   scheduled_publish_at?: string;
+  /** Color filter for single-item reels (also mirrored per item when set). */
+  filterId?: string;
 };
 
 export type ReelUploadStatus = 'queued' | 'uploading' | 'publishing' | 'done' | 'error';
@@ -289,8 +293,11 @@ async function processOne(item: { id: string; draft: ReelUploadDraft }) {
         duration: single.duration,
         trimStartSec: single.trimStartSec,
         trimEndSec: single.trimEndSec,
+        filterId: single.filterId ?? draft.filterId,
       }
-    : draft.video;
+    : draft.video
+      ? { ...draft.video, filterId: draft.video.filterId ?? draft.filterId }
+      : undefined;
   const thumbUri = single?.thumbUri ?? draft.thumbUri;
 
   if (!video) throw new Error('No media to upload');
@@ -333,8 +340,16 @@ async function processOne(item: { id: string; draft: ReelUploadDraft }) {
           thumbnail_url: imageUrl,
           width: video.width,
           height: video.height,
+          filter_id:
+            video.filterId && video.filterId !== 'none'
+              ? (video.filterId as 'warm' | 'cool' | 'vivid' | 'fade' | 'mono')
+              : undefined,
         },
       ],
+      filter_id:
+        video.filterId && video.filterId !== 'none'
+          ? (video.filterId as 'warm' | 'cool' | 'vivid' | 'fade' | 'mono')
+          : undefined,
       ...publishVisibility,
       ...soundPublishFields(draft),
       ...schedulePublishFields(draft),
@@ -454,6 +469,12 @@ async function processOne(item: { id: string; draft: ReelUploadDraft }) {
       trimEndSec != null && duration != null && trimEndSec < duration - 0.05
         ? trimEndSec
         : undefined,
+    filter_id:
+      video.filterId && video.filterId !== 'none'
+        ? (video.filterId as 'warm' | 'cool' | 'vivid' | 'fade' | 'mono')
+        : draft.filterId && draft.filterId !== 'none'
+          ? (draft.filterId as 'warm' | 'cool' | 'vivid' | 'fade' | 'mono')
+          : undefined,
   });
 
   await finalizePublishedReel(id, reel.id);
@@ -496,6 +517,10 @@ async function processCarouselUpload(id: string, draft: ReelUploadDraft) {
           thumbnail_url: imageUrl,
           width: media.width,
           height: media.height,
+          filter_id:
+            media.filterId && media.filterId !== 'none'
+              ? (media.filterId as 'warm' | 'cool' | 'vivid' | 'fade' | 'mono')
+              : undefined,
         };
       }
 
@@ -547,6 +572,10 @@ async function processCarouselUpload(id: string, draft: ReelUploadDraft) {
           trimEndSec != null && duration != null && trimEndSec < duration - 0.05
             ? trimEndSec
             : undefined,
+        filter_id:
+          media.filterId && media.filterId !== 'none'
+            ? (media.filterId as 'warm' | 'cool' | 'vivid' | 'fade' | 'mono')
+            : undefined,
       };
     })
   );
@@ -554,11 +583,14 @@ async function processCarouselUpload(id: string, draft: ReelUploadDraft) {
   setProgress(id, 90, 'Publishing reel...');
   updateTask(id, { status: 'publishing' });
 
+  const primaryFilter = uploaded.find((m) => m.filter_id)?.filter_id;
+
   const { reel }: { reel: ReelDTO } = await api.reels.create({
     caption: draft.caption?.trim() || undefined,
     ...publishVisibility,
     ...soundPublishFields(draft),
     ...schedulePublishFields(draft),
+    filter_id: primaryFilter,
     media: uploaded,
   });
 

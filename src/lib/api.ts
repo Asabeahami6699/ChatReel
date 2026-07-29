@@ -42,6 +42,7 @@ export type ReelMediaDTO = {
   moderation_status?: 'pending' | 'approved' | 'rejected' | 'flagged';
   moderation_reason?: string | null;
   playback_url?: string;
+  filter_id?: string | null;
 };
 
 export type ReelDTO = {
@@ -75,6 +76,9 @@ export type ReelDTO = {
   original_audio_volume?: number | null;
   sound_volume?: number | null;
   scheduled_publish_at?: string | null;
+  trim_start_sec?: number | null;
+  trim_end_sec?: number | null;
+  filter_id?: string | null;
 };
 
 export type GiftCatalogDTO = {
@@ -365,7 +369,7 @@ function notifyAuthExpired(): void {
   });
 }
 
-/** Hide auth/token internals from UI copy. */
+/** Hide auth/token/network internals from UI copy. */
 export function sanitizeApiErrorMessage(message: string, status: number): string {
   const lower = message.toLowerCase();
   if (
@@ -378,6 +382,19 @@ export function sanitizeApiErrorMessage(message: string, status: number): string
     (lower.includes('token') && (lower.includes('expired') || lower.includes('invalid')))
   ) {
     return 'Something went wrong. Please try again.';
+  }
+  if (
+    status === 0 ||
+    status >= 500 ||
+    lower.includes('failed to fetch') ||
+    lower.includes('fetch failed') ||
+    lower.includes('network request failed') ||
+    lower.includes('network error') ||
+    lower.includes('econnrefused') ||
+    lower.includes('enotfound') ||
+    lower.includes('timeout')
+  ) {
+    return "Can't reach the server right now. Check your connection and try again.";
   }
   return message;
 }
@@ -751,13 +768,17 @@ export const api = {
         `/api/chat-settings/${chatType}/${chatId}`,
         { method: 'PATCH', body: data }
       ),
-    pin: (chatId: string, messageId: string) =>
-      apiRequest(`/api/chat-settings/group/${chatId}/pin/${messageId}`, { method: 'POST' }),
-    unpin: (chatId: string, messageId: string) =>
-      apiRequest(`/api/chat-settings/group/${chatId}/pin/${messageId}`, { method: 'DELETE' }),
-    pinned: (chatId: string) =>
+    pin: (chatType: 'individual' | 'group', chatId: string, messageId: string) =>
+      apiRequest(`/api/chat-settings/${chatType}/${chatId}/pin/${messageId}`, {
+        method: 'POST',
+      }),
+    unpin: (chatType: 'individual' | 'group', chatId: string, messageId: string) =>
+      apiRequest(`/api/chat-settings/${chatType}/${chatId}/pin/${messageId}`, {
+        method: 'DELETE',
+      }),
+    pinned: (chatType: 'individual' | 'group', chatId: string) =>
       apiRequest<{ pinned: Record<string, unknown>[] }>(
-        `/api/chat-settings/group/${chatId}/pinned`
+        `/api/chat-settings/${chatType}/${chatId}/pinned`
       ),
   },
 
@@ -929,6 +950,7 @@ export const api = {
       height?: number;
       trim_start_sec?: number;
       trim_end_sec?: number;
+      filter_id?: 'none' | 'warm' | 'cool' | 'vivid' | 'fade' | 'mono';
       sound_id?: string;
       sound_start_sec?: number;
       original_audio_volume?: number;
@@ -943,6 +965,7 @@ export const api = {
         height?: number;
         trim_start_sec?: number;
         trim_end_sec?: number;
+        filter_id?: 'none' | 'warm' | 'cool' | 'vivid' | 'fade' | 'mono';
       }>;
     }) =>
       apiRequest<{ reel: ReelDTO }>('/api/reels', { method: 'POST', body: data }),

@@ -22,6 +22,8 @@ export type MessageOutboxUpload = {
   audioDuration?: number;
   expires_at?: string | null;
   view_once?: boolean;
+  /** Caption / message content for media (falls back to fileName). */
+  content?: string;
 };
 
 export type MessageOutboxItem = {

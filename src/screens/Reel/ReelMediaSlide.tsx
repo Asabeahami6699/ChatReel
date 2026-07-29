@@ -5,6 +5,7 @@ import { getMediaPlaybackUrl, isImageReelUrl } from '../../lib/reelPlayback';
 import { ReelPlayer, type ReelPlaybackStatus, type ReelPlayerHandle } from '../../components/ReelPlayer';
 import { WebHlsVideo } from './WebHlsVideo';
 import { WebVideoPoster } from './WebVideoPoster';
+import { getReelFilterOverlay } from './reelFilters';
 
 type Props = {
   reel: ReelDTO;
@@ -50,6 +51,11 @@ export function ReelMediaSlide({
   const posterUri = media.thumbnail_url ?? (isImage ? playbackUri : reel.thumbnail_url);
   const showPoster = Boolean(posterUri) && !isReady;
   const imageReadyRef = useRef(false);
+  const filterId = media.filter_id ?? reel.filter_id;
+  const filterOverlay = getReelFilterOverlay(filterId);
+  const showFilter =
+    Boolean(filterOverlay) &&
+    (isImage || (media.transcode_status ?? reel.transcode_status) !== 'ready');
 
   useEffect(() => {
     if (isImage && isActiveSlide && !imageReadyRef.current) {
@@ -78,6 +84,12 @@ export function ReelMediaSlide({
           resizeMode="cover"
           onLoad={() => onReady(slideKey)}
         />
+        {showFilter ? (
+          <View
+            style={[StyleSheet.absoluteFill, { backgroundColor: filterOverlay! }]}
+            pointerEvents="none"
+          />
+        ) : null}
       </View>
     );
   }
@@ -122,6 +134,12 @@ export function ReelMediaSlide({
           <ActivityIndicator color="#fff" size="large" />
         </View>
       )}
+      {showFilter ? (
+        <View
+          style={[StyleSheet.absoluteFill, { backgroundColor: filterOverlay! }]}
+          pointerEvents="none"
+        />
+      ) : null}
     </View>
   );
 }

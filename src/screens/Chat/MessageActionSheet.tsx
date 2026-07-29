@@ -8,6 +8,7 @@ import {
   TouchableWithoutFeedback,
   ScrollView,
   Platform,
+  useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { REACTION_EMOJIS } from './chatMessageUtils';
@@ -39,6 +40,8 @@ type Props = {
   onAction: (action: MessageAction, emoji?: string) => void;
 };
 
+const DESKTOP_SHEET_MAX = 380;
+
 export function MessageActionSheet({
   visible,
   message,
@@ -51,6 +54,9 @@ export function MessageActionSheet({
   onAction,
 }: Props) {
   const { theme } = useChatSettings();
+  const { width: winW } = useWindowDimensions();
+  const isDesktop = Platform.OS === 'web' && winW >= 768;
+
   useEffect(() => {
     if (!visible || Platform.OS !== 'web') return;
     const el = document.activeElement as HTMLElement | null;
@@ -78,7 +84,7 @@ export function MessageActionSheet({
     icon: isStarred ? 'star' : 'star-outline',
   });
 
-  if (isGroup && isOutgoing) {
+  if (isOutgoing) {
     actions.push({ key: 'pin', label: 'Pin', icon: 'pin-outline' });
   }
 
@@ -97,9 +103,21 @@ export function MessageActionSheet({
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <TouchableWithoutFeedback onPress={onClose}>
-        <View style={styles.overlay}>
+        <View
+          style={[
+            styles.overlay,
+            isDesktop && styles.overlayDesktop,
+          ]}
+        >
           <TouchableWithoutFeedback>
-            <View style={[styles.sheet, { backgroundColor: theme.listCardBg }]}>
+            <View
+              style={[
+                styles.sheet,
+                { backgroundColor: theme.listCardBg },
+                isDesktop && styles.sheetDesktop,
+                isDesktop && { maxWidth: Math.min(DESKTOP_SHEET_MAX, winW - 48) },
+              ]}
+            >
               <View style={[styles.reactions, { borderBottomColor: theme.listBorder }]}>
                 {REACTION_EMOJIS.map((emoji) => (
                   <TouchableOpacity
@@ -114,7 +132,7 @@ export function MessageActionSheet({
                   </TouchableOpacity>
                 ))}
               </View>
-              <ScrollView style={styles.actions}>
+              <ScrollView style={styles.actions} bounces={false}>
                 {actions.map((a) => (
                   <TouchableOpacity
                     key={a.key}
@@ -155,28 +173,46 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.35)',
     justifyContent: 'flex-end',
   },
+  overlayDesktop: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
   sheet: {
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
     paddingBottom: 24,
+    width: '100%',
+  },
+  sheetDesktop: {
+    borderRadius: 16,
+    paddingBottom: 12,
+    width: '100%',
+    maxHeight: '72%',
+    alignSelf: 'center',
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOpacity: 0.18,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
   },
   reactions: {
     flexDirection: 'row',
     justifyContent: 'space-around',
-    paddingVertical: 16,
+    paddingVertical: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  emojiBtn: { padding: 8 },
-  emoji: { fontSize: 28 },
+  emojiBtn: { padding: 6 },
+  emoji: { fontSize: 26 },
   actions: { maxHeight: 320 },
   actionRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
-    paddingHorizontal: 20,
-    paddingVertical: 14,
+    paddingHorizontal: 18,
+    paddingVertical: 13,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  actionText: { fontSize: 16 },
+  actionText: { fontSize: 15 },
   destructive: { color: '#FF3B30' },
 });

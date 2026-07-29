@@ -18,7 +18,7 @@ import {
   ReelVisibility,
 } from '../services/reels.service';
 import { sendPushToUserSafe, getAuthUserIdByProfileId } from '../services/push.service';
-import { isReelHlsEnabled, queueReelHlsTranscode, queueReelSoundMux } from '../services/reelTranscode.service';
+import { isReelHlsEnabled, queueReelHlsTranscode, queueReelMp4Process } from '../services/reelTranscode.service';
 import { assertCaptionAllowed, scheduleReelModeration } from '../services/reelModeration.service';
 import { assertReelSoundActive, createReelSound, deactivateReelSoundForUser, getReelSoundById, listReelSounds } from '../services/reelSounds.service';
 import { extractSoundFromVideoUrl } from '../services/reelSoundExtract.service';
@@ -70,6 +70,9 @@ const createReelSchema = z.object({
   height: z.number().int().min(1).optional(),
   trim_start_sec: z.number().min(0).optional(),
   trim_end_sec: z.number().min(0).optional(),
+  filter_id: z
+    .enum(['none', 'warm', 'cool', 'vivid', 'fade', 'mono'])
+    .optional(),
   sound_id: z.string().uuid().optional(),
   sound_start_sec: z.number().min(0).optional(),
   original_audio_volume: z.number().min(0).max(1).optional(),
@@ -92,6 +95,9 @@ const createReelSchema = z.object({
         height: z.number().int().min(1).optional(),
         trim_start_sec: z.number().min(0).optional(),
         trim_end_sec: z.number().min(0).optional(),
+        filter_id: z
+          .enum(['none', 'warm', 'cool', 'vivid', 'fade', 'mono'])
+          .optional(),
       })
     )
     .min(1)
@@ -960,6 +966,9 @@ router.post(
         duration: body.duration,
         width: body.width,
         height: body.height,
+        trim_start_sec: body.trim_start_sec,
+        trim_end_sec: body.trim_end_sec,
+        filter_id: body.filter_id,
       });
 
     try {
@@ -1023,6 +1032,18 @@ router.post(
       body.thumbnail_url ??
       (primary.media_type === 'image' ? primary.media_url : null);
 
+    const primaryFilterId =
+      (primary as { filter_id?: string }).filter_id &&
+      (primary as { filter_id?: string }).filter_id !== 'none'
+        ? (primary as { filter_id: string }).filter_id
+        : body.filter_id && body.filter_id !== 'none'
+          ? body.filter_id
+          : null;
+    const primaryTrimStart =
+      (primary as { trim_start_sec?: number }).trim_start_sec ?? body.trim_start_sec;
+    const primaryTrimEnd =
+      (primary as { trim_end_sec?: number }).trim_end_sec ?? body.trim_end_sec;
+
     const { data, error } = await supabaseAdmin
       .from('reels')
       .insert({
@@ -1041,6 +1062,9 @@ router.post(
           body.original_audio_volume ?? (body.sound_id ? 0 : 1),
         sound_volume: body.sound_volume ?? (body.sound_id ? 0.45 : 1),
         scheduled_publish_at: body.scheduled_publish_at ?? null,
+        trim_start_sec: primaryTrimStart ?? null,
+        trim_end_sec: primaryTrimEnd ?? null,
+        filter_id: primaryFilterId,
         transcode_status: primary.media_type === 'image' ? 'skipped' : 'pending',
         moderation_status: 'pending',
       })
@@ -1062,6 +1086,10 @@ router.post(
         duration: item.duration ?? null,
         width: item.width ?? null,
         height: item.height ?? null,
+        trim_start_sec: item.trim_start_sec ?? null,
+        trim_end_sec: item.trim_end_sec ?? null,
+        filter_id:
+          item.filter_id && item.filter_id !== 'none' ? item.filter_id : null,
         transcode_status: item.media_type === 'image' ? 'skipped' : 'pending',
       }));
       const { error: mediaErr } = await supabaseAdmin.from('reel_media').insert(rows);
@@ -1073,34 +1101,31 @@ router.post(
       for (const item of mediaItems) {
         if (item.media_type !== 'video') continue;
         if (mediaItems.length === 1) {
-          if (body.sound_id && !isReelHlsEnabled()) {
-            queueReelSoundMux(reelId, item.media_url, {
-              trimStartSec: item.trim_start_sec,
-              trimEndSec: item.trim_end_sec,
-            });
-          } else if (isReelHlsEnabled()) {
-            queueReelHlsTranscode(reelId, item.media_url, {
-              trimStartSec: item.trim_start_sec,
-              trimEndSec: item.trim_end_sec,
-            });
+          const trimOpts = {
+            trimStartSec: item.trim_start_sec ?? body.trim_start_sec,
+            trimEndSec: item.trim_end_sec ?? body.trim_end_sec,
+            filterId:
+              item.filter_id && item.filter_id !== 'none'
+                ? item.filter_id
+                : primaryFilterId,
+          };
+          if (isReelHlsEnabled()) {
+            queueReelHlsTranscode(reelId, item.media_url, trimOpts);
           } else {
-            await supabaseAdmin.from('reels').update({ transcode_status: 'skipped' }).eq('id', reelId);
+            queueReelMp4Process(reelId, item.media_url, trimOpts);
           }
         }
       }
     } else if (primary.media_type === 'video') {
-      if (body.sound_id && !isReelHlsEnabled()) {
-        queueReelSoundMux(reelId, primary.media_url, {
-          trimStartSec: body.trim_start_sec,
-          trimEndSec: body.trim_end_sec,
-        });
-      } else if (isReelHlsEnabled()) {
-        queueReelHlsTranscode(reelId, primary.media_url, {
-          trimStartSec: body.trim_start_sec,
-          trimEndSec: body.trim_end_sec,
-        });
+      const trimOpts = {
+        trimStartSec: body.trim_start_sec,
+        trimEndSec: body.trim_end_sec,
+        filterId: primaryFilterId,
+      };
+      if (isReelHlsEnabled()) {
+        queueReelHlsTranscode(reelId, primary.media_url, trimOpts);
       } else {
-        await supabaseAdmin.from('reels').update({ transcode_status: 'skipped' }).eq('id', reelId);
+        queueReelMp4Process(reelId, primary.media_url, trimOpts);
       }
     }
 

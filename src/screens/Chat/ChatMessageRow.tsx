@@ -29,6 +29,7 @@ const MessageStatus = ({
   isGroup,
   readCount,
   memberCount,
+  uploadProgress,
   onRetry,
   onReadReceiptPress,
 }: {
@@ -39,12 +40,27 @@ const MessageStatus = ({
   isGroup?: boolean;
   readCount?: number;
   memberCount?: number;
+  uploadProgress?: number;
   onRetry?: () => void;
   onReadReceiptPress?: () => void;
 }) => {
   const { theme } = useChatSettings();
   const metaColor = isOutgoing ? theme.outgoingMeta : theme.incomingMeta;
   if (status === 'sending') {
+    const pct =
+      typeof uploadProgress === 'number' && uploadProgress > 0
+        ? Math.max(0.05, Math.min(1, uploadProgress))
+        : null;
+    if (pct != null) {
+      return (
+        <View style={styles.uploadRing}>
+          <ActivityIndicator size={12} color={metaColor} />
+          <Text style={[styles.uploadPct, { color: metaColor }]}>
+            {Math.round(pct * 100)}
+          </Text>
+        </View>
+      );
+    }
     return <ActivityIndicator size={10} color={metaColor} />;
   }
   if (status === 'pending' || status === 'failed') {
@@ -195,6 +211,7 @@ export function ChatMessageRow({
           isGroup={isGroup}
           readCount={msg.read_count}
           memberCount={msg.member_count}
+          uploadProgress={msg._uploadProgress}
           onRetry={msg._status === 'failed' || msg._status === 'pending' ? () => onRetry?.(msg) : undefined}
           onReadReceiptPress={
             isGroup && (msg.read_count ?? 0) > 0
@@ -288,17 +305,69 @@ export function ChatMessageRow({
     }
 
     if (msg.message_type === 'image') {
+      const uploading = msg._status === 'sending' || msg._status === 'pending';
+      // While uploading, always show the real image + progress ring (even for view-once).
+      const showCover = Boolean(msg.view_once) && !uploading;
+      const captionText = (msg.decrypted || msg.content || '').trim();
+      const showCaption =
+        Boolean(captionText) &&
+        captionText !== (msg.file_name || '') &&
+        !/^[a-zA-Z0-9._-]+\.(jpe?g|png|gif|webp|heic|mp4|mov|mkv|pdf|docx?)$/i.test(
+          captionText
+        );
+
       return (
         <Pressable
-          onPress={() => imageUri && onOpenMedia?.(msg.id)}
+          onPress={() => {
+            if (showCover && isOutgoing) return;
+            if (imageUri || showCover) onOpenMedia?.(msg.id);
+          }}
           onLongPress={() => onLongPress?.(msg)}
           delayLongPress={280}
           style={isSearchHit ? styles.searchHit : undefined}
         >
-          <View style={[styles.mediaWrap, corners]}>
+          <View
+            style={[
+              styles.mediaWrap,
+              corners,
+              showCaption ? { backgroundColor: bubbleBg } : null,
+            ]}
+          >
             {replyQuote}
-            <Image source={{ uri: imageUri }} style={styles.mediaImage} resizeMode="cover" />
-            <View style={styles.mediaMeta}>{meta}</View>
+            <View style={styles.mediaImageFrame}>
+              {showCover ? (
+                <View style={[styles.mediaImage, styles.viewOnceCover]}>
+                  <Ionicons name="eye-outline" size={36} color="#fff" />
+                  <Text style={styles.viewOnceCoverTitle}>
+                    {isOutgoing ? 'View once photo' : 'Photo'}
+                  </Text>
+                  <Text style={styles.viewOnceCoverSub}>
+                    {isOutgoing ? 'Covered · recipient can open once' : 'Tap to view once'}
+                  </Text>
+                </View>
+              ) : (
+                <Image source={{ uri: imageUri }} style={styles.mediaImage} resizeMode="cover" />
+              )}
+              {!showCaption ? <View style={styles.mediaMeta}>{meta}</View> : null}
+              {uploading ? (
+                <View style={styles.uploadOverlay}>
+                  <View style={styles.uploadCircle}>
+                    <ActivityIndicator size="large" color="#fff" />
+                    <Text style={styles.uploadCircleText}>
+                      {typeof msg._uploadProgress === 'number'
+                        ? `${Math.round(Math.min(1, Math.max(0, msg._uploadProgress)) * 100)}%`
+                        : '…'}
+                    </Text>
+                  </View>
+                </View>
+              ) : null}
+            </View>
+            {showCaption ? (
+              <View style={styles.mediaCaptionRow}>
+                <Text style={[styles.mediaCaption, { color: textColor }]}>{captionText}</Text>
+                <View style={styles.mediaCaptionMeta}>{meta}</View>
+              </View>
+            ) : null}
           </View>
           {reactionsBar}
         </Pressable>
@@ -374,22 +443,81 @@ export function ChatMessageRow({
     }
 
     if (msg.message_type === 'video') {
+      const uploading = msg._status === 'sending' || msg._status === 'pending';
+      const showCover = Boolean(msg.view_once) && !uploading;
+      const captionText = (msg.decrypted || msg.content || '').trim();
+      const showCaption =
+        Boolean(captionText) &&
+        captionText !== (msg.file_name || '') &&
+        !/^[a-zA-Z0-9._-]+\.(jpe?g|png|gif|webp|heic|mp4|mov|mkv|pdf|docx?)$/i.test(
+          captionText
+        );
+
       return (
         <Pressable
-          onPress={() => imageUri && onOpenMedia?.(msg.id)}
+          onPress={() => {
+            if (showCover && isOutgoing) return;
+            if (imageUri || showCover) onOpenMedia?.(msg.id);
+          }}
           onLongPress={() => onLongPress?.(msg)}
           delayLongPress={280}
           style={isSearchHit ? styles.searchHit : undefined}
         >
-          <View style={[styles.mediaWrap, corners]}>
+          <View
+            style={[
+              styles.mediaWrap,
+              corners,
+              showCaption ? { backgroundColor: bubbleBg } : null,
+            ]}
+          >
             {replyQuote}
-            <View style={styles.mediaImage}>
-              <ChatVideoThumb videoUri={imageUri} localThumb={msg.local_thumb_uri} />
+            <View style={styles.mediaImageFrame}>
+              {showCover ? (
+                <View style={[styles.mediaImage, styles.viewOnceCover]}>
+                  <Ionicons name="eye-outline" size={36} color="#fff" />
+                  <Text style={styles.viewOnceCoverTitle}>
+                    {isOutgoing ? 'View once video' : 'Video'}
+                  </Text>
+                  <Text style={styles.viewOnceCoverSub}>
+                    {isOutgoing ? 'Covered · recipient can open once' : 'Tap to view once'}
+                  </Text>
+                </View>
+              ) : (
+                <>
+                  <View style={styles.mediaImage}>
+                    <ChatVideoThumb videoUri={imageUri} localThumb={msg.local_thumb_uri} />
+                  </View>
+                  {!uploading ? (
+                    <View style={styles.videoPlayOverlay}>
+                      <MaterialIcons
+                        name="play-circle-filled"
+                        size={52}
+                        color="rgba(255,255,255,0.95)"
+                      />
+                    </View>
+                  ) : null}
+                </>
+              )}
+              {!showCaption ? <View style={styles.mediaMeta}>{meta}</View> : null}
+              {uploading ? (
+                <View style={styles.uploadOverlay}>
+                  <View style={styles.uploadCircle}>
+                    <ActivityIndicator size="large" color="#fff" />
+                    <Text style={styles.uploadCircleText}>
+                      {typeof msg._uploadProgress === 'number'
+                        ? `${Math.round(Math.min(1, Math.max(0, msg._uploadProgress)) * 100)}%`
+                        : '…'}
+                    </Text>
+                  </View>
+                </View>
+              ) : null}
             </View>
-            <View style={styles.videoPlayOverlay}>
-              <MaterialIcons name="play-circle-filled" size={52} color="rgba(255,255,255,0.95)" />
-            </View>
-            <View style={styles.mediaMeta}>{meta}</View>
+            {showCaption ? (
+              <View style={styles.mediaCaptionRow}>
+                <Text style={[styles.mediaCaption, { color: textColor }]}>{captionText}</Text>
+                <View style={styles.mediaCaptionMeta}>{meta}</View>
+              </View>
+            ) : null}
           </View>
           {reactionsBar}
         </Pressable>
@@ -398,21 +526,44 @@ export function ChatMessageRow({
 
     if (msg.message_type === 'file') {
       const fileUrl = msg.file_url?.split('?')[0];
+      const captionText = (msg.decrypted || msg.content || '').trim();
+      const showCaption =
+        Boolean(captionText) &&
+        captionText !== (msg.file_name || '') &&
+        !/^[a-zA-Z0-9._-]+\.(jpe?g|png|gif|webp|heic|mp4|mov|mkv|pdf|docx?)$/i.test(
+          captionText
+        );
+      const uploading = msg._status === 'sending' || msg._status === 'pending';
       return wrapPressable(
         <TouchableOpacity
           activeOpacity={0.85}
           onPress={() => {
             if (fileUrl) void openFileUrl(fileUrl).catch(() => undefined);
           }}
-          disabled={!fileUrl}
+          disabled={!fileUrl || uploading}
         >
-          <View style={[styles.bubble, { backgroundColor: bubbleBg }, corners, styles.fileRow]}>
+          <View style={[styles.bubble, { backgroundColor: bubbleBg }, corners, styles.fileBubble]}>
             {replyQuote}
-            <Feather name="file" size={20} color={isOutgoing ? textColor : theme.primary} />
-            <Text style={[styles.fileName, { color: textColor }]} numberOfLines={2}>
-              {msg.file_name || 'Document'}
-            </Text>
-            {meta}
+            <View style={styles.fileRow}>
+              <View style={styles.fileIconWrap}>
+                {uploading ? (
+                  <ActivityIndicator size="small" color={isOutgoing ? textColor : theme.primary} />
+                ) : (
+                  <Feather name="file" size={20} color={isOutgoing ? textColor : theme.primary} />
+                )}
+              </View>
+              <View style={styles.fileTextCol}>
+                <Text style={[styles.fileName, { color: textColor }]} numberOfLines={2}>
+                  {msg.file_name || 'Document'}
+                </Text>
+                {showCaption ? (
+                  <Text style={[styles.fileCaption, { color: textColor }]} numberOfLines={3}>
+                    {captionText}
+                  </Text>
+                ) : null}
+              </View>
+              {meta}
+            </View>
           </View>
         </TouchableOpacity>
       );
@@ -626,7 +777,71 @@ const styles = StyleSheet.create({
   audioDur: { fontSize: 13, marginLeft: 8 },
   metaOverlay: { position: 'absolute', right: 10, bottom: 6 },
   mediaWrap: { overflow: 'hidden', maxWidth: 260 },
+  mediaImageFrame: { width: 260, position: 'relative' },
   mediaImage: { width: 260, height: 200, backgroundColor: '#1a1a1a' },
+  mediaCaptionRow: {
+    position: 'relative',
+    paddingHorizontal: 10,
+    paddingTop: 8,
+    paddingBottom: 6,
+    minWidth: 160,
+  },
+  mediaCaption: { fontSize: 14, lineHeight: 19, paddingRight: 52 },
+  mediaCaptionMeta: {
+    position: 'absolute',
+    right: 8,
+    bottom: 6,
+    flexDirection: 'row',
+  },
+  viewOnceCover: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1c2430',
+    gap: 6,
+    paddingHorizontal: 16,
+  },
+  viewOnceCoverTitle: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  viewOnceCoverSub: {
+    color: 'rgba(255,255,255,0.72)',
+    fontSize: 12,
+    textAlign: 'center',
+  },
+  uploadOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  uploadCircle: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    borderWidth: 3,
+    borderColor: 'rgba(255,255,255,0.85)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.35)',
+  },
+  uploadCircleText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 4,
+  },
+  uploadRing: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  uploadPct: {
+    fontSize: 9,
+    fontWeight: '700',
+    minWidth: 14,
+  },
   videoPlayOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.35)',
@@ -643,8 +858,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 2,
   },
-  fileRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
-  fileName: { flex: 1, fontSize: 14 },
+  fileBubble: { minWidth: 180, maxWidth: 280 },
+  fileRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  fileIconWrap: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center', marginTop: 1 },
+  fileTextCol: { flex: 1, minWidth: 0 },
+  fileName: { fontSize: 14, fontWeight: '600' },
+  fileCaption: { fontSize: 13, marginTop: 4, lineHeight: 18, opacity: 0.92 },
   reelPlaceholder: { alignItems: 'center', justifyContent: 'center' },
   reelCaption: { paddingHorizontal: 10, paddingTop: 8, fontSize: 14 },
   momentQuoteBar: {

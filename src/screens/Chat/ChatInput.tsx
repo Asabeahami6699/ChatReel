@@ -16,6 +16,7 @@ import {
   TouchableWithoutFeedback,
   ScrollView,
   FlatList,
+  Pressable,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAudioRecorder, RecordingPresets } from 'expo-audio';
@@ -138,6 +139,7 @@ const ChatInput = forwardRef<TextInput, ChatInputProps>(({
   const [inputFocused, setInputFocused] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [selection, setSelection] = useState({ start: 0, end: 0 });
+  const selectionRef = useRef({ start: 0, end: 0 });
   const [mode, setMode] = useState<RecordingMode>('text');
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [playbackPosition, setPlaybackPosition] = useState(0);
@@ -655,12 +657,18 @@ const ChatInput = forwardRef<TextInput, ChatInputProps>(({
         onRequestClose={() => setShowAttachmentMenu(false)}
       >
         <TouchableWithoutFeedback onPress={() => setShowAttachmentMenu(false)}>
-          <View style={styles.attachmentMenuOverlay}>
+          <View
+            style={[
+              styles.attachmentMenuOverlay,
+              Platform.OS === 'web' && styles.attachmentMenuOverlayDesktop,
+            ]}
+          >
             <TouchableWithoutFeedback>
               <View
                 style={[
                   styles.attachmentMenuContainer,
                   { backgroundColor: theme.listCardBg },
+                  Platform.OS === 'web' && styles.attachmentMenuDesktop,
                 ]}
               >
                 <View style={[styles.attachmentMenuHeader, { borderBottomColor: theme.listBorder }]}>
@@ -1016,13 +1024,21 @@ const formatDuration = (seconds: number) => {
   }
 
   function handleEmojiSelect(emoji: string) {
-    const { start, end } = selection;
-    const newText = inputText.slice(0, start) + emoji + inputText.slice(end);
-    setInputText(newText);
-    const newCursorPos = start + emoji.length;
+    const prev = inputText;
+    let { start, end } = selectionRef.current;
+    // Web often reports 0,0 when the field isn't focused — append instead of prepending.
+    if (start === 0 && end === 0 && prev.length > 0 && !inputFocused) {
+      start = prev.length;
+      end = prev.length;
+    }
+    const at = Math.max(0, Math.min(start, prev.length));
+    const to = Math.max(at, Math.min(end, prev.length));
+    const next = prev.slice(0, at) + emoji + prev.slice(to);
+    const newCursorPos = at + emoji.length;
+    selectionRef.current = { start: newCursorPos, end: newCursorPos };
     setSelection({ start: newCursorPos, end: newCursorPos });
-    setShowEmojiPicker(false);
-    inputRef.current?.focus();
+    setInputText(next);
+    animateSendButton(next.trim().length > 0 || selectedAttachments.length > 0);
   }
 
   // ... (All recording functions remain the same)
@@ -1160,8 +1176,8 @@ const formatDuration = (seconds: number) => {
           <TouchableOpacity
             style={styles.iconButton}
             onPress={() => {
+              // Don't blur — on web blur resets the caret and emoji inserts at the start.
               setShowEmojiPicker(true);
-              inputRef.current?.blur();
             }}
           >
             <Ionicons name="happy-outline" size={22} color={theme.listPrimaryText} />
@@ -1221,7 +1237,11 @@ const formatDuration = (seconds: number) => {
             maxLength={5000}
             blurOnSubmit={false}
             returnKeyType="default"
-            onSelectionChange={(e) => setSelection(e.nativeEvent.selection)}
+            onSelectionChange={(e) => {
+              const next = e.nativeEvent.selection;
+              selectionRef.current = next;
+              setSelection(next);
+            }}
             selection={selection}
             textAlignVertical="top"
             selectionColor={theme.primary}
@@ -1268,33 +1288,6 @@ const formatDuration = (seconds: number) => {
     );
   };
 
-  const renderEmojiPicker = () => {
-    return (
-      <View style={[styles.emojiPickerContainer, { backgroundColor: theme.listBg }]}>
-        <View style={[styles.emojiPickerHeader, { borderBottomColor: theme.listBorder }]}>
-          <Text style={[styles.emojiPickerTitle, { color: theme.listPrimaryText }]}>Emoji</Text>
-          <TouchableOpacity
-            style={styles.closeButton}
-            onPress={() => setShowEmojiPicker(false)}
-          >
-            <Ionicons name="close" size={24} color={theme.listPrimaryText} />
-          </TouchableOpacity>
-        </View>
-        <View style={styles.emojiGrid}>
-          {commonEmojis.map((emoji, index) => (
-            <TouchableOpacity
-              key={index}
-              style={styles.emojiButton}
-              onPress={() => handleEmojiSelect(emoji)}
-            >
-              <Text style={styles.emojiText}>{emoji}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </View>
-    );
-  };
-
   return (
     <View
       style={[
@@ -1331,11 +1324,50 @@ const formatDuration = (seconds: number) => {
       {/* Custom Emoji Picker Modal */}
       <Modal
         visible={showEmojiPicker}
-        animationType="slide"
-        transparent={false}
+        animationType="fade"
+        transparent
         onRequestClose={() => setShowEmojiPicker(false)}
       >
-        {renderEmojiPicker()}
+        <View style={styles.emojiModalOverlay}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => setShowEmojiPicker(false)}
+          />
+          <View
+            style={[
+              styles.emojiSheet,
+              { backgroundColor: theme.listBg },
+              Platform.OS === 'web' && styles.emojiSheetDesktop,
+            ]}
+            // Prevent backdrop press from eating taps inside the sheet (web).
+            onStartShouldSetResponder={() => true}
+          >
+            <View style={[styles.emojiPickerHeader, { borderBottomColor: theme.listBorder }]}>
+              <Text style={[styles.emojiPickerTitle, { color: theme.listPrimaryText }]}>Emoji</Text>
+              <TouchableOpacity
+                style={styles.closeButton}
+                onPress={() => setShowEmojiPicker(false)}
+              >
+                <Ionicons name="close" size={24} color={theme.listPrimaryText} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView
+              style={styles.emojiScroll}
+              contentContainerStyle={styles.emojiGrid}
+              keyboardShouldPersistTaps="handled"
+            >
+              {commonEmojis.map((emoji, index) => (
+                <TouchableOpacity
+                  key={`${emoji}-${index}`}
+                  style={styles.emojiButton}
+                  onPress={() => handleEmojiSelect(emoji)}
+                >
+                  <Text style={styles.emojiText}>{emoji}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
       </Modal>
 
       {/* Attachment Menu */}
@@ -1530,10 +1562,30 @@ const styles = StyleSheet.create({
     borderRadius: 1.5,
   },
   // Emoji picker styles
-  emojiPickerContainer: {
+  emojiModalOverlay: {
     flex: 1,
-    backgroundColor: '#fff',
-    paddingTop: 50,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+  },
+  emojiSheet: {
+    width: '100%',
+    maxHeight: '55%',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    overflow: 'hidden',
+    paddingBottom: 12,
+  },
+  emojiSheetDesktop: {
+    width: '100%',
+    maxWidth: 400,
+    maxHeight: 420,
+    borderRadius: 16,
+    marginBottom: 24,
+    alignSelf: 'center',
+  },
+  emojiScroll: {
+    maxHeight: 340,
   },
   emojiPickerHeader: {
     flexDirection: 'row',
@@ -1574,12 +1626,25 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'flex-end',
   },
+  attachmentMenuOverlayDesktop: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
   attachmentMenuContainer: {
     backgroundColor: '#fff',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     paddingBottom: 30,
     maxHeight: '60%',
+  },
+  attachmentMenuDesktop: {
+    width: '100%',
+    maxWidth: 400,
+    borderRadius: 16,
+    maxHeight: '70%',
+    paddingBottom: 20,
+    alignSelf: 'center',
   },
   attachmentMenuHeader: {
     flexDirection: 'row',

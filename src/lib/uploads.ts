@@ -56,14 +56,25 @@ async function putBlob(
 async function putNativeFile(
   uploadUrl: string,
   uri: string,
-  contentType: string
+  contentType: string,
+  onProgress?: (progress: number) => void
 ): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    const task = createUploadTask(uploadUrl, uri, {
-      httpMethod: 'PUT',
-      uploadType: FileSystemUploadType.BINARY_CONTENT,
-      headers: { 'Content-Type': contentType, 'x-upsert': 'false' },
-    });
+    const task = createUploadTask(
+      uploadUrl,
+      uri,
+      {
+        httpMethod: 'PUT',
+        uploadType: FileSystemUploadType.BINARY_CONTENT,
+        headers: { 'Content-Type': contentType, 'x-upsert': 'false' },
+      },
+      (data) => {
+        const total = data.totalBytesExpectedToSend || 0;
+        if (total > 0 && onProgress) {
+          onProgress(Math.min(1, data.totalBytesSent / total));
+        }
+      }
+    );
     task
       .uploadAsync()
       .then((result) => {
@@ -71,6 +82,7 @@ async function putNativeFile(
           reject(new Error(`Upload failed (${result?.status ?? 'unknown'})`));
           return;
         }
+        onProgress?.(1);
         resolve();
       })
       .catch(reject);
@@ -116,7 +128,8 @@ async function uploadViaSignedUrl(
   bucket: UploadBucket,
   path: string,
   uri: string,
-  contentType: string
+  contentType: string,
+  onProgress?: (progress: number) => void
 ): Promise<string> {
   const { signedUrl } = await api.uploads.sign({ bucket, path });
   const uploadUrl = resolveSignedUploadUrl(signedUrl);
@@ -124,8 +137,9 @@ async function uploadViaSignedUrl(
   if (Platform.OS === 'web') {
     const blob = await (await fetch(uri)).blob();
     await putBlob(uploadUrl, blob, contentType);
+    onProgress?.(1);
   } else {
-    await putNativeFile(uploadUrl, uri, contentType);
+    await putNativeFile(uploadUrl, uri, contentType, onProgress);
   }
 
   const { publicUrl } = await api.uploads.publicUrl(bucket, path);
@@ -140,18 +154,25 @@ export async function uploadFromUri(
   bucket: UploadBucket,
   path: string,
   uri: string,
-  contentType?: string
+  contentType?: string,
+  onProgress?: (progress: number) => void
 ): Promise<string> {
   const type = contentType || 'application/octet-stream';
 
   if (Platform.OS === 'web') {
-    return uploadViaBinaryApi(bucket, path, uri, type);
+    onProgress?.(0.15);
+    const url = await uploadViaBinaryApi(bucket, path, uri, type);
+    onProgress?.(1);
+    return url;
   }
 
   try {
-    return await uploadViaSignedUrl(bucket, path, uri, type);
+    return await uploadViaSignedUrl(bucket, path, uri, type, onProgress);
   } catch (signedErr) {
     console.warn('[uploads] signed upload failed, trying binary API', signedErr);
-    return uploadViaBinaryApi(bucket, path, uri, type);
+    onProgress?.(0.2);
+    const url = await uploadViaBinaryApi(bucket, path, uri, type);
+    onProgress?.(1);
+    return url;
   }
 }

@@ -13,13 +13,18 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { OfflineAvatar } from './OfflineAvatar';
-import { api } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
 import { useRealtimeTopic } from '../hooks/useRealtimeTopic';
 import Portal from './Portal';
 import { USE_NATIVE_DRIVER } from '../lib/animation';
 import { promptSignIn } from '../lib/requireSignedIn';
 import { useChatSettings } from '../context/ChatSettingsContext';
+import {
+  getCachedProfile,
+  hydrateProfileCache,
+  prefetchMyProfile,
+  subscribeCachedProfile,
+} from '../lib/profileCache';
 
 interface DropdownMenuProps {
   triggerIcon?: 'ellipsis-horizontal' | 'ellipsis-vertical';
@@ -33,7 +38,15 @@ interface Profile {
 
 export default function DropdownMenu({ triggerIcon = 'ellipsis-vertical' }: DropdownMenuProps) {
   const [visible, setVisible] = useState(false);
-  const [profile, setProfile] = useState<Profile | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(() => {
+    const cached = getCachedProfile();
+    if (!cached) return null;
+    return {
+      display_name: cached.display_name || '',
+      avatar_url: cached.avatar_url || '',
+      email: cached.email || '',
+    };
+  });
   const { user, signOut, isGuest, exitGuest } = useAuth();
   const { theme } = useChatSettings();
   const navigation = useNavigation<any>(); // Using any for now, adjust later based on type
@@ -51,24 +64,33 @@ export default function DropdownMenu({ triggerIcon = 'ellipsis-vertical' }: Drop
     return unsubscribe;
   }, [navigation, visible]);
 
+  const applyProfile = (data: {
+    display_name?: string;
+    avatar_url?: string;
+    email?: string;
+  }) => {
+    setProfile({
+      display_name: data.display_name || '',
+      avatar_url: data.avatar_url || '',
+      email: data.email || '',
+    });
+  };
+
   const fetchProfile = async () => {
     if (!user) return;
-    try {
-      const { profile: data } = await api.profiles.me();
-      if (data) {
-        setProfile({
-          display_name: (data.display_name as string) || '',
-          avatar_url: (data.avatar_url as string) || '',
-          email: (data.email as string) || '',
-        });
-      }
-    } catch (error) {
-      console.error('Error fetching profile:', error);
-    }
+    await hydrateProfileCache();
+    const cached = getCachedProfile();
+    if (cached) applyProfile(cached);
+    const next = await prefetchMyProfile(user.email);
+    if (next) applyProfile(next);
   };
 
   useEffect(() => {
-    fetchProfile();
+    void fetchProfile();
+    return subscribeCachedProfile(() => {
+      const cached = getCachedProfile();
+      if (cached) applyProfile(cached);
+    });
   }, [user?.id]);
 
   useRealtimeTopic(user ? 'profiles' : null, fetchProfile);
@@ -114,7 +136,8 @@ export default function DropdownMenu({ triggerIcon = 'ellipsis-vertical' }: Drop
   const menuItems = isGuest
     ? [
         { title: 'Profile', icon: 'person-outline', onPress: () => requestLogin('open your profile') },
-        { title: 'New Group', icon: 'people-outline', onPress: () => requestLogin('create a group') },
+        { title: 'Starred messages', icon: 'star-outline', onPress: () => requestLogin('view starred messages') },
+        { title: 'Archived chats', icon: 'archive-outline', onPress: () => requestLogin('open archived chats') },
         { title: 'Settings', icon: 'settings-outline', onPress: () => requestLogin('open settings') },
         { title: 'Invite a Friend', icon: 'share-social-outline', onPress: () => requestLogin('invite friends') },
         { title: 'My QR Code', icon: 'qr-code-outline', onPress: () => requestLogin('view your QR code') },
@@ -129,8 +152,12 @@ export default function DropdownMenu({ triggerIcon = 'ellipsis-vertical' }: Drop
         },
       ]
     : [
-        { title: 'Profile', icon: 'person-outline', onPress: () => navigation.navigate('Profile') },
-        { title: 'New Group', icon: 'people-outline', onPress: () => navigation.navigate('NewGroup') },
+        { title: 'Profile', icon: 'person-outline', onPress: () => {
+          void prefetchMyProfile(user?.email);
+          navigation.navigate('Profile');
+        } },
+        { title: 'Starred messages', icon: 'star-outline', onPress: () => navigation.navigate('StarredMessages') },
+        { title: 'Archived chats', icon: 'archive-outline', onPress: () => navigation.navigate('ArchivedChats') },
         { title: 'Settings', icon: 'settings-outline', onPress: () => navigation.navigate('Settings') },
         { title: 'Invite a Friend', icon: 'share-social-outline', onPress: () => navigation.navigate('Invite') },
         { title: 'My QR Code', icon: 'qr-code-outline', onPress: () => navigation.navigate('QRCode') },
@@ -188,10 +215,10 @@ export default function DropdownMenu({ triggerIcon = 'ellipsis-vertical' }: Drop
                 />
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.displayName, { color: theme.listPrimaryText }]} numberOfLines={1}>
-                    {profile?.display_name || 'User'}
+                    {profile?.display_name || profile?.email || user?.email || 'Loading…'}
                   </Text>
                   <Text style={[styles.email, { color: theme.listSecondaryText }]} numberOfLines={1}>
-                    {profile?.email || 'user@example.com'}
+                    {profile?.email || user?.email || ''}
                   </Text>
                 </View>
               </View>

@@ -26,10 +26,10 @@ export function ChatSocketRegistrar() {
     void connectChatSocket();
     const offApp = attachChatSocketAppState();
     const offEvt = onChatSocketEvent((ev) => {
-      if (ev.type === 'message.created') {
+      if (ev.type === 'message.created' || ev.type === 'message.updated') {
         const row = ev.message as ChatRealtimeRow | undefined;
         if (row && typeof row === 'object' && typeof row.id === 'string') {
-          dispatchMessageRow(row, 'INSERT');
+          dispatchMessageRow(row, ev.type === 'message.updated' ? 'UPDATE' : 'INSERT');
         }
         // Keep the topic wake: HTTP reconciliation covers payload-less events.
         notifyRealtimeTopic('messages');

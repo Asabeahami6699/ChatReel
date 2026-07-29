@@ -28,6 +28,7 @@ import { flushMessageOutbox, flushOutboxItem } from '../../lib/flushMessageOutbo
 import { WallpaperPickerSheet } from '../../components/WallpaperPickerSheet';
 import { ChatSharedMediaSheet } from '../../components/ChatSharedMediaSheet';
 import { showAppToast } from '../../lib/appToast';
+import { DISAPPEAR_OPTIONS, disappearLabel } from '../../lib/disappearOptions';
 import NetInfo from '@react-native-community/netinfo';
 import { uploadFromUri } from '../../lib/uploads';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
@@ -160,6 +161,7 @@ export default function ChatRoomScreen() {
   const [wallpaper, setWallpaper] = useState<string | null>(null);
   const [starredIds, setStarredIds] = useState<string[]>([]);
   const [chatMuted, setChatMuted] = useState(false);
+  const [disappearAfterSeconds, setDisappearAfterSeconds] = useState<number | null>(null);
   const [wallpaperPickerOpen, setWallpaperPickerOpen] = useState(false);
   const [clearedAt, setClearedAt] = useState<string | null>(null);
   const [settingsReady, setSettingsReady] = useState(false);
@@ -313,17 +315,20 @@ export default function ChatRoomScreen() {
       setStarredIds((preferences.starred_message_ids as string[]) ?? []);
       const mutedUntil = preferences.muted_until as string | null;
       setChatMuted(Boolean(mutedUntil && new Date(mutedUntil) > new Date()));
+      const disappear = preferences.disappear_after_seconds;
+      setDisappearAfterSeconds(
+        typeof disappear === 'number' && disappear > 0 ? disappear : null
+      );
     } catch {
       // Preferences are optional until migration is applied.
     }
-    if (chatType === 'group') {
-      try {
-        const { pinned } = await api.chatSettings.pinned(chatId);
-        const first = pinned?.[0] as { messages?: Message } | undefined;
-        if (first?.messages) setPinnedBanner(first.messages);
-      } catch {
-        setPinnedBanner(null);
-      }
+    try {
+      const { pinned } = await api.chatSettings.pinned(chatType, chatId);
+      const first = pinned?.[0] as { messages?: Message } | undefined;
+      if (first?.messages) setPinnedBanner(first.messages);
+      else setPinnedBanner(null);
+    } catch {
+      setPinnedBanner(null);
     }
     setSettingsReady(true);
   }, [chatId, chatType]);
@@ -499,11 +504,11 @@ export default function ChatRoomScreen() {
         }
         return;
       }
-      if (action === 'pin' && chatType === 'group' && !msg.id.startsWith('temp-')) {
+      if (action === 'pin' && !msg.id.startsWith('temp-')) {
         try {
-          await api.chatSettings.pin(chatId, msg.id);
+          await api.chatSettings.pin(chatType, chatId, msg.id);
           setPinnedBanner(msg);
-          Alert.alert('Pinned', 'Message pinned for the group');
+          Alert.alert('Pinned', 'Message pinned in this chat');
         } catch {
           Alert.alert('Error', 'Could not pin message');
         }
@@ -844,7 +849,7 @@ export default function ChatRoomScreen() {
 
     if (loadMore) {
       setLoadingMore(true);
-    } else if (!initialLoadComplete) {
+    } else if (!initialLoadComplete && messages.length === 0) {
       setLoading(true);
     }
 
@@ -894,12 +899,21 @@ export default function ChatRoomScreen() {
 
     try {
       void import('../../lib/chatIndex').then((m) => m.resetChatIndexUnread(chatId));
+      const expiresAt =
+        disappearAfterSeconds && disappearAfterSeconds > 0
+          ? new Date(Date.now() + disappearAfterSeconds * 1000).toISOString()
+          : null;
+
       if (chatType === 'individual') {
         await api.messages.markRead({ partner_user_id: chatId });
         setMessages((prev) =>
           prev.map((msg) =>
             msg.sender_id === chatId && msg.receiver_id === user.id
-              ? { ...msg, is_read: true }
+              ? {
+                  ...msg,
+                  is_read: true,
+                  ...(expiresAt && !msg.expires_at ? { expires_at: expiresAt } : {}),
+                }
               : msg
           )
         );
@@ -908,7 +922,11 @@ export default function ChatRoomScreen() {
         setMessages((prev) =>
           prev.map((msg) =>
             msg.sender_id !== user.id && msg.group_id === chatId
-              ? { ...msg, is_read: true }
+              ? {
+                  ...msg,
+                  is_read: true,
+                  ...(expiresAt && !msg.expires_at ? { expires_at: expiresAt } : {}),
+                }
               : msg
           )
         );
@@ -916,7 +934,40 @@ export default function ChatRoomScreen() {
     } catch (error) {
       console.error('Mark as read error:', error);
     }
-  }, [user?.id, chatId, chatType]);
+  }, [user?.id, chatId, chatType, disappearAfterSeconds]);
+
+  const handleDisappearingMessages = useCallback(() => {
+    Alert.alert(
+      'Disappearing messages',
+      'Messages vanish for everyone after they are read, using the timer you pick.',
+      [
+        ...DISAPPEAR_OPTIONS.map((opt) => ({
+          text:
+            (disappearAfterSeconds ?? null) === (opt.seconds ?? null)
+              ? `✓ ${opt.label}`
+              : opt.label,
+          onPress: () => {
+            void (async () => {
+              try {
+                await api.chatSettings.update(chatType, chatId, {
+                  disappear_after_seconds: opt.seconds,
+                });
+                setDisappearAfterSeconds(opt.seconds);
+                showAppToast(
+                  opt.seconds
+                    ? `Disappear after read: ${opt.label}`
+                    : 'Disappearing messages off'
+                );
+              } catch {
+                showAppToast('Could not update disappearing messages', { isError: true });
+              }
+            })();
+          },
+        })),
+        { text: 'Cancel', style: 'cancel' as const },
+      ]
+    );
+  }, [chatType, chatId, disappearAfterSeconds]);
 
   const markSingleMessageAsRead = useCallback(async (messageId: string) => {
     if (!user?.id || !isValidUuid(messageId)) return;
@@ -1555,15 +1606,57 @@ export default function ChatRoomScreen() {
     name: string,
     type: string,
     messageType: 'image' | 'video' | 'file',
-    options?: { localThumbUri?: string; expiresAt?: string | null; viewOnce?: boolean }
+    options?: {
+      localThumbUri?: string;
+      expiresAt?: string | null;
+      viewOnce?: boolean;
+      caption?: string;
+    }
   ) => {
     if (!user?.id) return;
 
     const clientMessageId = generateClientMessageId();
     const tempId = generateTempId(clientMessageId);
     const cleanFileName = name.replace(/[^a-zA-Z0-9.-]/g, '_');
+    const captionText = (options?.caption || '').trim();
+    // Images/videos use caption as content; documents keep the file name as fallback.
+    const displayContent =
+      messageType === 'file' ? captionText || cleanFileName : captionText;
 
-    // Persist under Documents/ChatReel/{Images|Videos|Files}/…
+    // Paint the bubble immediately with the picked URI (WhatsApp-style).
+    const optimisticMessage: Message = {
+      id: tempId,
+      client_message_id: clientMessageId,
+      content: displayContent,
+      created_at: new Date().toISOString(),
+      sender_id: user.id,
+      ...(chatType === 'individual'
+        ? { receiver_id: chatId }
+        : { group_id: chatId }),
+      message_type: messageType,
+      file_url: uri,
+      local_file_uri: uri,
+      local_thumb_uri: options?.localThumbUri,
+      file_name: cleanFileName,
+      file_type: type,
+      delivered: false,
+      is_read: false,
+      ...(options?.expiresAt ? { expires_at: options.expiresAt } : {}),
+      ...(options?.viewOnce ? { view_once: true } : {}),
+      profiles: {
+        display_name: 'You',
+        avatar_url: null,
+        user_id: user.id,
+      },
+      _status: 'sending' as const,
+      _uploadProgress: 0.05,
+    };
+
+    persistMessages((prev) => [...prev, optimisticMessage]);
+    stickBeforeSend();
+    setTimeout(() => scrollToBottom(), 50);
+
+    // Persist to device storage in the background; update local URIs when ready.
     const localPersisted = await persistChatMedia({
       chatId,
       clientMessageId,
@@ -1583,37 +1676,20 @@ export default function ChatRoomScreen() {
         })
       : undefined;
 
-    const optimisticMessage: Message = {
-      id: tempId,
-      client_message_id: clientMessageId,
-      content: name,
-      created_at: new Date().toISOString(),
-      sender_id: user.id,
-      ...(chatType === 'individual'
-        ? { receiver_id: chatId }
-        : { group_id: chatId }),
-      message_type: messageType,
-      file_url: localPersisted,
-      local_file_uri: localPersisted,
-      local_thumb_uri: localThumb,
-      file_name: cleanFileName,
-      file_type: type,
-      delivered: false,
-      is_read: false,
-      ...(options?.expiresAt ? { expires_at: options.expiresAt } : {}),
-      ...(options?.viewOnce ? { view_once: true } : {}),
-      profiles: {
-        display_name: 'You',
-        avatar_url: null,
-        user_id: user.id
-      },
-      _status: 'sending' as const
-    };
-
-    persistMessages((prev) => [...prev, optimisticMessage]);
-
-    stickBeforeSend();
-    setTimeout(() => scrollToBottom(), 50);
+    if (localPersisted || localThumb) {
+      persistMessages((prev) =>
+        prev.map((m) =>
+          m.id === tempId
+            ? {
+                ...m,
+                local_file_uri: localPersisted || m.local_file_uri,
+                file_url: localPersisted || m.file_url,
+                local_thumb_uri: localThumb || m.local_thumb_uri,
+              }
+            : m
+        )
+      );
+    }
 
     const net = await NetInfo.fetch();
     const onlineNow =
@@ -1633,11 +1709,14 @@ export default function ChatRoomScreen() {
           fileName: cleanFileName,
           expires_at: options?.expiresAt,
           view_once: options?.viewOnce,
+          content: displayContent,
         },
       });
       persistMessages((prev) =>
         prev.map((m) =>
-          m.id === tempId ? { ...m, _status: 'pending' as const } : m
+          m.id === tempId
+            ? { ...m, _status: 'pending' as const, _uploadProgress: undefined }
+            : m
         )
       );
       return;
@@ -1649,16 +1728,26 @@ export default function ChatRoomScreen() {
         'chat-files',
         storagePath,
         localPersisted || uri,
-        type
+        type,
+        (progress) => {
+          persistMessages((prev) =>
+            prev.map((m) =>
+              m.id === tempId
+                ? { ...m, _uploadProgress: progress, _status: 'sending' as const }
+                : m
+            )
+          );
+        }
       );
 
       const payload: Record<string, unknown> = {
-        content: cleanFileName,
+        content: displayContent,
         message_type: messageType,
         file_url: publicUrl,
         file_name: cleanFileName,
         file_type: type,
         client_message_id: clientMessageId,
+        ...(displayContent ? { push_preview: displayContent.slice(0, 120) } : {}),
       };
 
       if (options?.expiresAt) payload.expires_at = options.expiresAt;
@@ -1679,11 +1768,13 @@ export default function ChatRoomScreen() {
           msg.id === tempId || msg.client_message_id === clientMessageId
             ? ({
                 ...insertedData,
+                content: displayContent || insertedData.content,
                 client_message_id: clientMessageId,
                 profiles: optimisticMessage.profiles,
                 _status: 'sent' as const,
-                local_file_uri: optimisticMessage.local_file_uri,
-                local_thumb_uri: optimisticMessage.local_thumb_uri,
+                _uploadProgress: undefined,
+                local_file_uri: localPersisted || optimisticMessage.local_file_uri,
+                local_thumb_uri: localThumb || optimisticMessage.local_thumb_uri,
                 file_url: publicUrl,
               } as Message)
             : msg
@@ -1707,7 +1798,11 @@ export default function ChatRoomScreen() {
       persistMessages((prev) =>
         prev.map((msg) =>
           msg.id === tempId
-            ? { ...msg, _status: networkish ? ('pending' as const) : ('failed' as const) }
+            ? {
+                ...msg,
+                _status: networkish ? ('pending' as const) : ('failed' as const),
+                _uploadProgress: undefined,
+              }
             : msg
         )
       );
@@ -1726,6 +1821,7 @@ export default function ChatRoomScreen() {
             fileName: cleanFileName,
             expires_at: options?.expiresAt,
             view_once: options?.viewOnce,
+            content: displayContent,
           },
         });
       } else {
@@ -1738,84 +1834,98 @@ export default function ChatRoomScreen() {
   /* ------------------------------------------------------------------ */
   /*  ATTACHMENT HANDLING FUNCTIONS                                     */
   /* ------------------------------------------------------------------ */
-  const handleSendFiles = useCallback(async (files: AttachmentFile[]) => {
-    if (!user?.id || files.length === 0) return;
+  const handleSendFiles = useCallback(
+    (files: AttachmentFile[]) => {
+      if (!user?.id || files.length === 0) return;
 
-    for (const file of files) {
-      try {
-        let messageType: 'image' | 'video' | 'file' = 'file';
-        
-        if (file.type === 'photo') {
-          messageType = 'image';
-        } else if (file.type === 'video') {
-          messageType = 'video';
-        } else if (file.type === 'audio') {
-          // Handle audio files separately
-          await sendVoiceMessage(file.uri, file.duration || 0);
-          continue;
-        }
-        
-        await uploadFile(
-          file.uri,
-          file.name || `file_${Date.now()}`,
-          file.mimeType || 'application/octet-stream',
-          messageType,
-          {
-            localThumbUri: file.thumbnail,
-            expiresAt: visibilityToExpiry(file.expiresInSeconds),
-            viewOnce: file.viewOnce,
-          }
-        );
-      } catch (error) {
-        console.error('Failed to send file:', error);
-        Alert.alert('Error', `Failed to send ${file.type}`);
-      }
-    }
-
-    // Clear attachments after sending
-    setPendingAttachments([]);
-    setShowAttachmentPreview(false);
-  }, [user?.id, sendVoiceMessage]);
-
-  // Add function to handle single file send
-  const handleSendSingleFile = useCallback(async (file: AttachmentFile) => {
-    if (!user?.id) return;
-
-    try {
-      let messageType: 'image' | 'video' | 'file' = 'file';
-      
-      if (file.type === 'photo') {
-        messageType = 'image';
-      } else if (file.type === 'video') {
-        messageType = 'video';
-      } else if (file.type === 'audio') {
-        await sendVoiceMessage(file.uri, file.duration || 0);
-        setShowAttachmentPreview(false);
-        return;
-      }
-      
-      await uploadFile(
-        file.uri,
-        file.name || `file_${Date.now()}`,
-        file.mimeType || 'application/octet-stream',
-        messageType,
-        {
-          localThumbUri: file.thumbnail,
-          expiresAt: visibilityToExpiry(file.expiresInSeconds),
-          viewOnce: file.viewOnce,
-        }
-      );
+      // Close preview immediately and show bubbles in the room.
+      setPendingAttachments([]);
       setShowAttachmentPreview(false);
-    } catch (error) {
-      console.error('Failed to send single file:', error);
-      Alert.alert('Error', `Failed to send ${file.type}`);
-    }
-  }, [user?.id, sendVoiceMessage]);
+
+      void (async () => {
+        await Promise.allSettled(
+          files.map(async (file) => {
+            try {
+              let messageType: 'image' | 'video' | 'file' = 'file';
+
+              if (file.type === 'photo') {
+                messageType = 'image';
+              } else if (file.type === 'video') {
+                messageType = 'video';
+              } else if (file.type === 'audio') {
+                await sendVoiceMessage(file.uri, file.duration || 0);
+                return;
+              }
+
+              await uploadFile(
+                file.uri,
+                file.name || `file_${Date.now()}`,
+                file.mimeType || 'application/octet-stream',
+                messageType,
+                {
+                  localThumbUri: file.thumbnail,
+                  expiresAt: visibilityToExpiry(file.expiresInSeconds),
+                  viewOnce: file.viewOnce,
+                  caption: file.caption,
+                }
+              );
+            } catch (error) {
+              console.error('Failed to send file:', error);
+              Alert.alert('Error', `Failed to send ${file.type}`);
+            }
+          })
+        );
+      })();
+    },
+    [user?.id, sendVoiceMessage, uploadFile]
+  );
+
+  const handleSendSingleFile = useCallback(
+    (file: AttachmentFile) => {
+      if (!user?.id) return;
+      setShowAttachmentPreview(false);
+      setPendingAttachments((prev) => prev.filter((a) => a.id !== file.id));
+
+      void (async () => {
+        try {
+          let messageType: 'image' | 'video' | 'file' = 'file';
+
+          if (file.type === 'photo') {
+            messageType = 'image';
+          } else if (file.type === 'video') {
+            messageType = 'video';
+          } else if (file.type === 'audio') {
+            await sendVoiceMessage(file.uri, file.duration || 0);
+            return;
+          }
+
+          await uploadFile(
+            file.uri,
+            file.name || `file_${Date.now()}`,
+            file.mimeType || 'application/octet-stream',
+            messageType,
+            {
+              localThumbUri: file.thumbnail,
+              expiresAt: visibilityToExpiry(file.expiresInSeconds),
+              viewOnce: file.viewOnce,
+              caption: file.caption,
+            }
+          );
+        } catch (error) {
+          console.error('Failed to send single file:', error);
+          Alert.alert('Error', `Failed to send ${file.type}`);
+        }
+      })();
+    },
+    [user?.id, sendVoiceMessage, uploadFile]
+  );
 
   // Add function to handle attachments from ChatInput
   const handleAttachmentsSelected = useCallback((attachments: AttachmentFile[]) => {
+    if (!attachments.length) return;
     setPendingAttachments((prev) => [...prev, ...attachments]);
-    setShowAttachmentPreview(true);
+    // Open on next tick so state has the files before the modal mounts.
+    requestAnimationFrame(() => setShowAttachmentPreview(true));
   }, []);
 
   // Add function to remove attachment
@@ -1902,11 +2012,22 @@ export default function ChatRoomScreen() {
   /*  EFFECTS AND LIFECYCLE                                             */
   /* ------------------------------------------------------------------ */
   useEffect(() => {
-    if (!settingsReady || !user?.id || !chatId) return;
+    if (!user?.id || !chatId) return;
     resetForChat();
     void ensureChatReelTree();
     void fetchMessages();
-  }, [user?.id, chatId, chatType, settingsReady]);
+  }, [user?.id, chatId, chatType]);
+
+  // Apply clear-chat cutoff once preferences arrive (without blocking first paint).
+  useEffect(() => {
+    if (!settingsReady || !clearedAt) return;
+    setMessages((prev) => {
+      const next = filterByClearedAt(prev);
+      if (next.length === prev.length) return prev;
+      rememberChatThread(chatId, next);
+      return next;
+    });
+  }, [settingsReady, clearedAt, chatId, filterByClearedAt]);
 
   useEffect(() => {
     if (isOnline && initialLoadComplete) {
@@ -2579,6 +2700,12 @@ export default function ChatRoomScreen() {
   const chatMediaItems = useMemo((): ChatMediaItem[] => {
     return visibleMessages
       .filter((m) => m.message_type === 'image' || m.message_type === 'video')
+      .filter((m) => {
+        if (!m.view_once) return true;
+        // Sender never browses their own view-once media after send.
+        if (m.sender_id === user?.id) return false;
+        return !m.viewed_at;
+      })
       .map((m) => ({
         id: m.id,
         type: m.message_type as 'image' | 'video',
@@ -2587,7 +2714,7 @@ export default function ChatRoomScreen() {
         createdAt: m.created_at,
       }))
       .filter((item) => Boolean(item.uri));
-  }, [visibleMessages, getImageUri]);
+  }, [visibleMessages, getImageUri, user?.id]);
 
   const handleViewMedia = useCallback(() => {
     setSharedMediaOpen(true);
@@ -2615,6 +2742,13 @@ export default function ChatRoomScreen() {
         title: 'Wallpaper',
         icon: 'color-palette-outline',
         onPress: handleWallpaper,
+      },
+      {
+        title: disappearAfterSeconds
+          ? `Disappearing · ${disappearLabel(disappearAfterSeconds)}`
+          : 'Disappearing messages',
+        icon: 'timer-outline',
+        onPress: handleDisappearingMessages,
       },
       {
         title: 'Copy chat',
@@ -2656,10 +2790,12 @@ export default function ChatRoomScreen() {
   }, [
     chatType,
     chatMuted,
+    disappearAfterSeconds,
     handleInfoPress,
     handleMuteChat,
     handleClearChat,
     handleWallpaper,
+    handleDisappearingMessages,
     handleViewMedia,
     handleOpenSettings,
     handleAddMembers,
@@ -2672,9 +2808,13 @@ export default function ChatRoomScreen() {
 
   const openMediaViewer = useCallback(
     (messageId: string) => {
+      const msg = replyLookup.get(messageId);
+      if (msg?.view_once && msg.sender_id === user?.id) {
+        // Covered for the sender — cannot open.
+        return;
+      }
       const idx = chatMediaItems.findIndex((item) => item.id === messageId);
       if (idx >= 0) {
-        const msg = replyLookup.get(messageId);
         if (msg?.view_once && msg.sender_id !== user?.id && !msg.viewed_at) {
           viewOnceToConsumeRef.current = messageId;
           consumedViewOnceIdsRef.current.add(messageId);
@@ -2691,7 +2831,7 @@ export default function ChatRoomScreen() {
     const consumed = viewOnceToConsumeRef.current;
     if (consumed) {
       viewOnceToConsumeRef.current = null;
-      // View-once: remove the media for the recipient once the viewer closes.
+      // View-once: remove for this device after close; server marks viewed for both.
       persistMessages((prev) => prev.filter((m) => m.id !== consumed));
     }
   }, [persistMessages]);
@@ -2897,7 +3037,7 @@ export default function ChatRoomScreen() {
               <View style={styles.wallpaperDim} />
             </ImageBackground>
           ) : null}
-          {pinnedBanner && chatType === 'group' && (
+          {pinnedBanner ? (
             <TouchableOpacity
               style={styles.pinnedBar}
               onPress={() => scrollToMessage(pinnedBanner.id)}
@@ -2907,7 +3047,7 @@ export default function ChatRoomScreen() {
                 {pinnedBanner.content || pinnedBanner.file_name || 'Pinned message'}
               </Text>
             </TouchableOpacity>
-          )}
+          ) : null}
           <FlatList
             ref={flatListRef}
             data={chatRows}
@@ -2959,7 +3099,7 @@ export default function ChatRoomScreen() {
             maintainVisibleContentPosition={
               Platform.OS === 'web'
                 ? undefined
-                : { minIndexForVisible: 0, autoscrollToTopThreshold: 10 }
+                : { minIndexForVisible: 0 }
             }
             onScroll={handleScroll}
             scrollEventThrottle={16}
@@ -3028,6 +3168,7 @@ export default function ChatRoomScreen() {
         onRemove={handleRemoveAttachment}
         onClearAll={handleClearAllAttachments}
         onSendAll={handleSendFiles}
+        onBeginSend={() => setShowAttachmentPreview(false)}
         onSendSingle={handleSendSingleFile}
       />
 
@@ -3085,7 +3226,8 @@ export default function ChatRoomScreen() {
           !!actionMessage &&
           actionMessage.sender_id === user?.id &&
           actionMessage.message_type === 'text' &&
-          isWithinMinutes(actionMessage.created_at, 15)
+          !actionMessage.id.startsWith('temp-') &&
+          isWithinMinutes(actionMessage.created_at, 5)
         }
         canDeleteForAll={
           !!actionMessage &&

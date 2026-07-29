@@ -13,7 +13,7 @@ import { sendPushToUserSafe, sendPushToUsersSafe } from '../services/push.servic
 
 const router = Router();
 
-const EDIT_WINDOW_MS = 15 * 60 * 1000;
+const EDIT_WINDOW_MS = 5 * 60 * 1000;
 
 /** Drop recipients who muted this chat until a future time. */
 async function filterMutedChatPush(
@@ -140,6 +140,36 @@ async function attachGroupReadStats(
   return stats;
 }
 
+async function getDisappearSeconds(
+  userId: string,
+  chatType: 'individual' | 'group',
+  chatId: string
+): Promise<number | null> {
+  const { data } = await supabaseAdmin
+    .from('chat_preferences')
+    .select('disappear_after_seconds')
+    .eq('user_id', userId)
+    .eq('chat_type', chatType)
+    .eq('chat_id', chatId)
+    .maybeSingle();
+  const n = data?.disappear_after_seconds;
+  return typeof n === 'number' && n > 0 ? n : null;
+}
+
+/** After a message is read, start the vanish clock for both parties. */
+async function applyDisappearOnRead(opts: {
+  messageIds: string[];
+  seconds: number | null;
+}): Promise<void> {
+  if (!opts.seconds || opts.messageIds.length === 0) return;
+  const expiresAt = new Date(Date.now() + opts.seconds * 1000).toISOString();
+  await supabaseAdmin
+    .from('messages')
+    .update({ expires_at: expiresAt })
+    .in('id', opts.messageIds)
+    .is('expires_at', null);
+}
+
 async function markGroupMessagesRead(userId: string, groupId: string) {
   const now = new Date().toISOString();
 
@@ -169,6 +199,12 @@ async function markGroupMessagesRead(userId: string, groupId: string) {
   await supabaseAdmin
     .from('message_reads')
     .upsert(toInsert, { onConflict: 'message_id,user_id', ignoreDuplicates: true });
+
+  const seconds = await getDisappearSeconds(userId, 'group', groupId);
+  await applyDisappearOnRead({
+    messageIds: toInsert.map((r) => r.message_id),
+    seconds,
+  });
 }
 
 router.get(
@@ -568,6 +604,8 @@ router.patch(
         );
 
         if (error) return res.status(500).json({ error: error.message });
+        const seconds = await getDisappearSeconds(userId, 'group', target.group_id);
+        await applyDisappearOnRead({ messageIds: [body.message_id], seconds });
         return res.json({ success: true });
       } else if (target.receiver_id !== userId) {
         return res.status(403).json({ error: 'Not allowed' });
@@ -580,6 +618,8 @@ router.patch(
         .eq('is_read', false);
 
       if (error) return res.status(500).json({ error: error.message });
+      const seconds = await getDisappearSeconds(userId, 'individual', target.sender_id);
+      await applyDisappearOnRead({ messageIds: [body.message_id], seconds });
       return res.json({ success: true });
     }
 
@@ -597,6 +637,13 @@ router.patch(
     }
 
     if (body.partner_user_id) {
+      const { data: unread } = await supabaseAdmin
+        .from('messages')
+        .select('id')
+        .eq('sender_id', body.partner_user_id)
+        .eq('receiver_id', userId)
+        .eq('is_read', false);
+
       const { error } = await supabaseAdmin
         .from('messages')
         .update({ is_read: true, read_at: now })
@@ -605,6 +652,12 @@ router.patch(
         .eq('is_read', false);
 
       if (error) return res.status(500).json({ error: error.message });
+
+      const seconds = await getDisappearSeconds(userId, 'individual', body.partner_user_id);
+      await applyDisappearOnRead({
+        messageIds: (unread ?? []).map((m) => m.id),
+        seconds,
+      });
       return res.json({ success: true });
     }
 
@@ -771,7 +824,7 @@ router.post(
 
     const { data: message, error: fetchError } = await supabaseAdmin
       .from('messages')
-      .select('id, sender_id, view_once, viewed_at')
+      .select('id, sender_id, receiver_id, group_id, view_once, viewed_at, message_type')
       .eq('id', messageId)
       .maybeSingle();
 
@@ -788,10 +841,44 @@ router.post(
 
     const { error } = await supabaseAdmin
       .from('messages')
-      .update({ viewed_at: new Date().toISOString() })
+      .update({
+        viewed_at: new Date().toISOString(),
+        // Wipe media so neither party can reopen after view.
+        file_url: null,
+        content: message.message_type === 'video' ? 'View once video' : 'View once photo',
+      })
       .eq('id', messageId);
 
     if (error) return res.status(500).json({ error: error.message });
+
+    const { data: full } = await supabaseAdmin
+      .from('messages')
+      .select('*')
+      .eq('id', messageId)
+      .maybeSingle();
+
+    if (full) {
+      const chatKey =
+        full.group_id != null
+          ? chatKeyFor({ isGroup: true, chatId: full.group_id as string })
+          : chatKeyFor({
+              isGroup: false,
+              chatId: (full.receiver_id || full.sender_id) as string,
+              userA: full.sender_id as string,
+              userB: full.receiver_id as string,
+            });
+      // Broadcast so the sender's client drops the covered bubble too.
+      const evt = {
+        type: 'message.updated',
+        chat_key: chatKey,
+        message: full,
+      };
+      emitToChat(chatKey, evt);
+      if (full.sender_id && full.sender_id !== userId) {
+        emitToUser(full.sender_id as string, evt);
+      }
+    }
+
     return res.json({ success: true });
   })
 );

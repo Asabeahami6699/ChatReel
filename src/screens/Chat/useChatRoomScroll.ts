@@ -51,7 +51,8 @@ export function useChatRoomScroll({
       const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
       const distanceFromBottom =
         contentSize.height - contentOffset.y - layoutMeasurement.height;
-      const nearBottom = distanceFromBottom < 120;
+      // Stick only when truly near the latest message — avoids yanking back while reading history.
+      const nearBottom = distanceFromBottom < 72;
 
       shouldStickToBottomRef.current = nearBottom;
       setShowScrollDown((prev) => {
@@ -136,9 +137,13 @@ export function useChatRoomScroll({
     const showSub = Keyboard.addListener(showEvt, (e) => {
       setIsKeyboardVisible(true);
       setKeyboardHeight(e.endCoordinates?.height ?? 0);
-      shouldStickToBottomRef.current = true;
-      requestAnimationFrame(() => scrollToBottom(true));
-      setTimeout(() => scrollToBottom(true), 250);
+      // Only follow the keyboard when already at the latest messages.
+      if (shouldStickToBottomRef.current) {
+        requestAnimationFrame(() => scrollToBottom(true));
+        setTimeout(() => {
+          if (shouldStickToBottomRef.current) scrollToBottom(true);
+        }, 250);
+      }
     });
     const hideSub = Keyboard.addListener(hideEvt, () => {
       setIsKeyboardVisible(false);

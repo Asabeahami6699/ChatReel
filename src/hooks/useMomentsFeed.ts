@@ -70,7 +70,10 @@ export function useMomentsFeed() {
       setAuthors(next);
       upsertMomentsFeedCache(next);
     } catch (err) {
-      const message = err instanceof ApiError ? err.message : 'Failed to load feed';
+      const message =
+        err instanceof ApiError
+          ? err.message
+          : "Can't reach the server right now. Check your connection and try again.";
       setError(message);
     } finally {
       setLoading(false);

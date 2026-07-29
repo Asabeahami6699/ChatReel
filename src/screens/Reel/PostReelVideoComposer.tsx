@@ -333,6 +333,7 @@ export function PostReelVideoComposer({
         contentContainerStyle={styles.editorScrollContent}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
+        scrollEnabled={dock !== 'edit' && dock !== 'filter'}
       >
         {albumItems && albumItems.length > 1 ? (
           <ScrollView

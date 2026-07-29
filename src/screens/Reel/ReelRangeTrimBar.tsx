@@ -140,7 +140,10 @@ export function ReelRangeTrimBar({
     () =>
       PanResponder.create({
         onStartShouldSetPanResponder: () => true,
+        onStartShouldSetPanResponderCapture: () => true,
         onMoveShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponderCapture: () => true,
+        onPanResponderTerminationRequest: () => false,
         onPanResponderGrant: (evt: GestureResponderEvent) => {
           const x = evt.nativeEvent.locationX;
           const mode = resolveDragMode(x);
