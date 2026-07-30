@@ -28,7 +28,8 @@ import { flushMessageOutbox, flushOutboxItem } from '../../lib/flushMessageOutbo
 import { WallpaperPickerSheet } from '../../components/WallpaperPickerSheet';
 import { ChatSharedMediaSheet } from '../../components/ChatSharedMediaSheet';
 import { showAppToast } from '../../lib/appToast';
-import { DISAPPEAR_OPTIONS, disappearLabel } from '../../lib/disappearOptions';
+import { disappearLabel } from '../../lib/disappearOptions';
+import { DisappearTimerSheet } from './DisappearTimerSheet';
 import NetInfo from '@react-native-community/netinfo';
 import { uploadFromUri } from '../../lib/uploads';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
@@ -131,9 +132,8 @@ export default function ChatRoomScreen() {
   const [messages, setMessages] = useState<Message[]>(() => cachedThread ?? []);
   const [loading, setLoading] = useState(() => !(cachedThread && cachedThread.length > 0));
   const [loadingMore, setLoadingMore] = useState(false);
-  // Header (70) + status bar height — keeps the FlatList aligned when keyboard slides in.
-  const keyboardVerticalOffset =
-    Platform.OS === 'ios' ? 70 + insets.top : 0;
+  // Header sits outside KeyboardAvoidingView; iOS only needs a small offset.
+  const keyboardVerticalOffset = Platform.OS === 'ios' ? 8 : 0;
 
   const [hasMore, setHasMore] = useState(true);
   const [isPlayingAudio, setIsPlayingAudio] = useState<string | null>(null);
@@ -162,11 +162,13 @@ export default function ChatRoomScreen() {
   const [starredIds, setStarredIds] = useState<string[]>([]);
   const [chatMuted, setChatMuted] = useState(false);
   const [disappearAfterSeconds, setDisappearAfterSeconds] = useState<number | null>(null);
+  const [disappearSheetOpen, setDisappearSheetOpen] = useState(false);
   const [wallpaperPickerOpen, setWallpaperPickerOpen] = useState(false);
   const [clearedAt, setClearedAt] = useState<string | null>(null);
   const [settingsReady, setSettingsReady] = useState(false);
   const [firstUnreadId, setFirstUnreadId] = useState<string | null>(null);
-  const [pinnedBanner, setPinnedBanner] = useState<Message | null>(null);
+  const [pinnedMessages, setPinnedMessages] = useState<Message[]>([]);
+  const [pinFocusIdx, setPinFocusIdx] = useState(0);
   const [editingMessage, setEditingMessage] = useState<Message | null>(null);
   const [forwardMessage, setForwardMessage] = useState<Message | null>(null);
   const [readReceiptMessageId, setReadReceiptMessageId] = useState<string | null>(null);
@@ -324,11 +326,13 @@ export default function ChatRoomScreen() {
     }
     try {
       const { pinned } = await api.chatSettings.pinned(chatType, chatId);
-      const first = pinned?.[0] as { messages?: Message } | undefined;
-      if (first?.messages) setPinnedBanner(first.messages);
-      else setPinnedBanner(null);
+      const list = (pinned ?? [])
+        .map((row) => (row as { messages?: Message }).messages)
+        .filter((m): m is Message => Boolean(m?.id));
+      setPinnedMessages(list);
+      setPinFocusIdx(0);
     } catch {
-      setPinnedBanner(null);
+      setPinnedMessages([]);
     }
     setSettingsReady(true);
   }, [chatId, chatType]);
@@ -507,10 +511,34 @@ export default function ChatRoomScreen() {
       if (action === 'pin' && !msg.id.startsWith('temp-')) {
         try {
           await api.chatSettings.pin(chatType, chatId, msg.id);
-          setPinnedBanner(msg);
+          setPinnedMessages((prev) => {
+            if (prev.some((m) => m.id === msg.id)) return prev;
+            return [msg, ...prev];
+          });
           Alert.alert('Pinned', 'Message pinned in this chat');
-        } catch {
-          Alert.alert('Error', 'Could not pin message');
+        } catch (err) {
+          const detail =
+            err instanceof ApiError
+              ? err.message
+              : err instanceof Error
+                ? err.message
+                : 'Could not pin message';
+          Alert.alert('Could not pin message', detail);
+        }
+        return;
+      }
+      if (action === 'unpin' && !msg.id.startsWith('temp-')) {
+        try {
+          await api.chatSettings.unpin(chatType, chatId, msg.id);
+          setPinnedMessages((prev) => prev.filter((m) => m.id !== msg.id));
+        } catch (err) {
+          const detail =
+            err instanceof ApiError
+              ? err.message
+              : err instanceof Error
+                ? err.message
+                : 'Could not unpin message';
+          Alert.alert('Could not unpin message', detail);
         }
         return;
       }
@@ -905,21 +933,25 @@ export default function ChatRoomScreen() {
           : null;
 
       if (chatType === 'individual') {
-        await api.messages.markRead({ partner_user_id: chatId });
-        setMessages((prev) =>
+        const result = (await api.messages.markRead({ partner_user_id: chatId })) as {
+          expires_at?: string;
+          message_ids?: string[];
+        };
+        const stamp = result?.expires_at || expiresAt;
+        persistMessages((prev) =>
           prev.map((msg) =>
             msg.sender_id === chatId && msg.receiver_id === user.id
               ? {
                   ...msg,
                   is_read: true,
-                  ...(expiresAt && !msg.expires_at ? { expires_at: expiresAt } : {}),
+                  ...(stamp && !msg.expires_at ? { expires_at: stamp } : {}),
                 }
               : msg
           )
         );
       } else {
         await api.messages.markRead({ group_id: chatId });
-        setMessages((prev) =>
+        persistMessages((prev) =>
           prev.map((msg) =>
             msg.sender_id !== user.id && msg.group_id === chatId
               ? {
@@ -934,54 +966,123 @@ export default function ChatRoomScreen() {
     } catch (error) {
       console.error('Mark as read error:', error);
     }
-  }, [user?.id, chatId, chatType, disappearAfterSeconds]);
+  }, [user?.id, chatId, chatType, disappearAfterSeconds, persistMessages]);
+
+  const postDisappearNotice = useCallback(
+    async (seconds: number | null) => {
+      if (!user?.id) return;
+      const who =
+        user.user_metadata?.display_name ||
+        user.email?.split('@')[0] ||
+        'Someone';
+      const content = seconds
+        ? `${who} turned on disappearing messages. New messages will disappear ${disappearLabel(seconds).toLowerCase()} after they are read.`
+        : `${who} turned off disappearing messages.`;
+
+      try {
+        const payload: Record<string, unknown> = {
+          content,
+          message_type: 'system',
+          plaintext: true,
+          client_message_id: generateClientMessageId(),
+        };
+        if (chatType === 'individual') payload.receiver_id = chatId;
+        else payload.group_id = chatId;
+
+        const { message: raw } = await api.messages.send(payload);
+        const inserted = raw as unknown as Message;
+        const local: Message = {
+          ...inserted,
+          content,
+          decrypted: content,
+          message_type: 'system',
+          plaintext: true,
+          profiles: {
+            display_name: 'You',
+            avatar_url: null,
+            user_id: user.id,
+          },
+          _status: 'sent',
+        };
+        persistMessages((prev) => deduplicateMessages([...prev, local]));
+        stickBeforeSend();
+        setTimeout(() => scrollToBottom(), 50);
+      } catch (err) {
+        console.warn('Failed to post disappear notice', err);
+      }
+    },
+    [user?.id, chatType, chatId, persistMessages, stickBeforeSend, scrollToBottom]
+  );
 
   const handleDisappearingMessages = useCallback(() => {
-    Alert.alert(
-      'Disappearing messages',
-      'Messages vanish for everyone after they are read, using the timer you pick.',
-      [
-        ...DISAPPEAR_OPTIONS.map((opt) => ({
-          text:
-            (disappearAfterSeconds ?? null) === (opt.seconds ?? null)
-              ? `✓ ${opt.label}`
-              : opt.label,
-          onPress: () => {
-            void (async () => {
-              try {
-                await api.chatSettings.update(chatType, chatId, {
-                  disappear_after_seconds: opt.seconds,
-                });
-                setDisappearAfterSeconds(opt.seconds);
-                showAppToast(
-                  opt.seconds
-                    ? `Disappear after read: ${opt.label}`
-                    : 'Disappearing messages off'
-                );
-              } catch {
-                showAppToast('Could not update disappearing messages', { isError: true });
-              }
-            })();
-          },
-        })),
-        { text: 'Cancel', style: 'cancel' as const },
-      ]
-    );
-  }, [chatType, chatId, disappearAfterSeconds]);
+    setDisappearSheetOpen(true);
+  }, []);
+
+  const saveDisappearingMessages = useCallback(
+    async (seconds: number | null) => {
+      setDisappearSheetOpen(false);
+      if ((disappearAfterSeconds ?? null) === (seconds ?? null)) return;
+      try {
+        await api.chatSettings.update(chatType, chatId, {
+          disappear_after_seconds: seconds,
+        });
+        setDisappearAfterSeconds(seconds);
+        showAppToast(
+          seconds
+            ? `Disappear after read: ${disappearLabel(seconds)}`
+            : 'Disappearing messages off'
+        );
+        await postDisappearNotice(seconds);
+      } catch (err) {
+        const detail =
+          err instanceof ApiError
+            ? err.message
+            : 'Could not update disappearing messages';
+        showAppToast(detail, { isError: true });
+      }
+    },
+    [chatType, chatId, disappearAfterSeconds, postDisappearNotice]
+  );
 
   const markSingleMessageAsRead = useCallback(async (messageId: string) => {
     if (!user?.id || !isValidUuid(messageId)) return;
 
+    const expiresAt =
+      disappearAfterSeconds && disappearAfterSeconds > 0
+        ? new Date(Date.now() + disappearAfterSeconds * 1000).toISOString()
+        : null;
+
     setMessages((prev) =>
-      prev.map((msg) => (msg.id === messageId ? { ...msg, is_read: true } : msg))
+      prev.map((msg) =>
+        msg.id === messageId
+          ? {
+              ...msg,
+              is_read: true,
+              ...(expiresAt && !msg.expires_at ? { expires_at: expiresAt } : {}),
+            }
+          : msg
+      )
     );
 
     try {
-      await api.messages.markRead({ message_id: messageId });
+      const result = (await api.messages.markRead({ message_id: messageId })) as {
+        success?: boolean;
+        expires_at?: string;
+        message_ids?: string[];
+      };
+      if (result?.expires_at) {
+        persistMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === messageId || result.message_ids?.includes(msg.id)
+              ? { ...msg, is_read: true, expires_at: msg.expires_at || result.expires_at }
+              : msg
+          )
+        );
+      }
     } catch (error) {
       console.error('Mark single as read error:', error);
     }
-  }, [user?.id]);
+  }, [user?.id, disappearAfterSeconds, persistMessages]);
 
   const retryPendingMessages = useCallback(async () => {
     if (!isOnline || pendingRetryRef.current) return;
@@ -1023,14 +1124,10 @@ export default function ChatRoomScreen() {
           !flushed.some((f) => f.client_message_id === msg.client_message_id)
       );
 
-      const batchSize = 3;
+      const batchSize = 6;
       for (let i = 0; i < pendingMessages.length; i += batchSize) {
         const batch = pendingMessages.slice(i, i + batchSize);
         await Promise.allSettled(batch.map((msg) => sendMessageToServer(msg)));
-
-        if (i + batchSize < pendingMessages.length) {
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        }
       }
     } catch (error) {
       console.error('Retry pending messages error:', error);
@@ -2123,16 +2220,32 @@ export default function ChatRoomScreen() {
       const normalized = normalizeRealtimeMessage(raw, chatId, chatType, user.id);
       if (!messageBelongsToChat(normalized)) return;
 
-      // View-once was opened by the recipient: remove it for everyone (sender + recipient).
-      if (normalized.view_once && normalized.viewed_at) {
+      // View-once was opened / soft-deleted: remove for everyone.
+      if (
+        (normalized.view_once && normalized.viewed_at) ||
+        (normalized.view_once && (normalized as { deleted_at?: string | null }).deleted_at)
+      ) {
         consumedViewOnceIdsRef.current.add(normalized.id);
+        persistMessages((prev) =>
+          prev
+            .filter((m) => m.id !== normalized.id)
+            .map((m) =>
+              m.id === normalized.id
+                ? { ...m, file_url: undefined, local_file_uri: undefined, viewed_at: normalized.viewed_at }
+                : m
+            )
+        );
+        return;
+      }
+
+      // Disappearing timer started (or message already expired).
+      if (isMessageExpired(normalized)) {
         persistMessages((prev) => prev.filter((m) => m.id !== normalized.id));
         return;
       }
 
       // Don't resurrect a view-once message the recipient already opened.
       if (consumedViewOnceIdsRef.current.has(normalized.id)) return;
-      if (isMessageExpired(normalized)) return;
 
       const isOutgoing = isOutgoingChatMessage(normalized, user.id);
       const isIncoming = isIncomingChatMessage(normalized, chatId, chatType, user.id);
@@ -2316,9 +2429,25 @@ export default function ChatRoomScreen() {
           const next = prev.map((m) => {
             const fresh = incoming.find((x) => x.id === m.id);
             if (!fresh) return m;
-            if (fresh.decrypted && fresh.decrypted !== m.decrypted) {
+            const expiresChanged =
+              Boolean(fresh.expires_at) && fresh.expires_at !== m.expires_at;
+            const readChanged = Boolean(fresh.is_read) && fresh.is_read !== m.is_read;
+            const viewedChanged =
+              Boolean(fresh.viewed_at) && fresh.viewed_at !== m.viewed_at;
+            const decryptChanged =
+              Boolean(fresh.decrypted) && fresh.decrypted !== m.decrypted;
+            if (expiresChanged || readChanged || viewedChanged || decryptChanged) {
               changed = true;
-              return { ...m, ...fresh, decrypted: fresh.decrypted ?? m.decrypted };
+              return {
+                ...m,
+                ...fresh,
+                decrypted: fresh.decrypted ?? m.decrypted,
+                expires_at: fresh.expires_at ?? m.expires_at,
+                is_read: fresh.is_read ?? m.is_read,
+                viewed_at: fresh.viewed_at ?? m.viewed_at,
+                local_file_uri: m.local_file_uri ?? fresh.local_file_uri,
+                local_audio_uri: m.local_audio_uri ?? fresh.local_audio_uri,
+              };
             }
             return m;
           });
@@ -2818,12 +2947,25 @@ export default function ChatRoomScreen() {
         if (msg?.view_once && msg.sender_id !== user?.id && !msg.viewed_at) {
           viewOnceToConsumeRef.current = messageId;
           consumedViewOnceIdsRef.current.add(messageId);
+          // Optimistically strip local media so it can't be reopened.
+          persistMessages((prev) =>
+            prev.map((m) =>
+              m.id === messageId
+                ? {
+                    ...m,
+                    viewed_at: new Date().toISOString(),
+                    file_url: undefined,
+                    local_file_uri: undefined,
+                  }
+                : m
+            )
+          );
           void api.messages.markViewed(messageId).catch(() => undefined);
         }
         setMediaViewer({ visible: true, index: idx });
       }
     },
-    [chatMediaItems, replyLookup, user?.id]
+    [chatMediaItems, replyLookup, user?.id, persistMessages]
   );
 
   const closeMediaViewer = useCallback(() => {
@@ -2943,18 +3085,20 @@ export default function ChatRoomScreen() {
   /* ------------------------------------------------------------------ */
   return (
     <SafeAreaView
-      style={[styles.container, { backgroundColor: chatBgColor }]}
-      edges={['left', 'right']}
+      style={[styles.container, { backgroundColor: theme.headerBg }]}
+      edges={['top', 'left', 'right']}
     >
-      <StatusBar barStyle="light-content" backgroundColor={theme.headerBg} />
+      <StatusBar
+        barStyle="light-content"
+        backgroundColor={theme.headerBg}
+        translucent={false}
+      />
       <View
         style={[
           styles.header,
           {
             backgroundColor: theme.headerBg,
-            marginTop: -insets.top,
-            paddingTop: insets.top,
-            height: 70 + insets.top,
+            height: 70,
           },
         ]}
       >
@@ -3023,7 +3167,7 @@ export default function ChatRoomScreen() {
       )}
 
       <KeyboardAvoidingView
-        style={{ flex: 1 }}
+        style={{ flex: 1, backgroundColor: chatBgColor }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={keyboardVerticalOffset}
       >
@@ -3037,15 +3181,44 @@ export default function ChatRoomScreen() {
               <View style={styles.wallpaperDim} />
             </ImageBackground>
           ) : null}
-          {pinnedBanner ? (
+          {pinnedMessages.length > 0 ? (
             <TouchableOpacity
-              style={styles.pinnedBar}
-              onPress={() => scrollToMessage(pinnedBanner.id)}
+              style={[
+                styles.pinnedBar,
+                {
+                  backgroundColor: theme.isDark ? theme.listCardBg : '#fff',
+                  borderBottomColor: theme.listBorder,
+                },
+              ]}
+              onPress={() => {
+                const idx = pinFocusIdx % pinnedMessages.length;
+                const target = pinnedMessages[idx];
+                if (target) scrollToMessage(target.id);
+                setPinFocusIdx((i) => i + 1);
+              }}
             >
               <Ionicons name="pin" size={16} color={chatTheme.primary} />
-              <Text style={styles.pinnedText} numberOfLines={1}>
-                {pinnedBanner.content || pinnedBanner.file_name || 'Pinned message'}
+              <Text
+                style={[
+                  styles.pinnedText,
+                  { color: theme.isDark ? theme.listPrimaryText : '#444' },
+                ]}
+                numberOfLines={1}
+              >
+                {(pinnedMessages[pinFocusIdx % pinnedMessages.length]?.content ||
+                  pinnedMessages[pinFocusIdx % pinnedMessages.length]?.file_name ||
+                  'Pinned message')}
               </Text>
+              {pinnedMessages.length > 1 ? (
+                <Text
+                  style={[
+                    styles.pinnedCount,
+                    { color: theme.isDark ? theme.listSecondaryText : '#888' },
+                  ]}
+                >
+                  {pinnedMessages.length} pinned
+                </Text>
+              ) : null}
             </TouchableOpacity>
           ) : null}
           <FlatList
@@ -3141,6 +3314,13 @@ export default function ChatRoomScreen() {
         />
       </KeyboardAvoidingView>
 
+      <DisappearTimerSheet
+        visible={disappearSheetOpen}
+        currentSeconds={disappearAfterSeconds}
+        onClose={() => setDisappearSheetOpen(false)}
+        onSave={(seconds) => void saveDisappearingMessages(seconds)}
+      />
+
       <AttachmentPreview
         attachments={pendingAttachments}
         visible={showAttachmentPreview}
@@ -3222,6 +3402,9 @@ export default function ChatRoomScreen() {
         isOutgoing={actionMessage?.sender_id === user?.id}
         isGroup={chatType === 'group'}
         isStarred={actionMessage ? starredIds.includes(actionMessage.id) : false}
+        isPinned={
+          !!actionMessage && pinnedMessages.some((m) => m.id === actionMessage.id)
+        }
         canEdit={
           !!actionMessage &&
           actionMessage.sender_id === user?.id &&
@@ -3404,6 +3587,10 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 13,
     color: '#444',
+  },
+  pinnedCount: {
+    fontSize: 12,
+    fontWeight: '600',
   },
   scrollFab: {
     position: 'absolute',

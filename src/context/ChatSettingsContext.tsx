@@ -18,6 +18,16 @@ export type ChatAppSettings = {
   incomingRingtoneEndSec: number | null;
   readReceipts: boolean;
   showLastSeen: boolean;
+  /** Show when you are typing in chats. */
+  showTypingIndicator: boolean;
+  /** Show online / last-active presence to others. */
+  showOnlineStatus: boolean;
+  /** Generate link previews in chat. */
+  linkPreviews: boolean;
+  /** Auto-save received media to the device gallery. */
+  saveMediaToGallery: boolean;
+  /** Prefer unlocking the app with device biometrics when available. */
+  appLockBiometric: boolean;
   mediaAutoDownload: boolean;
   enterToSend: boolean;
   compactChatList: boolean;
@@ -36,6 +46,11 @@ const DEFAULT_SETTINGS: ChatAppSettings = {
   incomingRingtoneEndSec: null,
   readReceipts: true,
   showLastSeen: true,
+  showTypingIndicator: true,
+  showOnlineStatus: true,
+  linkPreviews: true,
+  saveMediaToGallery: false,
+  appLockBiometric: false,
   mediaAutoDownload: true,
   enterToSend: false,
   compactChatList: false,

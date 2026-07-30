@@ -70,9 +70,7 @@ const createReelSchema = z.object({
   height: z.number().int().min(1).optional(),
   trim_start_sec: z.number().min(0).optional(),
   trim_end_sec: z.number().min(0).optional(),
-  filter_id: z
-    .enum(['none', 'warm', 'cool', 'vivid', 'fade', 'mono'])
-    .optional(),
+  filter_id: z.string().max(32).optional(),
   sound_id: z.string().uuid().optional(),
   sound_start_sec: z.number().min(0).optional(),
   original_audio_volume: z.number().min(0).max(1).optional(),
@@ -95,9 +93,7 @@ const createReelSchema = z.object({
         height: z.number().int().min(1).optional(),
         trim_start_sec: z.number().min(0).optional(),
         trim_end_sec: z.number().min(0).optional(),
-        filter_id: z
-          .enum(['none', 'warm', 'cool', 'vivid', 'fade', 'mono'])
-          .optional(),
+        filter_id: z.string().max(32).optional(),
       })
     )
     .min(1)

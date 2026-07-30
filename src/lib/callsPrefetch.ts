@@ -2,6 +2,14 @@ import type { CallHistoryItemDTO } from './api';
 import { api } from './api';
 import { sessionStorage } from './sessionStorage';
 import { friendshipsToCallFriends, type CallFriendRow } from './callFriends';
+import {
+  DISK_TTL_MS,
+  getOfflineFeedMemory,
+  hydrateOfflineFeed,
+  MEMORY_TTL_MS,
+  OFFLINE_FEED_KEYS,
+  setOfflineFeedMemory,
+} from './offlineFeedStore';
 
 export type CallsPrefetchCache = {
   calls: CallHistoryItemDTO[];
@@ -10,17 +18,52 @@ export type CallsPrefetchCache = {
   fetchedAt: number;
 };
 
-const CACHE_TTL_MS = 5 * 60 * 1000;
 let cache: CallsPrefetchCache | null = null;
 let prefetchPromise: Promise<void> | null = null;
+let hydrateStarted = false;
 
-export function getCallsPrefetchCache(): CallsPrefetchCache | null {
-  if (!cache) return null;
-  if (Date.now() - cache.fetchedAt > CACHE_TTL_MS) {
-    cache = null;
-    return null;
+function ensureHydrated() {
+  if (hydrateStarted) return;
+  hydrateStarted = true;
+  void hydrateOfflineFeed<Omit<CallsPrefetchCache, 'fetchedAt'>>(OFFLINE_FEED_KEYS.calls).then(
+    (data) => {
+      if (!data || cache) return;
+      const disk = getOfflineFeedMemory<Omit<CallsPrefetchCache, 'fetchedAt'>>(
+        OFFLINE_FEED_KEYS.calls,
+        { allowStale: true }
+      );
+      cache = {
+        calls: data.calls ?? [],
+        friends: data.friends ?? [],
+        callsEnabled: data.callsEnabled ?? null,
+        fetchedAt: disk?.fetchedAt ?? Date.now(),
+      };
+    }
+  );
+}
+
+ensureHydrated();
+
+export function getCallsPrefetchCache(opts?: { allowStale?: boolean }): CallsPrefetchCache | null {
+  ensureHydrated();
+  if (cache) {
+    const age = Date.now() - cache.fetchedAt;
+    if (age <= MEMORY_TTL_MS) return cache;
+    if (opts?.allowStale && age <= DISK_TTL_MS) return cache;
   }
-  return cache;
+  const disk = getOfflineFeedMemory<Omit<CallsPrefetchCache, 'fetchedAt'>>(OFFLINE_FEED_KEYS.calls, {
+    allowStale: true,
+  });
+  if (disk?.data) {
+    cache = {
+      calls: disk.data.calls ?? [],
+      friends: disk.data.friends ?? [],
+      callsEnabled: disk.data.callsEnabled ?? null,
+      fetchedAt: disk.fetchedAt,
+    };
+    if (opts?.allowStale || Date.now() - disk.fetchedAt <= MEMORY_TTL_MS) return cache;
+  }
+  return opts?.allowStale ? cache : null;
 }
 
 export function clearCallsPrefetchCache() {
@@ -37,12 +80,22 @@ export function upsertCallsPrefetchCache(
     callsEnabled: null,
     fetchedAt: 0,
   };
+  const fetchedAt = patch.fetchedAt ?? Date.now();
   cache = {
     calls: patch.calls ?? prev.calls,
     friends: patch.friends ?? prev.friends,
     callsEnabled: patch.callsEnabled ?? prev.callsEnabled,
-    fetchedAt: patch.fetchedAt ?? Date.now(),
+    fetchedAt,
   };
+  setOfflineFeedMemory(
+    OFFLINE_FEED_KEYS.calls,
+    {
+      calls: cache.calls,
+      friends: cache.friends,
+      callsEnabled: cache.callsEnabled,
+    },
+    fetchedAt
+  );
 }
 
 /**

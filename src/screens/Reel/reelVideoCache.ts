@@ -14,7 +14,7 @@ const MAX_CONCURRENT = 8;
 const IS_WEB = Platform.OS === 'web';
 const NATIVE_FILE_CACHE = !IS_WEB;
 
-type CacheEntry = { localUri: string; blobUrl?: string };
+type CacheEntry = { localUri: string; blobUrl?: string; sourceUrl?: string };
 
 type ReelLike = Pick<
   ReelDTO,
@@ -107,7 +107,11 @@ async function prefetchWebBlob(id: string, url: string): Promise<string> {
 
 async function downloadReelNative(id: string, url: string): Promise<string> {
   const existing = memory.get(id);
-  if (existing && !existing.localUri.startsWith('http')) {
+  if (
+    existing &&
+    !existing.localUri.startsWith('http') &&
+    (!existing.sourceUrl || existing.sourceUrl === url)
+  ) {
     return cachedPlaybackUri(existing);
   }
 
@@ -120,12 +124,15 @@ async function downloadReelNative(id: string, url: string): Promise<string> {
       await ensureCacheDir();
       const path = `${CACHE_DIR}${id}.mp4`;
       const info = await FileSystem.getInfoAsync(path);
-      if (info.exists) {
-        memory.set(id, { localUri: path });
+      // Re-download when the remote URL changed (e.g. trimmed processed MP4 replaced original).
+      if (info.exists && existing?.sourceUrl && existing.sourceUrl !== url) {
+        await FileSystem.deleteAsync(path, { idempotent: true }).catch(() => undefined);
+      } else if (info.exists && (!existing || existing.sourceUrl === url)) {
+        memory.set(id, { localUri: path, sourceUrl: url });
         return path;
       }
       await FileSystem.downloadAsync(url, path);
-      memory.set(id, { localUri: path });
+      memory.set(id, { localUri: path, sourceUrl: url });
       return path;
     } finally {
       releaseSlot();

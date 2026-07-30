@@ -42,7 +42,7 @@ function cacheKeyForSource(source: FeedSource): ReelsFeedCacheKey | null {
 
 function initialStateForSource(source: FeedSource): State {
   const key = cacheKeyForSource(source);
-  const cached = key ? getReelsFeedCache(key) : null;
+  const cached = key ? getReelsFeedCache(key, { allowStale: true }) : null;
   if (cached && cached.reels.length > 0) {
     return {
       reels: cached.reels,
@@ -125,13 +125,27 @@ export function useReelsFeed(source: FeedSource = 'feed', options: UseReelsFeedO
         upsertReelsFeedCache(key, reels, next_cursor ?? null);
       }
     } catch (err) {
-      const message =
-        err instanceof ApiError ? err.message : (err as Error).message ?? 'Failed to load reels';
-      setState((s) => ({
-        ...s,
-        loading: false,
-        error: s.reels.length > 0 ? s.error : message,
-      }));
+      const key = cacheKeyForSource(source);
+      const stale = key ? getReelsFeedCache(key, { allowStale: true }) : null;
+      if (stale?.reels?.length) {
+        setState({
+          reels: stale.reels,
+          loading: false,
+          refreshing: false,
+          loadingMore: false,
+          cursor: stale.next_cursor,
+          hasMore: Boolean(stale.next_cursor),
+          error: null,
+        });
+      } else {
+        const message =
+          err instanceof ApiError ? err.message : (err as Error).message ?? 'Failed to load reels';
+        setState((s) => ({
+          ...s,
+          loading: false,
+          error: s.reels.length > 0 ? s.error : message,
+        }));
+      }
     }
   }, [fetchPage, source]);
 

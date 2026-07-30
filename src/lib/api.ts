@@ -950,7 +950,7 @@ export const api = {
       height?: number;
       trim_start_sec?: number;
       trim_end_sec?: number;
-      filter_id?: 'none' | 'warm' | 'cool' | 'vivid' | 'fade' | 'mono';
+      filter_id?: string;
       sound_id?: string;
       sound_start_sec?: number;
       original_audio_volume?: number;
@@ -965,7 +965,7 @@ export const api = {
         height?: number;
         trim_start_sec?: number;
         trim_end_sec?: number;
-        filter_id?: 'none' | 'warm' | 'cool' | 'vivid' | 'fade' | 'mono';
+        filter_id?: string;
       }>;
     }) =>
       apiRequest<{ reel: ReelDTO }>('/api/reels', { method: 'POST', body: data }),

@@ -5,7 +5,7 @@ export type ChatMessage = {
   sender_id: string;
   receiver_id?: string;
   group_id?: string;
-  message_type?: 'text' | 'audio' | 'image' | 'video' | 'file' | 'reel' | 'moment';
+  message_type?: 'text' | 'audio' | 'image' | 'video' | 'file' | 'reel' | 'moment' | 'system';
   reel_id?: string;
   moment_id?: string;
   audio_url?: string;

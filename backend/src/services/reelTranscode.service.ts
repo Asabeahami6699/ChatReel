@@ -62,6 +62,24 @@ export function reelFilterToVf(filterId?: string | null): string | null {
       return 'eq=saturation=0.72:brightness=0.04';
     case 'mono':
       return 'hue=s=0';
+    case 'noir':
+      return 'hue=s=0,eq=contrast=1.25:brightness=-0.04';
+    case 'cinema':
+      return 'eq=contrast=1.12:saturation=0.9:gamma=1.05,colorbalance=rs=0.04:bs=-0.03';
+    case 'sunset':
+      return 'eq=saturation=1.15:gamma_r=1.08,colorbalance=rs=0.1:gs=0.02:bs=-0.08';
+    case 'arctic':
+      return 'eq=saturation=0.95:brightness=0.03,colorbalance=rs=-0.05:bs=0.1';
+    case 'rose':
+      return 'eq=saturation=1.1,colorbalance=rs=0.08:gs=-0.02:bs=0.04';
+    case 'ember':
+      return 'eq=contrast=1.08:saturation=1.2,colorbalance=rs=0.12:gs=0.02:bs=-0.1';
+    case 'mint':
+      return 'eq=saturation=1.05,colorbalance=gs=0.08:bs=0.04:rs=-0.04';
+    case 'clarity':
+      return 'eq=contrast=1.18:saturation=1.05:brightness=0.02';
+    case 'dream':
+      return 'eq=saturation=1.08:brightness=0.03,colorbalance=rs=0.04:bs=0.08';
     default:
       return null;
   }
@@ -283,17 +301,41 @@ export async function transcodeReelToHls(
     }
 
     const soundMix = await loadSoundMixOptions(reelId);
+    const needsMp4Process =
+      Boolean(soundMix) ||
+      hasMeaningfulTrim(trim) ||
+      Boolean(reelFilterToVf(trim?.filterId));
+
     let encodeInputPath = inputPath;
-    if (soundMix) {
-      const mixedPath = path.join(tmpDir, 'mixed.mp4');
-      try {
-        await mixSoundIntoVideo(inputPath, mixedPath, soundMix, trim);
-        encodeInputPath = mixedPath;
-        // Sound mix already applied trim + color filter.
-        trim = { filterId: undefined };
-      } catch (mixErr) {
-        console.error('[reels] sound mix failed, continuing with original audio:', mixErr);
+    let processedVideoUrl: string | null = null;
+    let clippedDuration: number | undefined;
+
+    if (needsMp4Process) {
+      const processedPath = path.join(tmpDir, 'processed.mp4');
+      if (soundMix) {
+        await mixSoundIntoVideo(inputPath, processedPath, soundMix, trim);
+      } else {
+        await trimAndFilterVideo(inputPath, processedPath, trim);
       }
+
+      const storagePath = `processed/${reelId}.mp4`;
+      const body = await fs.readFile(processedPath);
+      const { error: upErr } = await supabaseAdmin.storage
+        .from('reels')
+        .upload(storagePath, body, { contentType: 'video/mp4', upsert: true });
+      if (upErr) throw new Error(upErr.message);
+
+      const { data: pub } = supabaseAdmin.storage.from('reels').getPublicUrl(storagePath);
+      processedVideoUrl = applyReelsCdnUrl(pub.publicUrl) ?? pub.publicUrl;
+      encodeInputPath = processedPath;
+
+      const trimStart = trim?.trimStartSec ?? 0;
+      const trimEnd = trim?.trimEndSec;
+      if (trimEnd != null && trimEnd > trimStart) {
+        clippedDuration = trimEnd - trimStart;
+      }
+      // Trim/filter already baked into the progressive MP4 — don't re-apply for HLS.
+      trim = undefined;
     }
 
     const outDir = path.join(tmpDir, 'hls');
@@ -354,7 +396,12 @@ export async function transcodeReelToHls(
 
     await supabaseAdmin
       .from('reels')
-      .update({ hls_url: hlsUrl, transcode_status: 'ready' })
+      .update({
+        hls_url: hlsUrl,
+        transcode_status: 'ready',
+        ...(processedVideoUrl ? { video_url: processedVideoUrl } : {}),
+        ...(clippedDuration != null ? { duration: clippedDuration } : {}),
+      })
       .eq('id', reelId);
 
     return applyReelsCdnUrl(hlsUrl);
@@ -442,7 +489,15 @@ export async function processReelMp4(
 
     await supabaseAdmin
       .from('reels')
-      .update({ video_url: publicUrl, transcode_status: 'ready' })
+      .update({
+        video_url: publicUrl,
+        transcode_status: 'ready',
+        ...(hasMeaningfulTrim(merged) &&
+        merged.trimEndSec != null &&
+        (merged.trimStartSec ?? 0) < merged.trimEndSec
+          ? { duration: merged.trimEndSec - (merged.trimStartSec ?? 0) }
+          : {}),
+      })
       .eq('id', reelId);
   } catch (err) {
     console.error('[reels] MP4 process failed:', err);

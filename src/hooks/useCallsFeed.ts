@@ -11,7 +11,7 @@ import { useAuth } from './useAuth';
 
 export function useCallsFeed(myProfileId: string | null) {
   const { isAuthenticated } = useAuth();
-  const cached = isAuthenticated ? getCallsPrefetchCache() : null;
+  const cached = isAuthenticated ? getCallsPrefetchCache({ allowStale: true }) : null;
   const [calls, setCalls] = useState<CallHistoryItemDTO[]>(() => cached?.calls ?? []);
   const [friends, setFriends] = useState<CallFriendRow[]>(() => cached?.friends ?? []);
   const [callsEnabled, setCallsEnabled] = useState<boolean | null>(
@@ -78,11 +78,19 @@ export function useCallsFeed(myProfileId: string | null) {
       try {
         await fetchBundle();
       } catch (err) {
-        const message =
-          err instanceof ApiError
-            ? err.message
-            : "Can't reach the server right now. Check your connection and try again.";
-        setError(message);
+        const stale = getCallsPrefetchCache({ allowStale: true });
+        if (stale && (stale.calls.length > 0 || stale.friends.length > 0)) {
+          setCalls(stale.calls);
+          setFriends(stale.friends);
+          setCallsEnabled(stale.callsEnabled);
+          setError(null);
+        } else {
+          const message =
+            err instanceof ApiError
+              ? err.message
+              : "Can't reach the server right now. Check your connection and try again.";
+          setError(message);
+        }
       } finally {
         setLoading(false);
         setRefreshing(false);

@@ -572,4 +572,18 @@ export const messageStorage = {
       console.error('❌ Error clearing local chat storage:', error);
     }
   },
+
+  getApproxSizeBytes: async (): Promise<number> => {
+    try {
+      return await enqueue(async (db) => {
+        const countRow = await db.getFirstAsync<{ page_count: number }>('PRAGMA page_count');
+        const sizeRow = await db.getFirstAsync<{ page_size: number }>('PRAGMA page_size');
+        const pages = typeof countRow?.page_count === 'number' ? countRow.page_count : 0;
+        const size = typeof sizeRow?.page_size === 'number' ? sizeRow.page_size : 0;
+        return pages * size;
+      });
+    } catch {
+      return 0;
+    }
+  },
 };

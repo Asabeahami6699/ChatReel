@@ -168,9 +168,17 @@ export async function flushMessageOutbox(
 ): Promise<FlushedOutboxMessage[]> {
   const items = await messageStorage.getOutbox(chatId);
   const flushed: FlushedOutboxMessage[] = [];
-  for (const item of items) {
-    const result = await flushOutboxItem(item, senderUserId);
-    if (result) flushed.push(result);
+  // Parallelize with a small concurrency cap so reconnect feels snappy
+  // without flooding uploads on weak mobile networks.
+  const CONCURRENCY = 4;
+  for (let i = 0; i < items.length; i += CONCURRENCY) {
+    const batch = items.slice(i, i + CONCURRENCY);
+    const results = await Promise.all(
+      batch.map((item) => flushOutboxItem(item, senderUserId))
+    );
+    for (const result of results) {
+      if (result) flushed.push(result);
+    }
   }
   return flushed;
 }

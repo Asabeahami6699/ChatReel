@@ -3,6 +3,14 @@ import type { MomentAuthorFeedDTO } from './api';
 import { api } from './api';
 import { getMomentVideoThumbnailUri } from './momentVideoThumbnail';
 import { sessionStorage } from './sessionStorage';
+import {
+  DISK_TTL_MS,
+  getOfflineFeedMemory,
+  hydrateOfflineFeed,
+  MEMORY_TTL_MS,
+  OFFLINE_FEED_KEYS,
+  setOfflineFeedMemory,
+} from './offlineFeedStore';
 
 type CacheEntry = {
   authors: MomentAuthorFeedDTO[];
@@ -16,23 +24,45 @@ type ProfileCacheEntry = {
   fetchedAt: number;
 };
 
-const CACHE_TTL_MS = 5 * 60 * 1000;
 let cache: CacheEntry | null = null;
 let profileCache: ProfileCacheEntry | null = null;
 let prefetchPromise: Promise<void> | null = null;
+let hydrateStarted = false;
 
-export function getMomentsFeedCache(): CacheEntry | null {
-  if (!cache) return null;
-  if (Date.now() - cache.fetchedAt > CACHE_TTL_MS) {
-    cache = null;
-    return null;
+function ensureHydrated() {
+  if (hydrateStarted) return;
+  hydrateStarted = true;
+  void hydrateOfflineFeed<MomentAuthorFeedDTO[]>(OFFLINE_FEED_KEYS.moments).then((authors) => {
+    if (!authors || cache) return;
+    const disk = getOfflineFeedMemory<MomentAuthorFeedDTO[]>(OFFLINE_FEED_KEYS.moments, {
+      allowStale: true,
+    });
+    cache = { authors, fetchedAt: disk?.fetchedAt ?? Date.now() };
+  });
+}
+
+ensureHydrated();
+
+export function getMomentsFeedCache(opts?: { allowStale?: boolean }): CacheEntry | null {
+  ensureHydrated();
+  if (cache) {
+    const age = Date.now() - cache.fetchedAt;
+    if (age <= MEMORY_TTL_MS) return cache;
+    if (opts?.allowStale && age <= DISK_TTL_MS) return cache;
   }
-  return cache;
+  const disk = getOfflineFeedMemory<MomentAuthorFeedDTO[]>(OFFLINE_FEED_KEYS.moments, {
+    allowStale: true,
+  });
+  if (disk?.data) {
+    cache = { authors: disk.data, fetchedAt: disk.fetchedAt };
+    if (opts?.allowStale || Date.now() - disk.fetchedAt <= MEMORY_TTL_MS) return cache;
+  }
+  return opts?.allowStale ? cache : null;
 }
 
 export function getExploreProfileCache(): ProfileCacheEntry | null {
   if (!profileCache) return null;
-  if (Date.now() - profileCache.fetchedAt > CACHE_TTL_MS) {
+  if (Date.now() - profileCache.fetchedAt > MEMORY_TTL_MS) {
     profileCache = null;
     return null;
   }
@@ -40,7 +70,9 @@ export function getExploreProfileCache(): ProfileCacheEntry | null {
 }
 
 export function upsertMomentsFeedCache(authors: MomentAuthorFeedDTO[]) {
-  cache = { authors, fetchedAt: Date.now() };
+  const fetchedAt = Date.now();
+  cache = { authors, fetchedAt };
+  setOfflineFeedMemory(OFFLINE_FEED_KEYS.moments, authors, fetchedAt);
 }
 
 function previewUriForSlide(slide: MomentAuthorFeedDTO['slides'][number]): string | null {

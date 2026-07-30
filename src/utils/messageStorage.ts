@@ -256,4 +256,29 @@ export const messageStorage = {
       console.error('❌ Error clearing local chat storage:', error);
     }
   },
+
+  getApproxSizeBytes: async (): Promise<number> => {
+    try {
+      const all = await AsyncStorage.getAllKeys();
+      const keys = all.filter(
+        (key) =>
+          key.startsWith('messages_') ||
+          key.startsWith('last_sync_') ||
+          key.startsWith('draft_') ||
+          key === OUTBOX_KEY ||
+          key === CHAT_INDEX_KEY ||
+          key === SYNC_CURSOR_KEY
+      );
+      if (!keys.length) return 0;
+      const pairs = await AsyncStorage.multiGet(keys);
+      let total = 0;
+      for (const [key, value] of pairs) {
+        total += key.length * 2;
+        if (value) total += value.length * 2;
+      }
+      return total;
+    } catch {
+      return 0;
+    }
+  },
 };

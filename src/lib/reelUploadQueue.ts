@@ -341,15 +341,11 @@ async function processOne(item: { id: string; draft: ReelUploadDraft }) {
           width: video.width,
           height: video.height,
           filter_id:
-            video.filterId && video.filterId !== 'none'
-              ? (video.filterId as 'warm' | 'cool' | 'vivid' | 'fade' | 'mono')
-              : undefined,
+            video.filterId && video.filterId !== 'none' ? video.filterId : undefined,
         },
       ],
       filter_id:
-        video.filterId && video.filterId !== 'none'
-          ? (video.filterId as 'warm' | 'cool' | 'vivid' | 'fade' | 'mono')
-          : undefined,
+        video.filterId && video.filterId !== 'none' ? video.filterId : undefined,
       ...publishVisibility,
       ...soundPublishFields(draft),
       ...schedulePublishFields(draft),
@@ -466,14 +462,16 @@ async function processOne(item: { id: string; draft: ReelUploadDraft }) {
     height,
     trim_start_sec: trimStartSec > 0 ? trimStartSec : undefined,
     trim_end_sec:
-      trimEndSec != null && duration != null && trimEndSec < duration - 0.05
+      trimEndSec != null &&
+      (trimStartSec > 0.05 ||
+        (duration != null && trimEndSec < duration - 0.05))
         ? trimEndSec
         : undefined,
     filter_id:
       video.filterId && video.filterId !== 'none'
-        ? (video.filterId as 'warm' | 'cool' | 'vivid' | 'fade' | 'mono')
+        ? video.filterId
         : draft.filterId && draft.filterId !== 'none'
-          ? (draft.filterId as 'warm' | 'cool' | 'vivid' | 'fade' | 'mono')
+          ? draft.filterId
           : undefined,
   });
 
@@ -518,9 +516,7 @@ async function processCarouselUpload(id: string, draft: ReelUploadDraft) {
           width: media.width,
           height: media.height,
           filter_id:
-            media.filterId && media.filterId !== 'none'
-              ? (media.filterId as 'warm' | 'cool' | 'vivid' | 'fade' | 'mono')
-              : undefined,
+            media.filterId && media.filterId !== 'none' ? media.filterId : undefined,
         };
       }
 
@@ -569,13 +565,13 @@ async function processCarouselUpload(id: string, draft: ReelUploadDraft) {
         height,
         trim_start_sec: trimStartSec > 0 ? trimStartSec : undefined,
         trim_end_sec:
-          trimEndSec != null && duration != null && trimEndSec < duration - 0.05
+          trimEndSec != null &&
+          (trimStartSec > 0.05 ||
+            (duration != null && trimEndSec < duration - 0.05))
             ? trimEndSec
             : undefined,
         filter_id:
-          media.filterId && media.filterId !== 'none'
-            ? (media.filterId as 'warm' | 'cool' | 'vivid' | 'fade' | 'mono')
-            : undefined,
+          media.filterId && media.filterId !== 'none' ? media.filterId : undefined,
       };
     })
   );

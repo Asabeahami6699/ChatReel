@@ -77,11 +77,14 @@ module.exports = {
       backgroundColor: '#4f46e5',
     },
     statusBar: {
-      backgroundColor: '#f8f9fa',
-      barStyle: 'dark-content',
+      backgroundColor: '#007AFF',
+      barStyle: 'light-content',
     },
-    /** We pad chat composer manually; pan avoids double-resize fights with SafeArea shell. */
-    softwareKeyboardLayoutMode: 'pan',
+    /**
+     * Resize keeps the chat header fixed when the keyboard opens (pan was
+     * pushing the navbar into the status-bar / safe-area and leaving a white gap).
+     */
+    softwareKeyboardLayoutMode: 'resize',
     permissions: [
       'CAMERA',
       'RECORD_AUDIO',
@@ -124,6 +127,8 @@ module.exports = {
         'Allow ChatReel to access your photo library.',
       NSPhotoLibraryAddUsageDescription:
         'Allow ChatReel to save media to your library.',
+      NSFaceIDUsageDescription:
+        'ChatReel uses Face ID to unlock the app when App Lock is enabled.',
     },
   },
   plugins: [
@@ -148,8 +153,16 @@ module.exports = {
     ],
     'expo-audio',
     'expo-video',
+    'expo-navigation-bar',
     withLiveKitSetup,
     'expo-secure-store',
+    [
+      'expo-local-authentication',
+      {
+        faceIDPermission:
+          'ChatReel uses Face ID to unlock the app when App Lock is enabled.',
+      },
+    ],
     [
       'expo-image-picker',
       {
@@ -171,6 +184,7 @@ module.exports = {
         cameraPermissionText: 'Allow ChatReel to access your camera for QR codes and photos.',
         enableMicrophonePermission: true,
         microphonePermissionText: 'Allow ChatReel to access your microphone for voice messages.',
+        enableCodeScanner: true,
       },
     ],
     [

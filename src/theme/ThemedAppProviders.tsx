@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo } from 'react';
-import { Platform } from 'react-native';
+import { Platform, View } from 'react-native';
 import { Provider as PaperProvider } from 'react-native-paper';
 import { useChatSettings } from '../context/ChatSettingsContext';
 import { buildPaperTheme } from './buildAppTheme';
@@ -28,6 +28,23 @@ function useWebDocumentTheme(backgroundColor: string, isDark: boolean) {
   }, [backgroundColor, isDark]);
 }
 
+/** Sync Android system navigation chrome with the active app theme. */
+function useAndroidSystemChrome(isDark: boolean) {
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const NavigationBar = require('expo-navigation-bar') as {
+        setStyle?: (style: 'light' | 'dark' | 'auto') => void;
+      };
+      // Edge-to-edge: solid nav colors are limited; style controls icon contrast.
+      NavigationBar.setStyle?.(isDark ? 'dark' : 'light');
+    } catch {
+      /* optional native module */
+    }
+  }, [isDark]);
+}
+
 /**
  * Applies the selected chat theme to React Native Paper globally.
  * Must sit under ChatSettingsProvider.
@@ -36,5 +53,10 @@ export function ThemedPaperProvider({ children }: { children: React.ReactNode })
   const { theme } = useChatSettings();
   const paperTheme = useMemo(() => buildPaperTheme(theme), [theme]);
   useWebDocumentTheme(theme.listBg, theme.isDark);
-  return <PaperProvider theme={paperTheme}>{children}</PaperProvider>;
+  useAndroidSystemChrome(theme.isDark);
+  return (
+    <PaperProvider theme={paperTheme}>
+      <View style={{ flex: 1, backgroundColor: theme.listBg }}>{children}</View>
+    </PaperProvider>
+  );
 }

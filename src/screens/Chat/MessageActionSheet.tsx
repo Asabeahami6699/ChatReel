@@ -26,6 +26,7 @@ export type MessageAction =
   | 'forward'
   | 'star'
   | 'pin'
+  | 'unpin'
   | 'react';
 
 type Props = {
@@ -34,6 +35,7 @@ type Props = {
   isOutgoing: boolean;
   isGroup: boolean;
   isStarred: boolean;
+  isPinned?: boolean;
   canEdit: boolean;
   canDeleteForAll: boolean;
   onClose: () => void;
@@ -48,6 +50,7 @@ export function MessageActionSheet({
   isOutgoing,
   isGroup,
   isStarred,
+  isPinned = false,
   canEdit,
   canDeleteForAll,
   onClose,
@@ -84,9 +87,11 @@ export function MessageActionSheet({
     icon: isStarred ? 'star' : 'star-outline',
   });
 
-  if (isOutgoing) {
-    actions.push({ key: 'pin', label: 'Pin', icon: 'pin-outline' });
-  }
+  actions.push({
+    key: isPinned ? 'unpin' : 'pin',
+    label: isPinned ? 'Unpin' : 'Pin',
+    icon: isPinned ? 'pin' : 'pin-outline',
+  });
 
   actions.push({ key: 'forward', label: 'Forward', icon: 'arrow-redo-outline' });
   actions.push({ key: 'delete_me', label: 'Delete for me', icon: 'trash-outline', destructive: true });

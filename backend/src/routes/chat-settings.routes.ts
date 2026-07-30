@@ -176,26 +176,49 @@ router.post(
             message_id: messageId,
             pinned_by: userId,
             pinned_at: new Date().toISOString(),
-            peer_user_low: null,
-            peer_user_high: null,
           },
           { onConflict: 'group_id,message_id' }
         )
         .select('*')
         .single();
 
-      if (error) return res.status(500).json({ error: error.message });
+      if (error) {
+        const hint = /peer_user|null value in column \"group_id\"|NOT NULL/i.test(
+          error.message
+        )
+          ? ' Run migration 039_dm_pinned_messages.sql on Supabase, then retry.'
+          : '';
+        return res.status(500).json({ error: `${error.message}${hint}` });
+      }
       return res.json({ pinned: data });
     }
 
     const pair = dmPeerPair(userId, chatId);
-    // One pin per DM: replace any existing pin for this pair.
-    await supabaseAdmin
+    // Multi-pin: upsert this message without clearing other pins for the pair.
+    const { data: existing } = await supabaseAdmin
       .from('pinned_messages')
-      .delete()
+      .select('id')
       .is('group_id', null)
       .eq('peer_user_low', pair.low)
-      .eq('peer_user_high', pair.high);
+      .eq('peer_user_high', pair.high)
+      .eq('message_id', messageId)
+      .maybeSingle();
+
+    if (existing?.id) {
+      const { data, error } = await supabaseAdmin
+        .from('pinned_messages')
+        .update({
+          pinned_by: userId,
+          pinned_at: new Date().toISOString(),
+        })
+        .eq('id', existing.id)
+        .select('*')
+        .single();
+      if (error) {
+        return res.status(500).json({ error: error.message });
+      }
+      return res.json({ pinned: data });
+    }
 
     const { data, error } = await supabaseAdmin
       .from('pinned_messages')
@@ -210,7 +233,14 @@ router.post(
       .select('*')
       .single();
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) {
+      const hint = /null value in column \"group_id\"|peer_user|NOT NULL|column .* does not exist/i.test(
+        error.message
+      )
+        ? ' Run migration 039_dm_pinned_messages.sql on Supabase, then retry.'
+        : '';
+      return res.status(500).json({ error: `${error.message}${hint}` });
+    }
     return res.json({ pinned: data });
   })
 );

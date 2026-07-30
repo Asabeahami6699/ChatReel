@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Platform,
   Share,
   ScrollView,
   StyleSheet,
@@ -15,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system/legacy';
 import Constants from 'expo-constants';
 import { chatThemePresets, type ChatThemeId } from '../../lib/chatThemes';
 import { useChatSettings } from '../../context/ChatSettingsContext';
@@ -36,6 +38,9 @@ import { startBackgroundRingtoneSave } from '../../components/RingtoneSaveToast'
 import { OfflineAvatar } from '../../components/OfflineAvatar';
 import { messageStorage } from '../../utils/messageStorage';
 import { getCachedProfile, prefetchMyProfile, hydrateProfileCache, subscribeCachedProfile } from '../../lib/profileCache';
+import { formatBytes, getLocalCacheBreakdown, type LocalCacheBreakdown } from '../../lib/localCacheSize';
+import { clearOfflineFeedKeys, OFFLINE_FEED_KEYS } from '../../lib/offlineFeedStore';
+import { authenticateAppUnlock, getAppLockAvailability } from '../../lib/appLock';
 
 type SettingsPage =
   | 'hub'
@@ -192,6 +197,23 @@ export default function ChatSettingsScreen() {
   const [trimLabel, setTrimLabel] = useState('Custom tone');
   const [trimMime, setTrimMime] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
+  const [cacheBreakdown, setCacheBreakdown] = useState<LocalCacheBreakdown | null>(null);
+  const [cacheLoading, setCacheLoading] = useState(false);
+
+  const refreshCacheSize = useCallback(async () => {
+    setCacheLoading(true);
+    try {
+      setCacheBreakdown(await getLocalCacheBreakdown());
+    } catch {
+      setCacheBreakdown(null);
+    } finally {
+      setCacheLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (page === 'storage') void refreshCacheSize();
+  }, [page, refreshCacheSize]);
 
   useEffect(() => {
     void refreshRingtoneLibrary();
@@ -348,7 +370,16 @@ export default function ChatSettingsScreen() {
     setClearing(true);
     try {
       await messageStorage.clearAll?.();
+      await clearOfflineFeedKeys(Object.values(OFFLINE_FEED_KEYS));
+      if (Platform.OS !== 'web') {
+        const dir = `${FileSystem.cacheDirectory ?? ''}reels-cache/`;
+        if (dir) {
+          const info = await FileSystem.getInfoAsync(dir);
+          if (info.exists) await FileSystem.deleteAsync(dir, { idempotent: true });
+        }
+      }
       showAppToast('Local cache cleared');
+      await refreshCacheSize();
     } catch {
       showAppToast('Could not clear cache', { isError: true });
     } finally {
@@ -365,6 +396,38 @@ export default function ChatSettingsScreen() {
         onPress: () => void signOut(),
       },
     ]);
+  };
+
+  const toggleAppLock = async (next: boolean) => {
+    if (!next) {
+      await updateSettings({ appLockBiometric: false });
+      showAppToast('App lock turned off');
+      return;
+    }
+
+    if (Platform.OS === 'web') {
+      Alert.alert('App lock', 'App lock is available on the iOS and Android apps.');
+      return;
+    }
+
+    const availability = await getAppLockAvailability();
+    if (!availability.available) {
+      Alert.alert('App lock unavailable', availability.reason || 'Cannot enable app lock.');
+      return;
+    }
+
+    const verified = await authenticateAppUnlock(
+      `Enable app lock with ${availability.biometricsLabel}`
+    );
+    if (!verified.success) {
+      if (verified.error) {
+        Alert.alert('App lock', verified.error);
+      }
+      return;
+    }
+
+    await updateSettings({ appLockBiometric: true });
+    showAppToast(`App lock on · ${availability.biometricsLabel}`);
   };
 
   const tc = theme.listPrimaryText;
@@ -590,7 +653,7 @@ export default function ChatSettingsScreen() {
           <LinkRow
             icon="lock-closed-outline"
             label="Privacy and security"
-            subtitle="Read receipts, last seen"
+            subtitle="Receipts, presence, media, app lock"
             onPress={() => setPage('privacy')}
             textColor={tc}
             subColor={sc}
@@ -805,6 +868,85 @@ export default function ChatSettingsScreen() {
           subColor={sc}
           iconBg="#e3f2fd"
           iconColor="#1e88e5"
+        />
+        <ToggleRow
+          icon="radio-outline"
+          label="Online status"
+          subtitle="Show when you are currently online"
+          value={settings.showOnlineStatus}
+          onValueChange={(v) => void updateSettings({ showOnlineStatus: v })}
+          textColor={tc}
+          subColor={sc}
+          iconBg="#e0f7fa"
+          iconColor="#00acc1"
+        />
+        <ToggleRow
+          icon="chatbubble-ellipses-outline"
+          label="Typing indicator"
+          subtitle="Let others see when you are typing"
+          value={settings.showTypingIndicator}
+          onValueChange={(v) => void updateSettings({ showTypingIndicator: v })}
+          textColor={tc}
+          subColor={sc}
+          iconBg="#fff3e0"
+          iconColor="#fb8c00"
+          last
+        />
+      </SettingsCard>
+
+      <SectionLabel title="Content" color={sc} />
+      <SettingsCard bg={cardBg} border={border}>
+        <ToggleRow
+          icon="link-outline"
+          label="Link previews"
+          subtitle="Show previews for links in chats"
+          value={settings.linkPreviews}
+          onValueChange={(v) => void updateSettings({ linkPreviews: v })}
+          textColor={tc}
+          subColor={sc}
+          iconBg="#e8eaf6"
+          iconColor="#5c6bc0"
+        />
+        <ToggleRow
+          icon="images-outline"
+          label="Save media to gallery"
+          subtitle="Auto-save received photos and videos on this device"
+          value={settings.saveMediaToGallery}
+          onValueChange={(v) => void updateSettings({ saveMediaToGallery: v })}
+          textColor={tc}
+          subColor={sc}
+          iconBg="#fce4ec"
+          iconColor="#ec407a"
+          last
+        />
+      </SettingsCard>
+
+      <SectionLabel title="Security" color={sc} />
+      <SettingsCard bg={cardBg} border={border}>
+        <ToggleRow
+          icon="finger-print-outline"
+          label="App lock"
+          subtitle={
+            Platform.OS === 'web'
+              ? 'Available on the mobile app'
+              : 'Lock ChatReel when you leave the app'
+          }
+          value={settings.appLockBiometric}
+          onValueChange={(v) => void toggleAppLock(v)}
+          textColor={tc}
+          subColor={sc}
+          iconBg="#efebe9"
+          iconColor="#8d6e63"
+        />
+        <LinkRow
+          icon="people-outline"
+          label="Friends and blocked"
+          subtitle="Manage who can message you"
+          onPress={() => navigation.navigate('FriendsList')}
+          textColor={tc}
+          subColor={sc}
+          iconBg="#e3f2fd"
+          iconColor="#1976d2"
           last
         />
       </SettingsCard>
@@ -883,6 +1025,31 @@ export default function ChatSettingsScreen() {
 
   const renderStorage = () => (
     <>
+      <SectionLabel title="Local usage" color={sc} />
+      <SettingsCard bg={cardBg} border={border}>
+        <View style={styles.storageBlock}>
+          <Text style={[styles.storageTotal, { color: tc }]}>
+            {cacheLoading && !cacheBreakdown
+              ? 'Calculating…'
+              : formatBytes(cacheBreakdown?.totalBytes ?? 0)}
+          </Text>
+          <Text style={[styles.storageHint, { color: sc }]}>
+            Offline data stored on this device
+          </Text>
+          <View style={styles.storageRows}>
+            <Text style={[styles.storageRow, { color: sc }]}>
+              Messages · {formatBytes(cacheBreakdown?.messagesBytes ?? 0)}
+            </Text>
+            <Text style={[styles.storageRow, { color: sc }]}>
+              Moments, calls & reels · {formatBytes(cacheBreakdown?.feedsBytes ?? 0)}
+            </Text>
+            <Text style={[styles.storageRow, { color: sc }]}>
+              Reel media files · {formatBytes(cacheBreakdown?.reelsMediaBytes ?? 0)}
+            </Text>
+          </View>
+        </View>
+      </SettingsCard>
+
       <SectionLabel title="Device" color={sc} />
       <SettingsCard bg={cardBg} border={border}>
         <ToggleRow
@@ -896,9 +1063,20 @@ export default function ChatSettingsScreen() {
           iconColor="#1976d2"
         />
         <LinkRow
+          icon="refresh-outline"
+          label="Refresh size"
+          subtitle="Recalculate local cache usage"
+          onPress={() => void refreshCacheSize()}
+          textColor={tc}
+          subColor={sc}
+          iconBg="#eceff1"
+          iconColor="#607d8b"
+          showChevron={false}
+        />
+        <LinkRow
           icon="trash-outline"
           label={clearing ? 'Clearing…' : 'Clear local cache'}
-          subtitle="Remove offline message copies on this device"
+          subtitle="Remove offline message copies and feed caches on this device"
           onPress={() => {
             if (!clearing) void clearLocalCache();
           }}
@@ -1201,6 +1379,11 @@ const styles = StyleSheet.create({
   addToneText: { color: '#fff', fontWeight: '700', fontSize: 14 },
   footnote: { fontSize: 12, lineHeight: 17, marginTop: 10, marginHorizontal: 6 },
   aboutBlock: { alignItems: 'center', padding: 24, gap: 8 },
+  storageBlock: { paddingHorizontal: 16, paddingVertical: 16, gap: 4 },
+  storageTotal: { fontSize: 28, fontWeight: '800' },
+  storageHint: { fontSize: 13, marginBottom: 8 },
+  storageRows: { gap: 4, marginTop: 4 },
+  storageRow: { fontSize: 13, lineHeight: 18 },
   aboutLogo: { width: 72, height: 72, borderRadius: 18, marginBottom: 4 },
   aboutTitle: { fontSize: 22, fontWeight: '800' },
   aboutSub: { fontSize: 13 },

@@ -263,6 +263,14 @@ export function ChatMessageRow({
   );
 
   const renderBody = () => {
+    if (msg.message_type === 'system') {
+      return (
+        <View style={styles.systemWrap}>
+          <Text style={styles.systemText}>{msg.decrypted || msg.content}</Text>
+        </View>
+      );
+    }
+
     if (msg.message_type === 'audio') {
       return wrapPressable(
         <View style={[styles.bubble, { backgroundColor: bubbleBg }, corners, styles.audioRow]}>
@@ -615,7 +623,9 @@ export function ChatMessageRow({
     </View>
   );
 
-  const row = (
+  const row = msg.message_type === 'system' ? (
+    <View style={styles.systemRow}>{renderBody()}</View>
+  ) : (
     <View
       style={[
         styles.row,
@@ -657,7 +667,7 @@ export function ChatMessageRow({
     </View>
   );
 
-  if (!onReply) return row;
+  if (!onReply || msg.message_type === 'system') return row;
 
   return (
     <Swipeable
@@ -702,6 +712,24 @@ const styles = StyleSheet.create({
   },
   rowOut: { justifyContent: 'flex-end' },
   rowIn: { justifyContent: 'flex-start' },
+  systemRow: {
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 8,
+  },
+  systemWrap: {
+    backgroundColor: 'rgba(0,0,0,0.06)',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    maxWidth: '92%',
+  },
+  systemText: {
+    fontSize: 12.5,
+    lineHeight: 17,
+    color: '#555',
+    textAlign: 'center',
+  },
   avatarSlot: { width: 36, marginRight: 6, justifyContent: 'flex-end' },
   avatar: { width: 32, height: 32, borderRadius: 16 },
   avatarFallback: {

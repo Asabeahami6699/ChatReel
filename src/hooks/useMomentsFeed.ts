@@ -47,9 +47,9 @@ function dedupeAuthors(authors: MomentAuthorFeedDTO[]): MomentAuthorFeedDTO[] {
 
 export function useMomentsFeed() {
   const { isAuthenticated } = useAuth();
-  const cached = isAuthenticated ? getMomentsFeedCache() : null;
+  const cached = isAuthenticated ? getMomentsFeedCache({ allowStale: true }) : null;
   const [authors, setAuthors] = useState<MomentAuthorFeedDTO[]>(() => cached?.authors ?? []);
-  const [loading, setLoading] = useState(() => (isAuthenticated ? cached == null : false));
+  const [loading, setLoading] = useState(() => (isAuthenticated ? !(cached?.authors?.length) : false));
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -70,11 +70,17 @@ export function useMomentsFeed() {
       setAuthors(next);
       upsertMomentsFeedCache(next);
     } catch (err) {
-      const message =
-        err instanceof ApiError
-          ? err.message
-          : "Can't reach the server right now. Check your connection and try again.";
-      setError(message);
+      const stale = getMomentsFeedCache({ allowStale: true });
+      if (stale?.authors?.length) {
+        setAuthors(stale.authors);
+        setError(null);
+      } else {
+        const message =
+          err instanceof ApiError
+            ? err.message
+            : "Can't reach the server right now. Check your connection and try again.";
+        setError(message);
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);

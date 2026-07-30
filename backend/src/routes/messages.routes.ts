@@ -160,14 +160,47 @@ async function getDisappearSeconds(
 async function applyDisappearOnRead(opts: {
   messageIds: string[];
   seconds: number | null;
-}): Promise<void> {
-  if (!opts.seconds || opts.messageIds.length === 0) return;
+  readerUserId?: string;
+}): Promise<{ expires_at: string; message_ids: string[] } | null> {
+  if (!opts.seconds || opts.messageIds.length === 0) return null;
   const expiresAt = new Date(Date.now() + opts.seconds * 1000).toISOString();
   await supabaseAdmin
     .from('messages')
     .update({ expires_at: expiresAt })
     .in('id', opts.messageIds)
     .is('expires_at', null);
+
+  const { data: rows } = await supabaseAdmin
+    .from('messages')
+    .select('id, sender_id, receiver_id, group_id, expires_at, view_once, viewed_at, content, file_url, message_type')
+    .in('id', opts.messageIds)
+    .eq('expires_at', expiresAt);
+
+  for (const full of rows ?? []) {
+    const chatKey =
+      full.group_id != null
+        ? chatKeyFor({ isGroup: true, chatId: full.group_id as string })
+        : chatKeyFor({
+            isGroup: false,
+            chatId: (full.receiver_id || full.sender_id) as string,
+            userA: full.sender_id as string,
+            userB: full.receiver_id as string,
+          });
+    const evt = {
+      type: 'message.updated' as const,
+      chat_key: chatKey,
+      message: full,
+    };
+    emitToChat(chatKey, evt);
+    if (full.sender_id && full.sender_id !== opts.readerUserId) {
+      emitToUser(full.sender_id as string, evt);
+    }
+    if (full.receiver_id && full.receiver_id !== opts.readerUserId) {
+      emitToUser(full.receiver_id as string, evt);
+    }
+  }
+
+  return { expires_at: expiresAt, message_ids: opts.messageIds };
 }
 
 async function markGroupMessagesRead(userId: string, groupId: string) {
@@ -204,6 +237,7 @@ async function markGroupMessagesRead(userId: string, groupId: string) {
   await applyDisappearOnRead({
     messageIds: toInsert.map((r) => r.message_id),
     seconds,
+    readerUserId: userId,
   });
 }
 
@@ -344,6 +378,7 @@ router.post(
     if (
       env.e2eMode === 'strict' &&
       (body.message_type === 'text' || !body.message_type) &&
+      body.message_type !== 'system' &&
       (body.receiver_id || body.group_id) &&
       body.plaintext !== false
     ) {
@@ -447,7 +482,9 @@ router.post(
       return res.status(500).json({ error: msg });
     }
 
-    if (body.receiver_id && body.receiver_id !== userId) {
+    if (body.message_type === 'system') {
+      // System notices stay in-thread only — no push noise.
+    } else if (body.receiver_id && body.receiver_id !== userId) {
       const { data: senderProfile } = await supabaseAdmin
         .from('profiles')
         .select('display_name, email')
@@ -605,8 +642,12 @@ router.patch(
 
         if (error) return res.status(500).json({ error: error.message });
         const seconds = await getDisappearSeconds(userId, 'group', target.group_id);
-        await applyDisappearOnRead({ messageIds: [body.message_id], seconds });
-        return res.json({ success: true });
+        const disappear = await applyDisappearOnRead({
+          messageIds: [body.message_id],
+          seconds,
+          readerUserId: userId,
+        });
+        return res.json({ success: true, ...(disappear ?? {}) });
       } else if (target.receiver_id !== userId) {
         return res.status(403).json({ error: 'Not allowed' });
       }
@@ -619,8 +660,12 @@ router.patch(
 
       if (error) return res.status(500).json({ error: error.message });
       const seconds = await getDisappearSeconds(userId, 'individual', target.sender_id);
-      await applyDisappearOnRead({ messageIds: [body.message_id], seconds });
-      return res.json({ success: true });
+      const disappear = await applyDisappearOnRead({
+        messageIds: [body.message_id],
+        seconds,
+        readerUserId: userId,
+      });
+      return res.json({ success: true, ...(disappear ?? {}) });
     }
 
     if (body.group_id) {
@@ -654,11 +699,12 @@ router.patch(
       if (error) return res.status(500).json({ error: error.message });
 
       const seconds = await getDisappearSeconds(userId, 'individual', body.partner_user_id);
-      await applyDisappearOnRead({
+      const disappear = await applyDisappearOnRead({
         messageIds: (unread ?? []).map((m) => m.id),
         seconds,
+        readerUserId: userId,
       });
-      return res.json({ success: true });
+      return res.json({ success: true, ...(disappear ?? {}) });
     }
 
     return res.status(400).json({ error: 'Specify message_id, group_id, or partner_user_id' });
@@ -834,16 +880,18 @@ router.post(
     }
     if (!message) return res.status(404).json({ error: 'Message not found' });
 
-    // Only the recipient marks it viewed, and only once.
+  // Only the recipient marks it viewed, and only once.
+    // Soft-delete + wipe so reopen/list can't resurrect media for either party.
     if (message.sender_id === userId || !message.view_once || message.viewed_at) {
       return res.json({ success: true });
     }
 
+    const now = new Date().toISOString();
     const { error } = await supabaseAdmin
       .from('messages')
       .update({
-        viewed_at: new Date().toISOString(),
-        // Wipe media so neither party can reopen after view.
+        viewed_at: now,
+        deleted_at: now,
         file_url: null,
         content: message.message_type === 'video' ? 'View once video' : 'View once photo',
       })
@@ -867,15 +915,24 @@ router.post(
               userA: full.sender_id as string,
               userB: full.receiver_id as string,
             });
-      // Broadcast so the sender's client drops the covered bubble too.
+      // Broadcast so both clients drop the bubble immediately.
       const evt = {
         type: 'message.updated',
         chat_key: chatKey,
-        message: full,
+        message: {
+          ...full,
+          viewed_at: full.viewed_at,
+          deleted_at: full.deleted_at,
+          file_url: null,
+          view_once: true,
+        },
       };
       emitToChat(chatKey, evt);
       if (full.sender_id && full.sender_id !== userId) {
         emitToUser(full.sender_id as string, evt);
+      }
+      if (full.receiver_id && full.receiver_id !== userId) {
+        emitToUser(full.receiver_id as string, evt);
       }
     }
 

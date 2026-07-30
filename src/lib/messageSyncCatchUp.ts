@@ -117,13 +117,11 @@ async function runCatchUp(userId: string): Promise<void> {
       byChat.set(key, entry);
     }
 
-    for (const entry of byChat.values()) {
-      try {
-        await persistBatch(entry.chatId, entry.chatType, entry.rows, userId);
-      } catch {
-        /* one bad chat must not stop the rest */
-      }
-    }
+    await Promise.all(
+      [...byChat.values()].map((entry) =>
+        persistBatch(entry.chatId, entry.chatType, entry.rows, userId).catch(() => undefined)
+      )
+    );
 
     const lastCreated = messages[messages.length - 1]?.created_at;
     if (typeof lastCreated === 'string' && lastCreated) {
