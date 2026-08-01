@@ -41,6 +41,8 @@ import { getCachedProfile, prefetchMyProfile, hydrateProfileCache, subscribeCach
 import { formatBytes, getLocalCacheBreakdown, type LocalCacheBreakdown } from '../../lib/localCacheSize';
 import { clearOfflineFeedKeys, OFFLINE_FEED_KEYS } from '../../lib/offlineFeedStore';
 import { authenticateAppUnlock, getAppLockAvailability } from '../../lib/appLock';
+import { Account2FASetupSheet } from '../../components/Account2FASetupSheet';
+import { AccountDevicesSheet } from '../../components/AccountDevicesSheet';
 
 type SettingsPage =
   | 'hub'
@@ -180,6 +182,8 @@ export default function ChatSettingsScreen() {
   } = useChatSettings();
 
   const [page, setPage] = useState<SettingsPage>('hub');
+  const [twoFaOpen, setTwoFaOpen] = useState(false);
+  const [devicesOpen, setDevicesOpen] = useState(false);
   const [profile, setProfile] = useState<{
     display_name?: string;
     email?: string;
@@ -430,6 +434,38 @@ export default function ChatSettingsScreen() {
     showAppToast(`App lock on · ${availability.biometricsLabel}`);
   };
 
+  const toggleChatLock = async (next: boolean) => {
+    if (!next) {
+      await updateSettings({ chatLockEnabled: false });
+      showAppToast('Chat lock turned off');
+      return;
+    }
+
+    if (Platform.OS === 'web') {
+      Alert.alert('Chat lock', 'Chat lock is available on the iOS and Android apps.');
+      return;
+    }
+
+    const availability = await getAppLockAvailability();
+    if (!availability.available) {
+      Alert.alert('Chat lock unavailable', availability.reason || 'Cannot enable chat lock.');
+      return;
+    }
+
+    const verified = await authenticateAppUnlock(
+      `Enable chat lock with ${availability.biometricsLabel}`
+    );
+    if (!verified.success) {
+      if (verified.error) {
+        Alert.alert('Chat lock', verified.error);
+      }
+      return;
+    }
+
+    await updateSettings({ chatLockEnabled: true });
+    showAppToast(`Chat lock on · only Chats require unlock`);
+  };
+
   const tc = theme.listPrimaryText;
   const sc = theme.listSecondaryText;
   const cardBg = theme.listCardBg;
@@ -501,6 +537,38 @@ export default function ChatSettingsScreen() {
 
         <SectionLabel title="Account" color={sc} />
         <SettingsCard bg={cardBg} border={border}>
+          <LinkRow
+            icon="shield-checkmark-outline"
+            label="Two-step verification"
+            subtitle="Secret code on new devices · security question to reset"
+            onPress={() => {
+              if (!user) {
+                Alert.alert('Sign in required', 'Sign in to set up two-step verification.');
+                return;
+              }
+              setTwoFaOpen(true);
+            }}
+            textColor={tc}
+            subColor={sc}
+            iconBg="#e8eaf6"
+            iconColor="#5c6bc0"
+          />
+          <LinkRow
+            icon="phone-portrait-outline"
+            label="Logged-in devices"
+            subtitle="See devices · log out any · remote wipe"
+            onPress={() => {
+              if (!user) {
+                Alert.alert('Sign in required', 'Sign in to manage devices.');
+                return;
+              }
+              setDevicesOpen(true);
+            }}
+            textColor={tc}
+            subColor={sc}
+            iconBg="#efebe9"
+            iconColor="#8d6e63"
+          />
           <LinkRow
             icon="people-outline"
             label="Friends"
@@ -698,7 +766,7 @@ export default function ChatSettingsScreen() {
           <LinkRow
             icon="help-circle-outline"
             label="Tips"
-            subtitle="Quick tips for calls, moments and chats"
+            subtitle="Chats, privacy, devices, reels & more"
             onPress={() => setPage('tips')}
             textColor={tc}
             subColor={sc}
@@ -924,12 +992,12 @@ export default function ChatSettingsScreen() {
       <SectionLabel title="Security" color={sc} />
       <SettingsCard bg={cardBg} border={border}>
         <ToggleRow
-          icon="finger-print-outline"
+          icon="phone-portrait-outline"
           label="App lock"
           subtitle={
             Platform.OS === 'web'
               ? 'Available on the mobile app'
-              : 'Lock ChatReel when you leave the app'
+              : 'Locks the whole app when you leave ChatReel'
           }
           value={settings.appLockBiometric}
           onValueChange={(v) => void toggleAppLock(v)}
@@ -938,11 +1006,37 @@ export default function ChatSettingsScreen() {
           iconBg="#efebe9"
           iconColor="#8d6e63"
         />
+        <ToggleRow
+          icon="chatbubbles-outline"
+          label="Chat lock"
+          subtitle={
+            Platform.OS === 'web'
+              ? 'Available on the mobile app'
+              : 'Locks only Chats — Reels and other tabs stay open'
+          }
+          value={settings.chatLockEnabled}
+          onValueChange={(v) => void toggleChatLock(v)}
+          textColor={tc}
+          subColor={sc}
+          iconBg="#e8eaf6"
+          iconColor="#5c6bc0"
+        />
+        <ToggleRow
+          icon="videocam-off-outline"
+          label="Call privacy"
+          subtitle="Hide call preview and block capture when you leave the app"
+          value={settings.callPrivacyOnBackground}
+          onValueChange={(v) => void updateSettings({ callPrivacyOnBackground: v })}
+          textColor={tc}
+          subColor={sc}
+          iconBg="#e0f2f1"
+          iconColor="#00897b"
+        />
         <LinkRow
           icon="people-outline"
           label="Friends and blocked"
           subtitle="Manage who can message you"
-          onPress={() => navigation.navigate('FriendsList')}
+          onPress={() => navigation.navigate('FriendsList', { mode: 'privacy' })}
           textColor={tc}
           subColor={sc}
           iconBg="#e3f2fd"
@@ -1119,7 +1213,12 @@ export default function ChatSettingsScreen() {
         {
           icon: 'hand-left-outline',
           title: 'Message actions',
-          body: 'Long-press any message to reply, star, forward, copy, or delete.',
+          body: 'Long-press any message to reply, star, pin, forward, copy, or delete.',
+        },
+        {
+          icon: 'timer-outline',
+          title: 'Disappearing & view once',
+          body: 'Use chat settings for a disappear timer, or send view-once media that closes after you open it (pick 5s / 10s / 30s).',
         },
         {
           icon: 'search-outline',
@@ -1139,12 +1238,42 @@ export default function ChatSettingsScreen() {
       ],
     },
     {
+      title: 'Privacy & security',
+      tips: [
+        {
+          icon: 'lock-closed-outline',
+          title: 'App lock & chat lock',
+          body: 'Lock the whole app, or lock only the Chats tab so reels stay open without a PIN.',
+        },
+        {
+          icon: 'eye-off-outline',
+          title: 'Secret Space',
+          body: 'Hide chats in a vault with a PIN. Open it by long-pressing the logo or entering your code in Search.',
+        },
+        {
+          icon: 'shield-checkmark-outline',
+          title: 'Account 2FA',
+          body: 'Settings → Account security. New devices need your secret code (recover with your security question).',
+        },
+        {
+          icon: 'phone-portrait-outline',
+          title: 'Logged-in devices',
+          body: 'Settings → Logged-in devices to see every login, sign out any device, or remote-wipe all sessions.',
+        },
+      ],
+    },
+    {
       title: 'Calls',
       tips: [
         {
           icon: 'videocam-outline',
           title: 'Voice & video',
-          body: 'Tap the phone or video icon in a chat header to start a call.',
+          body: 'Tap the phone or video icon in a chat header to start a call. React during a call from the reactions bar.',
+        },
+        {
+          icon: 'eye-outline',
+          title: 'Call privacy',
+          body: 'When you leave ChatReel mid-call, the call screen is covered so others nearby can’t see it.',
         },
         {
           icon: 'musical-notes-outline',
@@ -1154,17 +1283,37 @@ export default function ChatSettingsScreen() {
       ],
     },
     {
+      title: 'Reels',
+      tips: [
+        {
+          icon: 'refresh-outline',
+          title: 'Pull for newer reels',
+          body: 'On the first reel, pull down to refresh and load the newest posts in For You or Following.',
+        },
+        {
+          icon: 'film-outline',
+          title: 'Post & trim',
+          body: 'Trim, filter, and caption before you post. Uploads continue in the background from the status chip.',
+        },
+      ],
+    },
+    {
       title: 'Friends & groups',
       tips: [
         {
           icon: 'qr-code-outline',
           title: 'QR connect',
-          body: 'Share My QR code or Scan to add friends and link another device.',
+          body: 'Share My QR or Scan to add friends. Device-link codes work for a few minutes — hold steady until it confirms.',
         },
         {
           icon: 'people-outline',
           title: 'Groups',
           body: 'Create a group from Settings → New group, or add members from a group chat menu.',
+        },
+        {
+          icon: 'ban-outline',
+          title: 'Block',
+          body: 'Blocked people can’t find you in search, or show up in your reels and moments feeds.',
         },
       ],
     },
@@ -1270,6 +1419,9 @@ export default function ChatSettingsScreen() {
           onSave={onSaveTrim}
         />
       ) : null}
+
+      <Account2FASetupSheet visible={twoFaOpen} onClose={() => setTwoFaOpen(false)} />
+      <AccountDevicesSheet visible={devicesOpen} onClose={() => setDevicesOpen(false)} />
     </View>
   );
 }

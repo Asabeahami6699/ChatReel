@@ -4,7 +4,6 @@ import {
   View,
   Text,
   StyleSheet,
-  ActivityIndicator,
   TouchableOpacity,
   Image,
   useWindowDimensions,
@@ -44,15 +43,23 @@ import {
 import { FloatingActionMenu } from '../../components/FloatingActionMenu'
 import {
   chatListKey,
-  hideChatFromList,
   loadHiddenChatKeys,
-  unhideChatFromList,
   type ChatListEntryKind,
 } from '../../lib/chatListHidden'
+import {
+  hasVaultPin,
+  hideChatInVault,
+  looksLikeVaultCode,
+  loadVaultEntries,
+  verifyVaultPin,
+  type VaultChatEntry,
+} from '../../lib/chatVault'
+import { SecretSpaceSheet } from '../../components/SecretSpaceSheet'
 import { loadChatListMeta, patchChatListMeta, type ChatListMeta } from '../../lib/chatListMeta'
 import { messageStorage } from '../../utils/messageStorage'
 import { rememberChatThread, recallChatThread } from '../../lib/chatThreadCache'
 import { useAppBadge } from '../../hooks/useAppBadge'
+import { showAppToast } from '../../lib/appToast'
 
 type Props = { setSelectedChat?: (chat: any) => void }
 
@@ -147,7 +154,18 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
     kind: ChatListEntryKind
     id: string
     name: string
+    avatarUrl?: string | null
   } | null>(null)
+  const [secretSpaceOpen, setSecretSpaceOpen] = useState(false)
+  const [secretPreUnlocked, setSecretPreUnlocked] = useState(false)
+  const [pendingHide, setPendingHide] = useState<{
+    kind: ChatListEntryKind
+    id: string
+    name: string
+    avatarUrl?: string | null
+  } | null>(null)
+  const [vaultCount, setVaultCount] = useState(0)
+  const vaultSessionUntilRef = useRef(0)
   const [incomingRequests, setIncomingRequests] = useState<IncomingRequestRow[]>([])
   const [requestsLoading, setRequestsLoading] = useState(false)
   const searchInputRef = useRef<React.ComponentRef<typeof TextInput>>(null)
@@ -277,8 +295,14 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
   } = useGroupList(searchQuery)
 
   const reloadHiddenChats = useCallback(async () => {
-    setHiddenChatKeys(await loadHiddenChatKeys())
-    setListMeta(await loadChatListMeta())
+    const [keys, meta, vault] = await Promise.all([
+      loadHiddenChatKeys(),
+      loadChatListMeta(),
+      loadVaultEntries(),
+    ])
+    setHiddenChatKeys(keys)
+    setListMeta(meta)
+    setVaultCount(vault.length)
   }, [])
 
   useFocusEffect(
@@ -664,39 +688,44 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
     return item.last_message
   }
 
+  const openChatParams = useCallback(
+    async (params: {
+      chatId: string
+      chatType: 'group' | 'individual'
+      chatName: string
+      avatarUrl?: string | null
+    }) => {
+      if (!recallChatThread(params.chatId)) {
+        try {
+          const local = await messageStorage.getMessages(params.chatId)
+          if (Array.isArray(local) && local.length > 0) {
+            rememberChatThread(params.chatId, local)
+          }
+        } catch {
+          /* open anyway */
+        }
+      }
+
+      if (setSelectedChat) {
+        setSelectedChat(params)
+      } else {
+        navigation.navigate('ChatRoom', params)
+      }
+    },
+    [navigation, setSelectedChat]
+  )
+
   const handleChatPress = async (item: any, isGroup = false) => {
     if (!requireAuth('Sign in to open chats.')) return
-    const kind: ChatListEntryKind = isGroup ? 'group' : 'individual'
-    const chatId = isGroup ? item.id : item.user_id
-    if (hiddenChatKeys.has(chatListKey(kind, chatId))) {
-      setHiddenChatKeys(await unhideChatFromList(kind, chatId))
-    }
 
     const params = {
       chatId: isGroup ? item.id : item.user_id,
-      chatType: isGroup ? 'group' : 'individual',
+      chatType: (isGroup ? 'group' : 'individual') as 'group' | 'individual',
       chatName: item.name,
       avatarUrl: item.avatar_url,
     }
 
-    // Local-first: warm memory from SQLite/AsyncStorage before opening so the room
-    // paints stored messages immediately (WhatsApp-style), then syncs in background.
-    if (!recallChatThread(chatId)) {
-      try {
-        const local = await messageStorage.getMessages(chatId)
-        if (Array.isArray(local) && local.length > 0) {
-          rememberChatThread(chatId, local)
-        }
-      } catch {
-        /* open anyway */
-      }
-    }
-
-    if (setSelectedChat) {
-      setSelectedChat(params)
-    } else {
-      navigation.navigate('ChatRoom', params)
-    }
+    await openChatParams(params)
 
     if (!isGroup && item.unread_count > 0) {
       setIndividualUnreadCount((prev) => Math.max(0, prev - item.unread_count))
@@ -708,22 +737,67 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
     }
   }
 
-  const handleHideChat = useCallback(
-    async (kind: ChatListEntryKind, id: string) => {
-      setHiddenChatKeys(await hideChatFromList(kind, id))
+  const commitHideChat = useCallback(
+    async (kind: ChatListEntryKind, id: string, name: string, avatarUrl?: string | null) => {
+      const entries = await hideChatInVault({ kind, id, name, avatarUrl })
+      setHiddenChatKeys(new Set(entries.map((e) => chatListKey(e.kind, e.id))))
+      setVaultCount(entries.length)
+      showAppToast('Hidden in Secret Space · hold the ChatReel logo')
     },
     []
   )
 
+  const handleHideChat = useCallback(
+    async (kind: ChatListEntryKind, id: string, name: string, avatarUrl?: string | null) => {
+      const hasPin = await hasVaultPin()
+      if (!hasPin) {
+        setPendingHide({ kind, id, name, avatarUrl })
+        setSecretPreUnlocked(false)
+        setSecretSpaceOpen(true)
+        return
+      }
+      await commitHideChat(kind, id, name, avatarUrl)
+    },
+    [commitHideChat]
+  )
+
   const handleDeleteChat = useCallback(
-    async (kind: ChatListEntryKind, id: string) => {
-      setHiddenChatKeys(await hideChatFromList(kind, id))
+    async (kind: ChatListEntryKind, id: string, name: string, avatarUrl?: string | null) => {
+      // Delete clears local history and parks the row in Secret Space (same as hide).
+      const entries = await hideChatInVault({ kind, id, name, avatarUrl })
+      setHiddenChatKeys(new Set(entries.map((e) => chatListKey(e.kind, e.id))))
+      setVaultCount(entries.length)
       try {
         await api.chatSettings.update(kind, id, { cleared_at: new Date().toISOString() })
         await messageStorage.clearMessages(id)
       } catch {
         /* still hidden locally */
       }
+    },
+    []
+  )
+
+  const openSecretSpace = useCallback(async (opts?: { preUnlocked?: boolean }) => {
+    if (!requireAuth('Sign in to open Secret Space.')) return
+    const sessionFresh = Date.now() < vaultSessionUntilRef.current
+    setSecretPreUnlocked(Boolean(opts?.preUnlocked || sessionFresh))
+    setPendingHide(null)
+    setSecretSpaceOpen(true)
+  }, [requireAuth])
+
+  const trySearchVaultUnlock = useCallback(
+    async (text: string) => {
+      if (!looksLikeVaultCode(text)) return
+      if (!(await hasVaultPin())) return
+      const ok = await verifyVaultPin(text.trim())
+      if (!ok) return
+      vaultSessionUntilRef.current = Date.now() + 3 * 60 * 1000
+      setSearchQuery('')
+      setSearchOpen(false)
+      setSecretPreUnlocked(true)
+      setPendingHide(null)
+      setSecretSpaceOpen(true)
+      showAppToast('Secret Space unlocked')
     },
     []
   )
@@ -743,6 +817,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
         kind,
         id,
         name: item.name ?? 'Chat',
+        avatarUrl: item.avatar_url ?? null,
       })
     },
     []
@@ -927,9 +1002,8 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
             isOnline={isOnline}
             header={offlineOrStaleHeader}
             empty={
-              individualLoading || groupsLoading || requestsLoading ? (
-                <ActivityIndicator size="large" color={theme.primary} style={styles.loader} />
-              ) : (
+              allFeedItems.length === 0 &&
+              (individualLoading || groupsLoading || requestsLoading) ? null : (
                 <EmptyState
                   title="Nothing here yet"
                   subtitle={
@@ -970,9 +1044,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
               ) : null
             }
             empty={
-              individualLoading ? (
-                <ActivityIndicator size="large" color={theme.primary} style={styles.loader} />
-              ) : (
+              individualLoading && visibleIndividualChats.length === 0 ? null : (
                 <EmptyState
                   title="No conversations yet"
                   subtitle={
@@ -1013,9 +1085,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
               ) : null
             }
             empty={
-              groupsLoading ? (
-                <ActivityIndicator size="large" color={theme.primary} style={styles.loader} />
-              ) : (
+              groupsLoading && visibleGroupChats.length === 0 ? null : (
                 <EmptyState
                   title="No groups yet"
                   subtitle="Create or join a group to start chatting"
@@ -1091,6 +1161,13 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
 
   const renderFabMenu = (actions: readonly FabAction[]) => (
     <>
+      {fabMenuOpen ? (
+        <Pressable
+          style={styles.fabDismissOverlay}
+          onPress={closeFabMenu}
+          accessibilityLabel="Dismiss action menu"
+        />
+      ) : null}
       {actions.map((action, actionIndex) => {
         const lift = (actionIndex + 1) * 64
         return (
@@ -1188,10 +1265,18 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
           },
         ]}
       >
-        <View style={styles.brandRow}>
-          <Image source={APP_LOGO} style={styles.appLogo} resizeMode="contain" />
+        <Pressable
+          style={styles.brandRow}
+          onLongPress={() => void openSecretSpace()}
+          delayLongPress={480}
+          accessibilityLabel="ChatReel — hold for Secret Space"
+        >
+          <View>
+            <Image source={APP_LOGO} style={styles.appLogo} resizeMode="contain" />
+            {vaultCount > 0 ? <View style={styles.vaultDot} /> : null}
+          </View>
           <Text style={[styles.appName, { color: theme.listHeaderText }]}>{APP_NAME}</Text>
-        </View>
+        </Pressable>
 
         <View style={styles.navbarSpacer} />
 
@@ -1260,7 +1345,10 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
                 placeholder="Search chats, groups & friends"
                 placeholderTextColor={theme.searchPlaceholder}
                 value={searchQuery}
-                onChangeText={setSearchQuery}
+                onChangeText={(text) => {
+                  setSearchQuery(text)
+                  void trySearchVaultUnlock(text)
+                }}
                 onSubmitEditing={() => {
                   const trimmed = searchQuery.trim()
                   if (trimmed) addToSearchHistory(trimmed)
@@ -1401,18 +1489,60 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
                 },
                 {
                   key: 'hide',
-                  label: 'Hide',
-                  onPress: () => void handleHideChat(chatMenu.kind, chatMenu.id),
+                  label: 'Hide in Secret Space',
+                  onPress: () =>
+                    void handleHideChat(
+                      chatMenu.kind,
+                      chatMenu.id,
+                      chatMenu.name,
+                      chatMenu.avatarUrl
+                    ),
                 },
                 {
                   key: 'delete',
                   label: 'Delete chat',
                   destructive: true,
-                  onPress: () => void handleDeleteChat(chatMenu.kind, chatMenu.id),
+                  onPress: () =>
+                    void handleDeleteChat(
+                      chatMenu.kind,
+                      chatMenu.id,
+                      chatMenu.name,
+                      chatMenu.avatarUrl
+                    ),
                 },
               ]
             : []
         }
+      />
+
+      <SecretSpaceSheet
+        visible={secretSpaceOpen}
+        preUnlocked={secretPreUnlocked}
+        pendingHide={pendingHide}
+        onClose={() => {
+          setSecretSpaceOpen(false)
+          setPendingHide(null)
+          setSecretPreUnlocked(false)
+        }}
+        onSetupComplete={() => {
+          if (!pendingHide) return
+          const target = pendingHide
+          setPendingHide(null)
+          void commitHideChat(target.kind, target.id, target.name, target.avatarUrl)
+        }}
+        onOpenChat={(entry: VaultChatEntry) => {
+          vaultSessionUntilRef.current = Date.now() + 3 * 60 * 1000
+          void openChatParams({
+            chatId: entry.id,
+            chatType: entry.kind === 'group' ? 'group' : 'individual',
+            chatName: entry.name,
+            avatarUrl: entry.avatarUrl,
+          })
+        }}
+        onEntriesChanged={(entries) => {
+          setHiddenChatKeys(new Set(entries.map((e) => chatListKey(e.kind, e.id))))
+          setVaultCount(entries.length)
+        }}
       />
     </SafeAreaView>
   )
@@ -1432,6 +1562,17 @@ const styles = StyleSheet.create({
   },
   navbarNarrow: {
     paddingHorizontal: 8,
+  },
+  vaultDot: {
+    position: 'absolute',
+    top: -1,
+    right: -1,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#5c6bc0',
+    borderWidth: 1.5,
+    borderColor: '#fff',
   },
   appLogo: {
     width: 36,
@@ -1822,21 +1963,28 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 12,
     backgroundColor: '#007AFF',
-    ...(Platform.OS === 'web'
-      ? { zIndex: 12 }
-      : {}),
+    zIndex: 40,
+    elevation: 40,
   },
   fabOpen: {
     backgroundColor: '#007AFF',
   },
+  fabDismissOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 20,
+    elevation: 20,
+  },
   fabActionRow: {
     position: 'absolute',
     right: 12,
+    zIndex: 30,
+    elevation: 30,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end',
     gap: 10,
-    ...(Platform.OS === 'web' ? { zIndex: 11 } : {}),
+    zIndex: 30,
+    elevation: 30,
   },
   fabActionLabel: {
     backgroundColor: '#fff',

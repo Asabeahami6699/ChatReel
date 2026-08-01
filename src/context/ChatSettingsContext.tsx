@@ -28,6 +28,10 @@ export type ChatAppSettings = {
   saveMediaToGallery: boolean;
   /** Prefer unlocking the app with device biometrics when available. */
   appLockBiometric: boolean;
+  /** Lock only the Chats tab (separate from full App lock). */
+  chatLockEnabled: boolean;
+  /** Hide call video / show privacy cover when leaving the app mid-call. */
+  callPrivacyOnBackground: boolean;
   mediaAutoDownload: boolean;
   enterToSend: boolean;
   compactChatList: boolean;
@@ -51,6 +55,8 @@ const DEFAULT_SETTINGS: ChatAppSettings = {
   linkPreviews: true,
   saveMediaToGallery: false,
   appLockBiometric: false,
+  chatLockEnabled: false,
+  callPrivacyOnBackground: true,
   mediaAutoDownload: true,
   enterToSend: false,
   compactChatList: false,
@@ -66,7 +72,7 @@ type ChatSettingsContextValue = {
   ready: boolean;
 };
 
-const ChatSettingsContext = createContext<ChatSettingsContextValue | null>(null);
+export const ChatSettingsContext = createContext<ChatSettingsContextValue | null>(null);
 
 export function ChatSettingsProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();

@@ -132,8 +132,8 @@ export default function ChatRoomScreen() {
   const [messages, setMessages] = useState<Message[]>(() => cachedThread ?? []);
   const [loading, setLoading] = useState(() => !(cachedThread && cachedThread.length > 0));
   const [loadingMore, setLoadingMore] = useState(false);
-  // Header sits outside KeyboardAvoidingView; iOS only needs a small offset.
-  const keyboardVerticalOffset = Platform.OS === 'ios' ? 8 : 0;
+  // Header sits outside KeyboardAvoidingView.
+  const keyboardVerticalOffset = Platform.OS === 'ios' ? 70 + insets.top : 0;
 
   const [hasMore, setHasMore] = useState(true);
   const [isPlayingAudio, setIsPlayingAudio] = useState<string | null>(null);
@@ -147,9 +147,17 @@ export default function ChatRoomScreen() {
   const [hasAudioPermission, setHasAudioPermission] = useState<boolean>(false);
   const [pendingAttachments, setPendingAttachments] = useState<AttachmentFile[]>([]);
   const [showAttachmentPreview, setShowAttachmentPreview] = useState(false);
-  const [mediaViewer, setMediaViewer] = useState<{ visible: boolean; index: number }>({
+  const [mediaViewer, setMediaViewer] = useState<{
+    visible: boolean;
+    index: number;
+    /** Frozen list so view-once URI stripping cannot crash the viewer mid-open. */
+    items: ChatMediaItem[];
+    consumeId: string | null;
+  }>({
     visible: false,
     index: 0,
+    items: [],
+    consumeId: null,
   });
   const [sharedMediaOpen, setSharedMediaOpen] = useState(false);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
@@ -211,7 +219,7 @@ export default function ChatRoomScreen() {
   const [expiryTick, setExpiryTick] = useState(0);
   useEffect(() => {
     if (!messages.some((m) => m.expires_at)) return;
-    const id = setInterval(() => setExpiryTick((t) => t + 1), 5000);
+    const id = setInterval(() => setExpiryTick((t) => t + 1), 1000);
     return () => clearInterval(id);
   }, [messages]);
 
@@ -227,6 +235,8 @@ export default function ChatRoomScreen() {
 
   const pendingRetryRef = useRef<boolean>(false);
   const syncInProgressRef = useRef<boolean>(false);
+  /** IDs of view-once messages already opened — ignore realtime resurrection. */
+  const consumedViewOnceIdsRef = useRef<Set<string>>(new Set());
   const pullLatestAtRef = useRef(0);
   const messagesCountRef = useRef(0);
   const lastMessageAtRef = useRef<string | null>(null);
@@ -250,7 +260,7 @@ export default function ChatRoomScreen() {
     flatListRef,
     showScrollDown,
     isKeyboardVisible,
-    keyboardHeight: _keyboardHeight,
+    keyboardHeight,
     shouldStickToBottomRef: shouldScrollToBottomRef,
     scrollToBottom,
     scrollToBottomAndStick,
@@ -269,6 +279,12 @@ export default function ChatRoomScreen() {
     initialLoadComplete,
     onLoadMore: () => loadMoreMessagesRef.current(),
   });
+
+  // Edge-to-edge Android often ignores window resize — pad the composer manually.
+  const androidKeyboardPad =
+    Platform.OS === 'android' && isKeyboardVisible
+      ? Math.max(0, keyboardHeight - insets.bottom)
+      : 0;
 
   const persistMessages = useCallback(
     (updater: (prev: Message[]) => Message[]) => {
@@ -326,8 +342,17 @@ export default function ChatRoomScreen() {
     }
     try {
       const { pinned } = await api.chatSettings.pinned(chatType, chatId);
+      const localThread = ((await messageStorage.getMessages(chatId)) as Message[]) ?? [];
       const list = (pinned ?? [])
-        .map((row) => (row as { messages?: Message }).messages)
+        .map((row) => {
+          const nested = (row as { messages?: Message | Message[] | null }).messages;
+          const fromApi = Array.isArray(nested) ? nested[0] : nested;
+          if (fromApi?.id) return fromApi;
+          const mid = (row as { message_id?: string }).message_id;
+          if (!mid) return null;
+          // Fallback: resolve from local thread when the join is empty.
+          return localThread.find((m) => m.id === mid) ?? null;
+        })
         .filter((m): m is Message => Boolean(m?.id));
       setPinnedMessages(list);
       setPinFocusIdx(0);
@@ -515,7 +540,8 @@ export default function ChatRoomScreen() {
             if (prev.some((m) => m.id === msg.id)) return prev;
             return [msg, ...prev];
           });
-          Alert.alert('Pinned', 'Message pinned in this chat');
+          setPinFocusIdx(0);
+          showAppToast('Message pinned');
         } catch (err) {
           const detail =
             err instanceof ApiError
@@ -1707,6 +1733,7 @@ export default function ChatRoomScreen() {
       localThumbUri?: string;
       expiresAt?: string | null;
       viewOnce?: boolean;
+      viewOnceAutoCloseSec?: number | null;
       caption?: string;
     }
   ) => {
@@ -1740,6 +1767,9 @@ export default function ChatRoomScreen() {
       is_read: false,
       ...(options?.expiresAt ? { expires_at: options.expiresAt } : {}),
       ...(options?.viewOnce ? { view_once: true } : {}),
+      ...(options?.viewOnce && options.viewOnceAutoCloseSec
+        ? { view_once_auto_close_sec: options.viewOnceAutoCloseSec }
+        : {}),
       profiles: {
         display_name: 'You',
         avatar_url: null,
@@ -1849,6 +1879,9 @@ export default function ChatRoomScreen() {
 
       if (options?.expiresAt) payload.expires_at = options.expiresAt;
       if (options?.viewOnce) payload.view_once = true;
+      if (options?.viewOnce && options.viewOnceAutoCloseSec) {
+        payload.view_once_auto_close_sec = options.viewOnceAutoCloseSec;
+      }
 
       if (chatType === 'individual') {
         payload.receiver_id = chatId;
@@ -1963,6 +1996,7 @@ export default function ChatRoomScreen() {
                   localThumbUri: file.thumbnail,
                   expiresAt: visibilityToExpiry(file.expiresInSeconds),
                   viewOnce: file.viewOnce,
+                  viewOnceAutoCloseSec: file.viewOnceAutoCloseSec,
                   caption: file.caption,
                 }
               );
@@ -2005,6 +2039,7 @@ export default function ChatRoomScreen() {
               localThumbUri: file.thumbnail,
               expiresAt: visibilityToExpiry(file.expiresInSeconds),
               viewOnce: file.viewOnce,
+              viewOnceAutoCloseSec: file.viewOnceAutoCloseSec,
               caption: file.caption,
             }
           );
@@ -2831,19 +2866,29 @@ export default function ChatRoomScreen() {
       .filter((m) => m.message_type === 'image' || m.message_type === 'video')
       .filter((m) => {
         if (!m.view_once) return true;
-        // Sender never browses their own view-once media after send.
-        if (m.sender_id === user?.id) return false;
         return !m.viewed_at;
       })
-      .map((m) => ({
-        id: m.id,
-        type: m.message_type as 'image' | 'video',
-        uri: getImageUri(m),
-        senderName: m.profiles?.display_name,
-        createdAt: m.created_at,
-      }))
+      .map((m) => {
+        const captionText = (m.decrypted || m.content || '').trim();
+        const showCaption =
+          Boolean(captionText) &&
+          captionText !== (m.file_name || '') &&
+          !/^[a-zA-Z0-9._-]+\.(jpe?g|png|gif|webp|heic|mp4|mov|mkv|pdf|docx?)$/i.test(
+            captionText
+          );
+        return {
+          id: m.id,
+          type: m.message_type as 'image' | 'video',
+          uri: getImageUri(m),
+          senderName: m.profiles?.display_name,
+          createdAt: m.created_at,
+          caption: showCaption ? captionText : undefined,
+          viewOnce: Boolean(m.view_once),
+          autoCloseSec: m.view_once_auto_close_sec ?? null,
+        };
+      })
       .filter((item) => Boolean(item.uri));
-  }, [visibleMessages, getImageUri, user?.id]);
+  }, [visibleMessages, getImageUri]);
 
   const handleViewMedia = useCallback(() => {
     setSharedMediaOpen(true);
@@ -2932,50 +2977,88 @@ export default function ChatRoomScreen() {
     handleExportChat,
   ]);
 
-  const viewOnceToConsumeRef = useRef<string | null>(null);
-  const consumedViewOnceIdsRef = useRef<Set<string>>(new Set());
-
   const openMediaViewer = useCallback(
     (messageId: string) => {
       const msg = replyLookup.get(messageId);
-      if (msg?.view_once && msg.sender_id === user?.id) {
-        // Covered for the sender — cannot open.
-        return;
+      if (!msg) return;
+
+      const uri = getImageUri(msg);
+      if (!uri) return;
+
+      const captionText = (msg.decrypted || msg.content || '').trim();
+      const showCaption =
+        Boolean(captionText) &&
+        captionText !== (msg.file_name || '') &&
+        !/^[a-zA-Z0-9._-]+\.(jpe?g|png|gif|webp|heic|mp4|mov|mkv|pdf|docx?)$/i.test(
+          captionText
+        );
+
+      const snapshotItem: ChatMediaItem = {
+        id: msg.id,
+        type: (msg.message_type === 'video' ? 'video' : 'image') as 'image' | 'video',
+        uri,
+        senderName: msg.profiles?.display_name,
+        createdAt: msg.created_at,
+        caption: showCaption ? captionText : undefined,
+        viewOnce: Boolean(msg.view_once),
+        autoCloseSec: msg.view_once_auto_close_sec ?? null,
+      };
+
+      // Freeze a session copy — never strip URI before the viewer mounts (crash fix).
+      let items = chatMediaItems.map((item) =>
+        item.id === messageId
+          ? {
+              ...item,
+              uri,
+              caption: snapshotItem.caption,
+              autoCloseSec: snapshotItem.autoCloseSec,
+            }
+          : item
+      );
+      let idx = items.findIndex((item) => item.id === messageId);
+      if (idx < 0) {
+        items = [snapshotItem];
+        idx = 0;
       }
-      const idx = chatMediaItems.findIndex((item) => item.id === messageId);
-      if (idx >= 0) {
-        if (msg?.view_once && msg.sender_id !== user?.id && !msg.viewed_at) {
-          viewOnceToConsumeRef.current = messageId;
-          consumedViewOnceIdsRef.current.add(messageId);
-          // Optimistically strip local media so it can't be reopened.
-          persistMessages((prev) =>
-            prev.map((m) =>
-              m.id === messageId
+
+      let consumeId: string | null = null;
+      if (msg.view_once && msg.sender_id !== user?.id && !msg.viewed_at) {
+        consumeId = messageId;
+        void api.messages.markViewed(messageId).catch(() => undefined);
+      }
+
+      setMediaViewer({
+        visible: true,
+        index: Math.max(0, idx),
+        items,
+        consumeId,
+      });
+    },
+    [chatMediaItems, replyLookup, user?.id, getImageUri]
+  );
+
+  const closeMediaViewer = useCallback(() => {
+    setMediaViewer((prev) => {
+      const consumed = prev.consumeId;
+      if (consumed) {
+        // Strip + remove only after the viewer closes.
+        persistMessages((list) =>
+          list
+            .map((m) =>
+              m.id === consumed
                 ? {
                     ...m,
-                    viewed_at: new Date().toISOString(),
+                    viewed_at: m.viewed_at || new Date().toISOString(),
                     file_url: undefined,
                     local_file_uri: undefined,
                   }
                 : m
             )
-          );
-          void api.messages.markViewed(messageId).catch(() => undefined);
-        }
-        setMediaViewer({ visible: true, index: idx });
+            .filter((m) => m.id !== consumed)
+        );
       }
-    },
-    [chatMediaItems, replyLookup, user?.id, persistMessages]
-  );
-
-  const closeMediaViewer = useCallback(() => {
-    setMediaViewer((prev) => ({ ...prev, visible: false }));
-    const consumed = viewOnceToConsumeRef.current;
-    if (consumed) {
-      viewOnceToConsumeRef.current = null;
-      // View-once: remove for this device after close; server marks viewed for both.
-      persistMessages((prev) => prev.filter((m) => m.id !== consumed));
-    }
+      return { visible: false, index: 0, items: [], consumeId: null };
+    });
   }, [persistMessages]);
 
   /* ------------------------------------------------------------------ */
@@ -3085,8 +3168,8 @@ export default function ChatRoomScreen() {
   /* ------------------------------------------------------------------ */
   return (
     <SafeAreaView
-      style={[styles.container, { backgroundColor: theme.headerBg }]}
-      edges={['top', 'left', 'right']}
+      style={[styles.container, { backgroundColor: chatBgColor }]}
+      edges={['left', 'right']}
     >
       <StatusBar
         barStyle="light-content"
@@ -3098,7 +3181,9 @@ export default function ChatRoomScreen() {
           styles.header,
           {
             backgroundColor: theme.headerBg,
-            height: 70,
+            marginTop: -insets.top,
+            paddingTop: insets.top,
+            height: 70 + insets.top,
           },
         ]}
       >
@@ -3167,9 +3252,10 @@ export default function ChatRoomScreen() {
       )}
 
       <KeyboardAvoidingView
-        style={{ flex: 1, backgroundColor: chatBgColor }}
+        style={{ flex: 1, backgroundColor: chatBgColor, paddingBottom: androidKeyboardPad }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={keyboardVerticalOffset}
+        enabled={Platform.OS === 'ios'}
       >
         <View style={[styles.chatBody, { backgroundColor: chatBgColor }]}>
           {wallpaperImageUri ? (
@@ -3353,7 +3439,7 @@ export default function ChatRoomScreen() {
       />
 
       <ChatMediaViewer
-        items={chatMediaItems}
+        items={mediaViewer.items}
         initialIndex={mediaViewer.index}
         visible={mediaViewer.visible}
         onClose={closeMediaViewer}
@@ -3365,12 +3451,8 @@ export default function ChatRoomScreen() {
         chatName={chatName}
         onClose={() => setSharedMediaOpen(false)}
         onOpenMedia={(messageId) => {
-          const idx = chatMediaItems.findIndex((item) => item.id === messageId);
-          if (idx < 0) {
-            showAppToast('Could not open media', { isError: true });
-            return;
-          }
-          setMediaViewer({ visible: true, index: idx });
+          setSharedMediaOpen(false);
+          openMediaViewer(messageId);
         }}
         onJumpToMessage={(messageId) => {
           setSharedMediaOpen(false);
@@ -3463,7 +3545,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     backgroundColor: chatTheme.headerBg,
-    height: 70,
     paddingHorizontal: 4,
     elevation: 4,
     shadowColor: '#000',

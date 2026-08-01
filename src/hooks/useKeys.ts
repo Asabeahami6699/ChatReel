@@ -1,7 +1,6 @@
 // hooks/useKeys.ts
 import { useEffect } from 'react';
 import { InteractionManager } from 'react-native';
-import { api } from '../lib/api';
 import { encode, generateKeyPair } from '../lib/crypto';
 import { ensureLocalIdentity } from '../lib/messageCrypto';
 import {
@@ -9,15 +8,10 @@ import {
   setSecretItem,
   signedPrekeyPrivateKeyId,
 } from '../lib/keyStore';
-import {
-  createOneTimePreKeys,
-  ensureSignalIdentity,
-  localOpkCount,
-  toB64,
-} from '../lib/signal/signalStore';
+import { publishSignalKeys } from '../lib/signal/publishKeys';
 
 /** Defer heavy crypto/network so first paint and taps stay responsive. */
-const KEYS_WARM_DELAY_MS = 2800;
+const KEYS_WARM_DELAY_MS = 800;
 
 async function ensureLegacySecpSignedPrekeyLocal(userId: string): Promise<void> {
   // Kept locally for any legacy tooling; Signal SPK is what we publish now.
@@ -26,30 +20,6 @@ async function ensureLegacySecpSignedPrekeyLocal(userId: string): Promise<void> 
     const { privateKey } = await generateKeyPair();
     signed = encode(privateKey);
     await setSecretItem(signedPrekeyPrivateKeyId(userId), signed);
-  }
-}
-
-/** Publish X25519 identity + Ed25519 signing + signed prekey + OTPs (Signal). */
-async function ensureSignalKeysPublished(userId: string): Promise<void> {
-  const id = await ensureSignalIdentity(userId);
-
-  await api.keys.register(toB64(id.identityPub), 'identity_x25519', {
-    registration_id: id.registrationId,
-  });
-  await api.keys.register(toB64(id.signingPub), 'signing', {
-    registration_id: id.registrationId,
-  });
-  await api.keys.register(toB64(id.spkPub), 'signed_prekey', {
-    key_id: id.spkId,
-    signature: toB64(id.spkSignature),
-    registration_id: id.registrationId,
-  });
-
-  const localCount = await localOpkCount(userId);
-  const { count: remoteCount } = await api.keys.prekeyCount();
-  if (localCount < 40 || remoteCount < 40) {
-    const batch = await createOneTimePreKeys(userId, 80);
-    await api.keys.registerSignalPrekeys(batch);
   }
 }
 
@@ -69,7 +39,7 @@ export const useKeys = (userId: string) => {
         if (cancelled) return;
 
         // Signal X3DH bundle (identity_x25519 + SPK + OTPs with private keys).
-        await ensureSignalKeysPublished(userId);
+        await publishSignalKeys(userId);
       } catch (err) {
         console.warn('[useKeys] init failed:', err);
       }

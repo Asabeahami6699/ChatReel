@@ -90,7 +90,10 @@ export type FetchCandidatesParams = {
   profileId: string;
   friendIds: string[];
   viewerAuthUserId: string;
+  /** Legacy chronological cursor — only applied to the "recent" source. */
   cursor?: string;
+  /** IDs already shown in the client playlist — required for For You pagination. */
+  excludeIds?: Set<string>;
   targetCount?: number;
 };
 
@@ -293,7 +296,8 @@ function applyPenalties(
   let penalty = 0;
   const ageHours = Math.max(0, (now.getTime() - new Date(reel.created_at).getTime()) / 3_600_000);
   if (interest.watchedReelIds.has(reel.id)) {
-    penalty += ageHours < 48 ? 0.08 : 0.45;
+    // Strong demotion so For You rotates past already-watched items.
+    penalty += ageHours < 48 ? 0.55 : 1.1;
   }
   if (interest.likedReelIds.has(reel.id)) penalty += 0.15;
   if (interest.notInterestedReelIds.has(reel.id)) penalty += 10;
@@ -453,11 +457,21 @@ export async function buildUserInterestProfile(profileId: string): Promise<UserI
 /* -------------------------------------------------------------------------- */
 
 export async function fetchCandidateReels(params: FetchCandidatesParams): Promise<ReelCandidate[]> {
-  const { profileId, friendIds, viewerAuthUserId, cursor, targetCount = 500 } = params;
-  const perSource = Math.ceil(targetCount / 5);
+  const {
+    profileId,
+    friendIds,
+    viewerAuthUserId,
+    cursor,
+    excludeIds,
+    targetCount = 500,
+  } = params;
+  // Pull wider pools so exclude-based paging still has fresh inventory.
+  const perSource = Math.max(40, Math.ceil(targetCount / 4));
   const visibility = visibilityFilterClause(profileId, friendIds);
+  // Skip into popular/trending when the client already consumed the first page.
+  const popularityOffset = Math.min(200, excludeIds?.size ?? 0);
 
-  const baseQuery = () => {
+  const recentQuery = () => {
     let q = supabaseAdmin
       .from('reels')
       .select('*')
@@ -470,7 +484,7 @@ export async function fetchCandidateReels(params: FetchCandidatesParams): Promis
   };
 
   const [recentRes, popularRes, trendingRes, followedRes] = await Promise.all([
-    baseQuery(),
+    recentQuery(),
     supabaseAdmin
       .from('reels')
       .select('*')
@@ -478,7 +492,7 @@ export async function fetchCandidateReels(params: FetchCandidatesParams): Promis
       .or(visibility)
       .order('view_count', { ascending: false })
       .order('like_count', { ascending: false })
-      .limit(perSource),
+      .range(popularityOffset, popularityOffset + perSource - 1),
     supabaseAdmin
       .from('reels')
       .select('*')
@@ -486,15 +500,19 @@ export async function fetchCandidateReels(params: FetchCandidatesParams): Promis
       .or(visibility)
       .order('like_count', { ascending: false })
       .order('created_at', { ascending: false })
-      .limit(perSource),
+      .range(popularityOffset, popularityOffset + perSource - 1),
     friendIds.length
-      ? supabaseAdmin
-          .from('reels')
-          .select('*')
-          .eq('moderation_status', 'approved')
-          .in('author_id', friendIds)
-          .order('created_at', { ascending: false })
-          .limit(perSource)
+      ? (() => {
+          let q = supabaseAdmin
+            .from('reels')
+            .select('*')
+            .eq('moderation_status', 'approved')
+            .in('author_id', friendIds)
+            .order('created_at', { ascending: false })
+            .limit(perSource);
+          if (cursor) q = q.lt('created_at', cursor);
+          return q;
+        })()
       : Promise.resolve({ data: [], error: null }),
   ]);
 
@@ -535,11 +553,12 @@ export async function fetchCandidateReels(params: FetchCandidatesParams): Promis
   add(followedRes.data as ReelRow[], 'followed');
   add(hashtagReels, 'hashtag');
 
-  const all = Array.from(merged.values());
+  const all = Array.from(merged.values()).filter((r) => !excludeIds?.has(r.id));
   const visibleRows = await filterVisibleReels(all, profileId, new Set(friendIds), viewerAuthUserId);
   const visible: ReelCandidate[] = visibleRows
     .map((r) => merged.get(r.id))
-    .filter((r): r is ReelCandidate => Boolean(r));
+    .filter((r): r is ReelCandidate => Boolean(r))
+    .filter((r) => !excludeIds?.has(r.id));
 
   for (const reel of visible) {
     if (!interest.watchedReelIds.has(reel.id)) reel.sources.add('unwatched');
@@ -636,13 +655,18 @@ export function scoreCandidates(
       return { reel, finalScore: score, bucket, metrics };
     });
 
-  // Score still guides quality, but a large random jitter prevents FCFS / chronological lock-in.
-  for (const item of scored) {
-    item.finalScore += Math.random() * 1.35;
+  // Prefer unwatched inventory when the pool is large enough — stops the same
+  // already-seen list from dominating every request.
+  const unwatched = scored.filter((s) => !interest.watchedReelIds.has(s.reel.id));
+  const pool = unwatched.length >= Math.max(8, scored.length * 0.35) ? unwatched : scored;
+
+  // Score still guides quality, but a large random jitter prevents FCFS lock-in.
+  for (const item of pool) {
+    item.finalScore += Math.random() * 2.1;
   }
-  shuffleInPlace(scored);
-  scored.sort((a, b) => b.finalScore - a.finalScore);
-  return scored;
+  shuffleInPlace(pool);
+  pool.sort((a, b) => b.finalScore - a.finalScore);
+  return pool;
 }
 
 export function applyDiversityRules(
@@ -749,6 +773,26 @@ export async function recommendReelsForUser(
   const scored = scoreCandidates(candidates, interest, options);
   const diverse = applyDiversityRules(scored, limit, interest);
   return diverse.map((s) => s.reel);
+}
+
+/**
+ * Rank candidates and report whether more inventory exists beyond `limit`
+ * (for exclude-based For You pagination).
+ */
+export async function recommendReelsPageForUser(
+  profileId: string,
+  candidates: ReelCandidate[],
+  options: RecommendOptions = {}
+): Promise<{ reels: ReelRow[]; hasMore: boolean }> {
+  const limit = options.limit ?? 20;
+  const interest = await buildUserInterestProfile(profileId);
+  const scored = scoreCandidates(candidates, interest, options);
+  const diverse = applyDiversityRules(scored, limit + 1, interest);
+  const reels = diverse.slice(0, limit).map((s) => s.reel);
+  // True when ranking produced a spillover item, or a full page with leftover candidates.
+  const hasMore =
+    diverse.length > limit || (reels.length >= limit && candidates.length > limit + 4);
+  return { reels, hasMore };
 }
 
 /* -------------------------------------------------------------------------- */

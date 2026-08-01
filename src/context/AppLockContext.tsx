@@ -11,6 +11,7 @@ import { AppState, type AppStateStatus, Platform } from 'react-native';
 import { useAuth } from '../hooks/useAuth';
 import { useChatSettings } from './ChatSettingsContext';
 import { authenticateAppUnlock } from '../lib/appLock';
+import { isPrivacyLockPaused } from '../lib/privacyLockPause';
 
 type AppLockContextValue = {
   /** True when the privacy gate should cover the app. */
@@ -67,13 +68,21 @@ export function AppLockProvider({ children }: { children: React.ReactNode }) {
       const prev = appStateRef.current;
       appStateRef.current = next;
 
-      if (next === 'background') {
+      // Gallery / camera / share sheets background the app — don't lock over them.
+      if (isPrivacyLockPaused()) {
+        return;
+      }
+
+      if (next === 'background' || next === 'inactive') {
+        // Prefer locking on true background; ignore brief inactive blips.
+        if (next === 'inactive') return;
         setLocked(true);
         autoPromptedRef.current = false;
         return;
       }
 
       if (prev === 'background' && next === 'active') {
+        if (isPrivacyLockPaused()) return;
         setLocked((was) => {
           if (!was) autoPromptedRef.current = false;
           return true;

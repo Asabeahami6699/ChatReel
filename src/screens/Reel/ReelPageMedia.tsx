@@ -92,5 +92,9 @@ const styles = StyleSheet.create({
   },
   endScreen: {
     ...StyleSheet.absoluteFillObject,
+    zIndex: 40,
+    elevation: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

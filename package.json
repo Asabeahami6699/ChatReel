@@ -59,6 +59,7 @@
     "expo-media-library": "~56.0.9",
     "expo-navigation-bar": "~56.0.3",
     "expo-notifications": "~56.0.15",
+    "expo-screen-capture": "~56.0.4",
     "expo-secure-store": "~56.0.4",
     "expo-splash-screen": "~56.0.10",
     "expo-sqlite": "~56.0.5",

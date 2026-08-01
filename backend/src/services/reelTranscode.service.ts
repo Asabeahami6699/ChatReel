@@ -36,17 +36,25 @@ type ResolvedSoundMix = {
   soundVolume: number;
 };
 
-export function hasMeaningfulTrim(trim?: ReelTrimOptions | null): boolean {
+export function hasMeaningfulTrim(
+  trim?: ReelTrimOptions | null,
+  fullDurationSec?: number | null
+): boolean {
   if (!trim) return false;
   const start = Number(trim.trimStartSec ?? 0);
   const end = trim.trimEndSec != null ? Number(trim.trimEndSec) : null;
+  if (!Number.isFinite(start) || start < 0) return false;
   if (start > 0.05) return true;
-  if (end != null && Number.isFinite(end) && end > start + 0.05) {
-    // Meaningful only when end is clearly shorter than a "full clip" sentinel.
-    // Callers usually omit trimEnd when it equals full duration.
-    return true;
+  if (end == null || !Number.isFinite(end) || end <= start + 0.05) return false;
+  if (
+    fullDurationSec != null &&
+    Number.isFinite(fullDurationSec) &&
+    end >= fullDurationSec - 0.05
+  ) {
+    return false;
   }
-  return false;
+  // Client omits trimEnd when it equals the full duration, so a present end means a cut.
+  return true;
 }
 
 /** Map UI filter presets to FFmpeg video filters (approx. the preview overlays). */

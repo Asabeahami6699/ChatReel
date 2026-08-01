@@ -46,6 +46,8 @@ type AttachmentFile = {
   duration?: number;
   expiresInSeconds?: number | null;
   viewOnce?: boolean;
+  /** Auto-close viewer after N seconds when view-once is opened. */
+  viewOnceAutoCloseSec?: number | null;
   trimStartSec?: number;
   trimEndSec?: number;
   caption?: string;
@@ -57,13 +59,18 @@ const VISIBILITY_OPTIONS: Array<{
   icon: keyof typeof Ionicons.glyphMap;
   seconds: number | null;
   once: boolean;
+  /** Auto-close the viewer after N seconds (view-once only). */
+  autoCloseSec?: number | null;
 }> = [
   { key: 'everyone', label: 'Everyone', icon: 'earth', seconds: null, once: false },
   { key: '1m', label: '1 min', icon: 'timer-outline', seconds: 60, once: false },
   { key: '5m', label: '5 min', icon: 'timer-outline', seconds: 300, once: false },
   { key: '1h', label: '1 hour', icon: 'timer-outline', seconds: 3600, once: false },
   { key: '1d', label: '1 day', icon: 'timer-outline', seconds: 86400, once: false },
-  { key: 'once', label: 'View once', icon: 'eye-outline', seconds: null, once: true },
+  { key: 'once', label: 'View once', icon: 'eye-outline', seconds: null, once: true, autoCloseSec: null },
+  { key: 'once_5s', label: 'Once · 5s', icon: 'flash-outline', seconds: null, once: true, autoCloseSec: 5 },
+  { key: 'once_10s', label: 'Once · 10s', icon: 'flash-outline', seconds: null, once: true, autoCloseSec: 10 },
+  { key: 'once_30s', label: 'Once · 30s', icon: 'flash-outline', seconds: null, once: true, autoCloseSec: 30 },
 ];
 
 type Props = {
@@ -242,6 +249,7 @@ const AttachmentPreview: React.FC<Props> = ({
       ...a,
       expiresInSeconds: visibility.seconds,
       viewOnce: visibility.once,
+      viewOnceAutoCloseSec: visibility.once ? visibility.autoCloseSec ?? null : null,
       caption: captionText || a.caption,
     });
 

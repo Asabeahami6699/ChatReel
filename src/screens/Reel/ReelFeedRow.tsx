@@ -295,8 +295,11 @@ const styles = StyleSheet.create({
   reelContent: { ...StyleSheet.absoluteFill },
   videoTouchLayer: { ...StyleSheet.absoluteFill, zIndex: 1 },
   endScreenHost: {
-    ...StyleSheet.absoluteFill,
-    zIndex: 2,
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 40,
+    elevation: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   videoTouchLayerDesktop: {
     position: 'absolute' as const,

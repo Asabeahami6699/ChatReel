@@ -394,7 +394,7 @@ export function sanitizeApiErrorMessage(message: string, status: number): string
     lower.includes('enotfound') ||
     lower.includes('timeout')
   ) {
-    return "Can't reach the server right now. Check your connection and try again.";
+    return 'No internet. Check your connection and try again.';
   }
   return message;
 }
@@ -498,10 +498,16 @@ export const api = {
         auth: false,
       }),
 
-    login: (email: string, password: string) =>
-      apiRequest<{ user: Session['user']; session: Session | null }>('/api/auth/login', {
+    login: (email: string, password: string, installation_id?: string) =>
+      apiRequest<{
+        user: Session['user'] | null;
+        session: Session | null;
+        requires_2fa?: boolean;
+        challenge_token?: string;
+        security_question?: string;
+      }>('/api/auth/login', {
         method: 'POST',
-        body: { email, password },
+        body: { email, password, installation_id },
         auth: false,
       }),
 
@@ -518,24 +524,79 @@ export const api = {
     verifyPhoneOtp: (
       phone: string,
       token: string,
-      opts?: { display_name?: string; email?: string }
+      opts?: { display_name?: string; email?: string; installation_id?: string }
     ) =>
-      apiRequest<{ user: Session['user']; session: Session | null }>('/api/auth/otp/verify', {
+      apiRequest<{
+        user: Session['user'] | null;
+        session: Session | null;
+        requires_2fa?: boolean;
+        challenge_token?: string;
+        security_question?: string;
+      }>('/api/auth/otp/verify', {
         method: 'POST',
         body: {
           phone,
           token,
           display_name: opts?.display_name,
           email: opts?.email,
+          installation_id: opts?.installation_id,
         },
         auth: false,
       }),
+
+    verify2faChallenge: (body: {
+      challenge_token: string;
+      pin: string;
+      installation_id?: string;
+      device_label?: string;
+    }) =>
+      apiRequest<{ user: Session['user']; session: Session | null }>(
+        '/api/account/2fa/challenge/verify',
+        { method: 'POST', body, auth: false }
+      ),
+
+    recover2faChallenge: (body: {
+      challenge_token: string;
+      security_answer: string;
+      new_pin: string;
+      installation_id?: string;
+      device_label?: string;
+    }) =>
+      apiRequest<{ user: Session['user']; session: Session | null }>(
+        '/api/account/2fa/challenge/recover',
+        { method: 'POST', body, auth: false }
+      ),
 
     refresh: (refresh_token: string) =>
       apiRequest<{ user: Session['user']; session: Session | null }>('/api/auth/refresh', {
         method: 'POST',
         body: { refresh_token },
         auth: false,
+      }),
+  },
+
+  account2fa: {
+    status: () =>
+      apiRequest<{ enabled: boolean; security_question: string | null }>('/api/account/2fa/status'),
+    enable: (body: { pin: string; security_question: string; security_answer: string }) =>
+      apiRequest<{ ok: boolean; enabled: boolean }>('/api/account/2fa/enable', {
+        method: 'POST',
+        body,
+      }),
+    disable: (pin: string) =>
+      apiRequest<{ ok: boolean; enabled: boolean }>('/api/account/2fa/disable', {
+        method: 'POST',
+        body: { pin },
+      }),
+    reset: (body: { security_answer: string; new_pin: string }) =>
+      apiRequest<{ ok: boolean }>('/api/account/2fa/reset', {
+        method: 'POST',
+        body,
+      }),
+    verifyAnswer: (security_answer: string) =>
+      apiRequest<{ ok: boolean; security_question?: string }>('/api/account/2fa/verify-answer', {
+        method: 'POST',
+        body: { security_answer },
       }),
   },
 
@@ -599,6 +660,8 @@ export const api = {
       apiRequest(`/api/friendships/with/${friendProfileId}`, { method: 'DELETE' }),
     block: (user_id: string) =>
       apiRequest('/api/friendships/block', { method: 'POST', body: { user_id } }),
+    unblock: (user_id: string) =>
+      apiRequest('/api/friendships/unblock', { method: 'POST', body: { user_id } }),
     followerCount: (profileId: string) =>
       apiRequest<{ count: number }>(`/api/friendships/profile/${profileId}/followers/count`),
   },
@@ -816,10 +879,74 @@ export const api = {
 
   qr: {
     createSession: () =>
-      apiRequest<{ session: Record<string, unknown>; ref: string }>('/api/qr/sessions', {
+      apiRequest<{ session: Record<string, unknown>; ref: string; expires_in_sec?: number }>(
+        '/api/qr/sessions',
+        { method: 'POST' }
+      ),
+    getSession: (ref: string) =>
+      apiRequest<{ session: Record<string, unknown> }>(
+        `/api/qr/sessions/${encodeURIComponent(ref)}`
+      ),
+    link: (ref: string) =>
+      apiRequest<{ success: boolean; owner_user_id?: string }>('/api/qr/link', {
         method: 'POST',
+        body: { ref },
       }),
-    link: (ref: string) => apiRequest('/api/qr/link', { method: 'POST', body: { ref } }),
+  },
+
+  accountSessions: {
+    register: (body: {
+      installation_id: string;
+      label?: string;
+      platform?: string;
+      device_name?: string;
+    }) =>
+      apiRequest<{ device: Record<string, unknown> }>('/api/account/sessions/register', {
+        method: 'POST',
+        body,
+      }),
+    heartbeat: (installation_id: string) =>
+      apiRequest<{
+        ok: boolean;
+        revoked: boolean;
+        unknown?: boolean;
+        message?: string;
+      }>('/api/account/sessions/heartbeat', {
+        method: 'POST',
+        body: { installation_id },
+      }),
+    listDevices: (installation_id?: string) =>
+      apiRequest<{
+        devices: Array<{
+          id: string;
+          installation_id: string;
+          label: string | null;
+          platform?: string | null;
+          device_name?: string | null;
+          trusted_at: string;
+          last_seen_at: string;
+          is_current?: boolean;
+        }>;
+      }>(
+        `/api/account/sessions/devices${
+          installation_id ? `?installation_id=${encodeURIComponent(installation_id)}` : ''
+        }`
+      ),
+    logoutOthers: (keep_installation_id: string) =>
+      apiRequest<{ ok: boolean; message: string; revoked_count?: number }>(
+        '/api/account/sessions/logout-others',
+        {
+          method: 'POST',
+          body: { keep_installation_id },
+        }
+      ),
+    remoteWipe: () =>
+      apiRequest<{ ok: boolean; wipe: boolean; message: string }>(
+        '/api/account/sessions/remote-wipe',
+        { method: 'POST' }
+      ),
+    revokeDevice: (id: string) =>
+      apiRequest<{ ok: boolean }>(`/api/account/sessions/devices/${id}`, { method: 'DELETE' }),
   },
 
   uploads: {
@@ -849,10 +976,13 @@ export const api = {
   },
 
   reels: {
-    feed: (params?: { cursor?: string; limit?: number }) => {
+    feed: (params?: { cursor?: string; limit?: number; exclude?: string[] }) => {
       const search = new URLSearchParams();
       if (params?.cursor) search.set('cursor', params.cursor);
       if (params?.limit) search.set('limit', String(params.limit));
+      if (params?.exclude?.length) {
+        search.set('exclude', params.exclude.slice(0, 200).join(','));
+      }
       const qs = search.toString();
       return apiRequest<{ reels: ReelDTO[]; next_cursor: string | null }>(
         `/api/reels/feed${qs ? `?${qs}` : ''}`

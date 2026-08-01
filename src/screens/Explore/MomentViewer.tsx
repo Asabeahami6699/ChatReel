@@ -32,6 +32,7 @@ import {
 import { dedupeMomentSlides } from '../../lib/momentSlides';
 import { navigateToReelPreview } from '../../navigation/navigateToChat';
 import { MomentViewersSheet } from './MomentViewersSheet';
+import { allowViewOnceCapture, preventViewOnceCapture } from '../../lib/screenCaptureGuard';
 import {
   CaptionChoiceModal,
   captionChoiceToApi,
@@ -143,6 +144,16 @@ export function MomentViewer({
   );
   const currentSlide = slides[slideIndex];
   const isOwner = author?.author.id === myProfileId;
+  const guardViewOnce = Boolean(visible && currentSlide?.view_once);
+
+  useEffect(() => {
+    if (!guardViewOnce) return;
+    void preventViewOnceCapture();
+    return () => {
+      void allowViewOnceCapture();
+    };
+  }, [guardViewOnce]);
+
   const frozen =
     activityOpen ||
     composerFocused ||

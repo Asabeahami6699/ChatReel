@@ -72,6 +72,7 @@ export async function clearOfflineFeedKeys(keys: string[]) {
 export const OFFLINE_FEED_KEYS = {
   moments: 'offline_feed_moments_v1',
   calls: 'offline_feed_calls_v1',
+  friends: 'offline_feed_friends_accepted_v1',
   reelsFeed: 'offline_feed_reels_feed_v1',
   reelsFollowing: 'offline_feed_reels_following_v1',
   reelsPublic: 'offline_feed_reels_public_v1',

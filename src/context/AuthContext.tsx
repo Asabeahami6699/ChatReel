@@ -1,14 +1,20 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { Platform } from 'react-native';
 import type { Session, User } from '@supabase/supabase-js';
 import { api, onAuthExpired } from '../lib/api';
 import { sessionStorage } from '../lib/sessionStorage';
 import { ensureSupabaseSession } from '../lib/ensureSupabaseSession';
 import { clearSupabaseSession, setSupabaseSession } from '../lib/supabase';
 import { clearUserLocalCaches } from '../lib/clearUserLocalCaches';
+import { getInstallationId } from '../lib/installationId';
 
 type AuthResult = {
   data?: { user: User | null; session: Session | null };
   error?: { message: string } | null;
+  requires2fa?: {
+    challengeToken: string;
+    securityQuestion: string;
+  };
 };
 
 type AuthContextType = {
@@ -34,6 +40,12 @@ type AuthContextType = {
     phone: string,
     token: string,
     opts?: { display_name?: string; email?: string }
+  ) => Promise<AuthResult>;
+  complete2faChallenge: (challengeToken: string, pin: string) => Promise<AuthResult>;
+  recover2faChallenge: (
+    challengeToken: string,
+    securityAnswer: string,
+    newPin: string
   ) => Promise<AuthResult>;
   signOut: () => Promise<void>;
 };
@@ -116,6 +128,13 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     setSession(newSession);
     setUser(newSession.user);
     setIsGuest(false);
+    // Track this install in the logged-in devices list.
+    try {
+      const { registerCurrentDevice } = await import('../lib/deviceSession');
+      await registerCurrentDevice();
+    } catch {
+      /* offline */
+    }
   };
 
   const enterGuest = useCallback(() => {
@@ -154,11 +173,21 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const signIn = async (email: string, password: string) => {
     setLoading(true);
     try {
-      const { session: newSession, user: newUser } = await api.auth.login(email, password);
-
-      if (!newSession) {
+      const installationId = await getInstallationId().catch(() => undefined);
+      const res = await api.auth.login(email, password, installationId);
+      if (res.requires_2fa && res.challenge_token && res.security_question) {
         return {
-          data: { user: newUser, session: null },
+          data: { user: null, session: null },
+          requires2fa: {
+            challengeToken: res.challenge_token,
+            securityQuestion: res.security_question,
+          },
+        };
+      }
+
+      if (!res.session) {
+        return {
+          data: { user: res.user, session: null },
           error: {
             message:
               'No session returned. Try again — if this persists, confirm the account email in Supabase Auth.',
@@ -166,9 +195,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         };
       }
 
-      await persistSession(newSession);
+      await persistSession(res.session);
 
-      return { data: { user: newUser, session: newSession }, error: null };
+      return { data: { user: res.user, session: res.session }, error: null };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Login failed';
       return { data: { user: null, session: null }, error: { message } };
@@ -204,21 +233,87 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   ) => {
     setLoading(true);
     try {
-      const { session: newSession, user: newUser } = await api.auth.verifyPhoneOtp(
-        phone,
-        token,
-        opts
-      );
-      if (!newSession) {
+      const installationId = await getInstallationId().catch(() => undefined);
+      const res = await api.auth.verifyPhoneOtp(phone, token, {
+        ...opts,
+        installation_id: installationId,
+      });
+      if (res.requires_2fa && res.challenge_token && res.security_question) {
         return {
-          data: { user: newUser, session: null },
+          data: { user: null, session: null },
+          requires2fa: {
+            challengeToken: res.challenge_token,
+            securityQuestion: res.security_question,
+          },
+        };
+      }
+      if (!res.session) {
+        return {
+          data: { user: res.user, session: null },
           error: { message: 'Verification succeeded but no session was returned.' },
         };
       }
-      await persistSession(newSession);
-      return { data: { user: newUser, session: newSession }, error: null };
+      await persistSession(res.session);
+      return { data: { user: res.user, session: res.session }, error: null };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Invalid verification code';
+      return { data: { user: null, session: null }, error: { message } };
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const complete2faChallenge = async (challengeToken: string, pin: string) => {
+    setLoading(true);
+    try {
+      const installationId = await getInstallationId().catch(() => undefined);
+      const res = await api.auth.verify2faChallenge({
+        challenge_token: challengeToken,
+        pin,
+        installation_id: installationId,
+        device_label: Platform.OS,
+      });
+      if (!res.session) {
+        return {
+          data: { user: res.user, session: null },
+          error: { message: '2FA succeeded but no session was returned.' },
+        };
+      }
+      await persistSession(res.session);
+      return { data: { user: res.user, session: res.session }, error: null };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Incorrect code';
+      return { data: { user: null, session: null }, error: { message } };
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const recover2faChallenge = async (
+    challengeToken: string,
+    securityAnswer: string,
+    newPin: string
+  ) => {
+    setLoading(true);
+    try {
+      const installationId = await getInstallationId().catch(() => undefined);
+      const res = await api.auth.recover2faChallenge({
+        challenge_token: challengeToken,
+        security_answer: securityAnswer,
+        new_pin: newPin,
+        installation_id: installationId,
+        device_label: Platform.OS,
+      });
+      if (!res.session) {
+        return {
+          data: { user: res.user, session: null },
+          error: { message: 'Recovery succeeded but no session was returned.' },
+        };
+      }
+      await persistSession(res.session);
+      return { data: { user: res.user, session: res.session }, error: null };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Could not reset code';
       return { data: { user: null, session: null }, error: { message } };
     } finally {
       setLoading(false);
@@ -245,6 +340,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         enterGuest,
         exitGuest,
         signIn,
+        complete2faChallenge,
+        recover2faChallenge,
         signUp,
         sendPhoneOtp,
         verifyPhoneOtp,

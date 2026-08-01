@@ -79,6 +79,7 @@ const messageSchema = z.object({
   reply_to_id: z.string().uuid().optional(),
   expires_at: z.string().datetime().optional(),
   view_once: z.boolean().optional(),
+  view_once_auto_close_sec: z.number().int().min(1).max(120).optional().nullable(),
   /** Cleartext preview for push notifications when content is E2E ciphertext. Not stored. */
   push_preview: z.string().max(200).optional(),
   /** Client-generated id for idempotent / offline retries (unique per sender). */
@@ -153,7 +154,21 @@ async function getDisappearSeconds(
     .eq('chat_id', chatId)
     .maybeSingle();
   const n = data?.disappear_after_seconds;
-  return typeof n === 'number' && n > 0 ? n : null;
+  if (typeof n === 'number' && n > 0) return n;
+
+  // DM fallback: either peer may have set the timer (sync can lag / older clients).
+  if (chatType === 'individual') {
+    const { data: peer } = await supabaseAdmin
+      .from('chat_preferences')
+      .select('disappear_after_seconds')
+      .eq('user_id', chatId)
+      .eq('chat_type', 'individual')
+      .eq('chat_id', userId)
+      .maybeSingle();
+    const peerN = peer?.disappear_after_seconds;
+    if (typeof peerN === 'number' && peerN > 0) return peerN;
+  }
+  return null;
 }
 
 /** After a message is read, start the vanish clock for both parties. */
@@ -375,6 +390,16 @@ router.post(
       return res.status(400).json({ error: 'receiver_id or group_id is required' });
     }
 
+    if (body.receiver_id && body.receiver_id !== userId) {
+      const { areAuthUsersBlocked } = await import('../services/block.service');
+      if (await areAuthUsersBlocked(userId, body.receiver_id)) {
+        return res.status(403).json({
+          error: 'You cannot message this user',
+          code: 'USER_BLOCKED',
+        });
+      }
+    }
+
     if (
       env.e2eMode === 'strict' &&
       (body.message_type === 'text' || !body.message_type) &&
@@ -430,6 +455,9 @@ router.post(
       ...baseInsert,
       expires_at: body.expires_at ?? null,
       view_once: body.view_once ?? false,
+      ...(body.view_once && body.view_once_auto_close_sec
+        ? { view_once_auto_close_sec: body.view_once_auto_close_sec }
+        : {}),
     };
 
     let { data, error } = await supabaseAdmin

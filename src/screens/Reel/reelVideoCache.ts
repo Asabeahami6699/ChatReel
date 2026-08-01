@@ -105,12 +105,23 @@ async function prefetchWebBlob(id: string, url: string): Promise<string> {
   }
 }
 
+async function readCachedSourceUrl(metaPath: string): Promise<string | null> {
+  try {
+    const info = await FileSystem.getInfoAsync(metaPath);
+    if (!info.exists) return null;
+    const raw = await FileSystem.readAsStringAsync(metaPath);
+    return raw.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 async function downloadReelNative(id: string, url: string): Promise<string> {
   const existing = memory.get(id);
   if (
     existing &&
     !existing.localUri.startsWith('http') &&
-    (!existing.sourceUrl || existing.sourceUrl === url)
+    existing.sourceUrl === url
   ) {
     return cachedPlaybackUri(existing);
   }
@@ -123,15 +134,23 @@ async function downloadReelNative(id: string, url: string): Promise<string> {
     try {
       await ensureCacheDir();
       const path = `${CACHE_DIR}${id}.mp4`;
+      const metaPath = `${CACHE_DIR}${id}.url`;
       const info = await FileSystem.getInfoAsync(path);
-      // Re-download when the remote URL changed (e.g. trimmed processed MP4 replaced original).
-      if (info.exists && existing?.sourceUrl && existing.sourceUrl !== url) {
-        await FileSystem.deleteAsync(path, { idempotent: true }).catch(() => undefined);
-      } else if (info.exists && (!existing || existing.sourceUrl === url)) {
+      const diskSource =
+        existing?.sourceUrl ?? (info.exists ? await readCachedSourceUrl(metaPath) : null);
+
+      // Re-download when the remote URL changed (trimmed processed MP4 replaced original)
+      // or when we can't prove the on-disk file matches this URL.
+      if (info.exists && diskSource === url) {
         memory.set(id, { localUri: path, sourceUrl: url });
         return path;
       }
+      if (info.exists) {
+        await FileSystem.deleteAsync(path, { idempotent: true }).catch(() => undefined);
+        await FileSystem.deleteAsync(metaPath, { idempotent: true }).catch(() => undefined);
+      }
       await FileSystem.downloadAsync(url, path);
+      await FileSystem.writeAsStringAsync(metaPath, url).catch(() => undefined);
       memory.set(id, { localUri: path, sourceUrl: url });
       return path;
     } finally {

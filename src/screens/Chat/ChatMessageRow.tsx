@@ -318,6 +318,7 @@ export function ChatMessageRow({
       const showCover = Boolean(msg.view_once) && !uploading;
       const captionText = (msg.decrypted || msg.content || '').trim();
       const showCaption =
+        !msg.view_once &&
         Boolean(captionText) &&
         captionText !== (msg.file_name || '') &&
         !/^[a-zA-Z0-9._-]+\.(jpe?g|png|gif|webp|heic|mp4|mov|mkv|pdf|docx?)$/i.test(
@@ -327,7 +328,6 @@ export function ChatMessageRow({
       return (
         <Pressable
           onPress={() => {
-            if (showCover && isOutgoing) return;
             if (imageUri || showCover) onOpenMedia?.(msg.id);
           }}
           onLongPress={() => onLongPress?.(msg)}
@@ -337,26 +337,26 @@ export function ChatMessageRow({
           <View
             style={[
               styles.mediaWrap,
+              showCover ? styles.viewOnceWrap : null,
               corners,
               showCaption ? { backgroundColor: bubbleBg } : null,
             ]}
           >
             {replyQuote}
-            <View style={styles.mediaImageFrame}>
+            <View style={[styles.mediaImageFrame, showCover && styles.viewOnceFrame]}>
               {showCover ? (
-                <View style={[styles.mediaImage, styles.viewOnceCover]}>
-                  <Ionicons name="eye-outline" size={36} color="#fff" />
-                  <Text style={styles.viewOnceCoverTitle}>
-                    {isOutgoing ? 'View once photo' : 'Photo'}
-                  </Text>
-                  <Text style={styles.viewOnceCoverSub}>
-                    {isOutgoing ? 'Covered · recipient can open once' : 'Tap to view once'}
+                <View style={[styles.viewOnceCover]}>
+                  <View style={styles.viewOnceIconRing}>
+                    <Ionicons name="eye-outline" size={12} color="#fff" />
+                  </View>
+                  <Text style={styles.viewOnceCoverTitle} numberOfLines={1}>
+                    Once
                   </Text>
                 </View>
               ) : (
                 <Image source={{ uri: imageUri }} style={styles.mediaImage} resizeMode="cover" />
               )}
-              {!showCaption ? <View style={styles.mediaMeta}>{meta}</View> : null}
+              {!showCover && !showCaption ? <View style={styles.mediaMeta}>{meta}</View> : null}
               {uploading ? (
                 <View style={styles.uploadOverlay}>
                   <View style={styles.uploadCircle}>
@@ -455,6 +455,7 @@ export function ChatMessageRow({
       const showCover = Boolean(msg.view_once) && !uploading;
       const captionText = (msg.decrypted || msg.content || '').trim();
       const showCaption =
+        !msg.view_once &&
         Boolean(captionText) &&
         captionText !== (msg.file_name || '') &&
         !/^[a-zA-Z0-9._-]+\.(jpe?g|png|gif|webp|heic|mp4|mov|mkv|pdf|docx?)$/i.test(
@@ -464,7 +465,6 @@ export function ChatMessageRow({
       return (
         <Pressable
           onPress={() => {
-            if (showCover && isOutgoing) return;
             if (imageUri || showCover) onOpenMedia?.(msg.id);
           }}
           onLongPress={() => onLongPress?.(msg)}
@@ -474,20 +474,20 @@ export function ChatMessageRow({
           <View
             style={[
               styles.mediaWrap,
+              showCover ? styles.viewOnceWrap : null,
               corners,
               showCaption ? { backgroundColor: bubbleBg } : null,
             ]}
           >
             {replyQuote}
-            <View style={styles.mediaImageFrame}>
+            <View style={[styles.mediaImageFrame, showCover && styles.viewOnceFrame]}>
               {showCover ? (
-                <View style={[styles.mediaImage, styles.viewOnceCover]}>
-                  <Ionicons name="eye-outline" size={36} color="#fff" />
-                  <Text style={styles.viewOnceCoverTitle}>
-                    {isOutgoing ? 'View once video' : 'Video'}
-                  </Text>
-                  <Text style={styles.viewOnceCoverSub}>
-                    {isOutgoing ? 'Covered · recipient can open once' : 'Tap to view once'}
+                <View style={[styles.viewOnceCover]}>
+                  <View style={styles.viewOnceIconRing}>
+                    <Ionicons name="play-outline" size={12} color="#fff" />
+                  </View>
+                  <Text style={styles.viewOnceCoverTitle} numberOfLines={1}>
+                    Once
                   </Text>
                 </View>
               ) : (
@@ -506,7 +506,7 @@ export function ChatMessageRow({
                   ) : null}
                 </>
               )}
-              {!showCaption ? <View style={styles.mediaMeta}>{meta}</View> : null}
+              {!showCover && !showCaption ? <View style={styles.mediaMeta}>{meta}</View> : null}
               {uploading ? (
                 <View style={styles.uploadOverlay}>
                   <View style={styles.uploadCircle}>
@@ -805,7 +805,9 @@ const styles = StyleSheet.create({
   audioDur: { fontSize: 13, marginLeft: 8 },
   metaOverlay: { position: 'absolute', right: 10, bottom: 6 },
   mediaWrap: { overflow: 'hidden', maxWidth: 260 },
+  viewOnceWrap: { maxWidth: 56 },
   mediaImageFrame: { width: 260, position: 'relative' },
+  viewOnceFrame: { width: 56 },
   mediaImage: { width: 260, height: 200, backgroundColor: '#1a1a1a' },
   mediaCaptionRow: {
     position: 'relative',
@@ -822,20 +824,34 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
   },
   viewOnceCover: {
+    width: 56,
+    height: 49,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#1c2430',
-    gap: 6,
-    paddingHorizontal: 16,
+    backgroundColor: '#15202b',
+    gap: 1,
+    paddingHorizontal: 2,
+    borderRadius: 8,
+  },
+  viewOnceIconRing: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 1,
+    backgroundColor: 'rgba(255,255,255,0.08)',
   },
   viewOnceCoverTitle: {
     color: '#fff',
-    fontSize: 15,
+    fontSize: 9,
     fontWeight: '700',
   },
   viewOnceCoverSub: {
-    color: 'rgba(255,255,255,0.72)',
-    fontSize: 12,
+    color: 'rgba(255,255,255,0.65)',
+    fontSize: 8,
     textAlign: 'center',
   },
   uploadOverlay: {

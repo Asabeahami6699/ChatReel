@@ -3,6 +3,7 @@ import {
   NativeScrollEvent,
   NativeSyntheticEvent,
   Platform,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   View,
@@ -35,6 +36,9 @@ type Props = {
   onMediaIndexChange: (reelId: string, mediaIndex: number) => void;
   onVideoPress: (reel: ReelDTO) => void;
   onEndReached?: () => void;
+  refreshing?: boolean;
+  onRefresh?: () => void | Promise<void>;
+  emptyComponent?: React.ReactElement | null;
 };
 
 /**
@@ -62,6 +66,9 @@ export const ReelNativeFeed = forwardRef<ReelNativeFeedHandle, Props>(function R
     onMediaIndexChange,
     onVideoPress,
     onEndReached,
+    refreshing = false,
+    onRefresh,
+    emptyComponent = null,
   },
   ref
 ) {
@@ -70,6 +77,7 @@ export const ReelNativeFeed = forwardRef<ReelNativeFeedHandle, Props>(function R
   heightRef.current = reelHeight;
   const indexRef = useRef(currentIndex);
   indexRef.current = currentIndex;
+  const canPullRefresh = Boolean(onRefresh) && (reels.length === 0 || currentIndex === 0);
 
   // Page height changes (measure-after-layout, rotation, split screen) leave the
   // scroller parked between two pages — re-anchor on the reel the user is on.
@@ -130,49 +138,67 @@ export const ReelNativeFeed = forwardRef<ReelNativeFeedHandle, Props>(function R
       // One reel per fling — matches TikTok and stops Android over-scrolling pages.
       disableIntervalMomentum
       showsVerticalScrollIndicator={false}
-      bounces={false}
-      overScrollMode="never"
+      // Allow bounce only on the first reel so pull-to-refresh can trigger.
+      bounces={canPullRefresh}
+      overScrollMode={canPullRefresh ? 'always' : 'never'}
       nestedScrollEnabled
       directionalLockEnabled
       scrollEventThrottle={16}
       onScrollEndDrag={onScrollEndDrag}
       onMomentumScrollEnd={onMomentumScrollEnd}
       removeClippedSubviews={false}
+      refreshControl={
+        canPullRefresh ? (
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => {
+              void onRefresh?.();
+            }}
+            tintColor="#fff"
+            colors={['#fff']}
+            progressBackgroundColor="#222"
+          />
+        ) : undefined
+      }
     >
-      {reels.map((item, index) => (
-        <View
-          key={item.id}
-          style={{ height: reelHeight, width: reelWidth }}
-          collapsable={false}
-          pointerEvents="box-none"
-        >
-          {Math.abs(index - currentIndex) <= 2 ? (
-            <>
-              <ReelPageMedia
-                item={item}
-                index={index}
-                currentIndex={currentIndex}
-                reelWidth={reelWidth}
-                reelHeight={reelHeight}
-                isFocused={isFocused}
-                mediaShouldPlay={mediaShouldPlay}
-                isMuted={isMuted}
-                volume={volume}
-                isReady={readyReelIds.has(item.id)}
-                videoUri={resolveUri(item)}
-                onReady={onReady}
-                onPlaybackStatus={onPlaybackStatus}
-                onRef={onRef}
-                onMediaIndexChange={onMediaIndexChange}
-                showEndScreen={endScreenReelId === item.id}
-              />
-              <ReelVideoTapLayer onPress={() => onVideoPress(item)} />
-            </>
-          ) : (
-            <View style={[styles.placeholder, { height: reelHeight, width: reelWidth }]} />
-          )}
-        </View>
-      ))}
+      {reels.length === 0 ? (
+        <View style={{ height: reelHeight, width: reelWidth }}>{emptyComponent}</View>
+      ) : (
+        reels.map((item, index) => (
+          <View
+            key={item.id}
+            style={{ height: reelHeight, width: reelWidth }}
+            collapsable={false}
+            pointerEvents="box-none"
+          >
+            {Math.abs(index - currentIndex) <= 2 ? (
+              <>
+                <ReelPageMedia
+                  item={item}
+                  index={index}
+                  currentIndex={currentIndex}
+                  reelWidth={reelWidth}
+                  reelHeight={reelHeight}
+                  isFocused={isFocused}
+                  mediaShouldPlay={mediaShouldPlay}
+                  isMuted={isMuted}
+                  volume={volume}
+                  isReady={readyReelIds.has(item.id)}
+                  videoUri={resolveUri(item)}
+                  onReady={onReady}
+                  onPlaybackStatus={onPlaybackStatus}
+                  onRef={onRef}
+                  onMediaIndexChange={onMediaIndexChange}
+                  showEndScreen={endScreenReelId === item.id}
+                />
+                <ReelVideoTapLayer onPress={() => onVideoPress(item)} />
+              </>
+            ) : (
+              <View style={[styles.placeholder, { height: reelHeight, width: reelWidth }]} />
+            )}
+          </View>
+        ))
+      )}
     </ScrollView>
   );
 });

@@ -91,7 +91,7 @@ export default function ContactScreen() {
     void (async () => {
       const ok = await confirmAction(
         `Block ${displayName}?`,
-        'They will no longer be able to call or message you.',
+        'They won’t be able to message you, call you, or see your moments and reels — and you won’t see theirs.',
         'Block'
       );
       if (!ok) return;

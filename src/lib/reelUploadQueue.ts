@@ -11,6 +11,7 @@ import {
   stashReelUploadDraft,
 } from './reelUploadMediaStore';
 import { saveReelComposeDraft } from './reelComposeDraftStore';
+import { reelTrimApiFields, reelTrimClipDurationSec } from './reelTrim';
 
 /** Default display length for photo reels with music (seconds). */
 const IMAGE_REEL_CLIP_SEC = 15;
@@ -439,6 +440,7 @@ async function processOne(item: { id: string; draft: ReelUploadDraft }) {
   const trimStartSec = video.trimStartSec ?? 0;
   const trimEndSec =
     video.trimEndSec ?? (typeof duration === 'number' ? duration : undefined);
+  const trimFields = reelTrimApiFields(trimStartSec, trimEndSec, duration);
 
   setProgress(id, 90, 'Publishing reel...');
   updateTask(id, { status: 'publishing' });
@@ -446,9 +448,7 @@ async function processOne(item: { id: string; draft: ReelUploadDraft }) {
   const safeDuration =
     typeof duration === 'number' && duration >= 0.5 ? duration : undefined;
   const effectiveDuration =
-    trimEndSec != null && trimStartSec < trimEndSec
-      ? trimEndSec - trimStartSec
-      : safeDuration;
+    reelTrimClipDurationSec(trimStartSec, trimEndSec, safeDuration) ?? safeDuration;
 
   const { reel }: { reel: ReelDTO } = await api.reels.create({
     video_url: videoUrl!,
@@ -460,13 +460,7 @@ async function processOne(item: { id: string; draft: ReelUploadDraft }) {
     ...schedulePublishFields(draft),
     width,
     height,
-    trim_start_sec: trimStartSec > 0 ? trimStartSec : undefined,
-    trim_end_sec:
-      trimEndSec != null &&
-      (trimStartSec > 0.05 ||
-        (duration != null && trimEndSec < duration - 0.05))
-        ? trimEndSec
-        : undefined,
+    ...trimFields,
     filter_id:
       video.filterId && video.filterId !== 'none'
         ? video.filterId
@@ -551,10 +545,9 @@ async function processCarouselUpload(id: string, draft: ReelUploadDraft) {
       const trimStartSec = media.trimStartSec ?? 0;
       const trimEndSec = media.trimEndSec ?? (typeof duration === 'number' ? duration : undefined);
       const safeDuration = typeof duration === 'number' && duration >= 0.5 ? duration : undefined;
+      const trimFields = reelTrimApiFields(trimStartSec, trimEndSec, duration);
       const effectiveDuration =
-        trimEndSec != null && trimStartSec < trimEndSec
-          ? trimEndSec - trimStartSec
-          : safeDuration;
+        reelTrimClipDurationSec(trimStartSec, trimEndSec, safeDuration) ?? safeDuration;
 
       return {
         media_url: videoUrl,
@@ -563,13 +556,7 @@ async function processCarouselUpload(id: string, draft: ReelUploadDraft) {
         duration: effectiveDuration,
         width,
         height,
-        trim_start_sec: trimStartSec > 0 ? trimStartSec : undefined,
-        trim_end_sec:
-          trimEndSec != null &&
-          (trimStartSec > 0.05 ||
-            (duration != null && trimEndSec < duration - 0.05))
-            ? trimEndSec
-            : undefined,
+        ...trimFields,
         filter_id:
           media.filterId && media.filterId !== 'none' ? media.filterId : undefined,
       };

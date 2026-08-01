@@ -160,8 +160,12 @@ export async function filterVisibleReels(
   friendIds: Set<string>,
   viewerAuthUserId: string
 ): Promise<ReelRow[]> {
+  const { getBlockedProfileIdsFor } = await import('./block.service');
+  const blocked = await getBlockedProfileIdsFor(viewerProfileId);
+
   const visible: ReelRow[] = [];
   for (const reel of reels) {
+    if (reel.author_id !== viewerProfileId && blocked.has(reel.author_id)) continue;
     if (await canViewReel(reel, viewerProfileId, friendIds, viewerAuthUserId)) {
       visible.push(reel);
     }

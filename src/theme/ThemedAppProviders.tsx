@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useContext, useEffect, useMemo } from 'react';
 import { Platform, View } from 'react-native';
 import { Provider as PaperProvider } from 'react-native-paper';
-import { useChatSettings } from '../context/ChatSettingsContext';
+import { ChatSettingsContext } from '../context/ChatSettingsContext';
+import { chatThemePresets } from '../lib/chatThemes';
 import { buildPaperTheme } from './buildAppTheme';
 
 /**
@@ -50,7 +51,10 @@ function useAndroidSystemChrome(isDark: boolean) {
  * Must sit under ChatSettingsProvider.
  */
 export function ThemedPaperProvider({ children }: { children: React.ReactNode }) {
-  const { theme } = useChatSettings();
+  // Optional context: Fast Refresh / duplicate module graphs can briefly mount
+  // this outside the provider; fall back instead of crashing the whole app.
+  const settingsCtx = useContext(ChatSettingsContext);
+  const theme = settingsCtx?.theme ?? chatThemePresets.blue;
   const paperTheme = useMemo(() => buildPaperTheme(theme), [theme]);
   useWebDocumentTheme(theme.listBg, theme.isDark);
   useAndroidSystemChrome(theme.isDark);

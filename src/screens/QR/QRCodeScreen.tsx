@@ -1,5 +1,5 @@
 // src/screens/QR/QRCodeScreen.tsx
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -19,12 +19,16 @@ import { useRealtimeTopic } from '../../hooks/useRealtimeTopic';
 import { useNavigation } from '@react-navigation/native';
 import { USE_NATIVE_DRIVER } from '../../lib/animation';
 
+const DEFAULT_TTL_SEC = 180;
+
 export default function QRCodeScreen() {
   const { user } = useAuth();
   const { theme } = useChatSettings();
   const navigation = useNavigation<any>();
   const [qrRef, setQrRef] = useState('');
-  const [timeLeft, setTimeLeft] = useState(30);
+  const [timeLeft, setTimeLeft] = useState(DEFAULT_TTL_SEC);
+  const [ttlSec, setTtlSec] = useState(DEFAULT_TTL_SEC);
+  const generatingRef = useRef(false);
 
   const spinRef = useRef(new Animated.Value(0)).current;
   const spin = spinRef.interpolate({
@@ -32,20 +36,25 @@ export default function QRCodeScreen() {
     outputRange: ['0deg', '360deg'],
   });
 
-  const generateRef = async () => {
-    if (!user) return;
+  const generateRef = useCallback(async () => {
+    if (!user || generatingRef.current) return;
+    generatingRef.current = true;
     try {
-      const { ref } = await api.qr.createSession();
-      setQrRef(ref);
-      setTimeLeft(30);
+      const res = await api.qr.createSession();
+      setQrRef(res.ref);
+      const nextTtl = res.expires_in_sec ?? DEFAULT_TTL_SEC;
+      setTtlSec(nextTtl);
+      setTimeLeft(nextTtl);
     } catch {
       Alert.alert('Error', 'Failed to generate QR');
+    } finally {
+      generatingRef.current = false;
     }
-  };
+  }, [user]);
 
   useEffect(() => {
-    generateRef();
-  }, [user?.id]);
+    void generateRef();
+  }, [generateRef]);
 
   useRealtimeTopic(user ? 'linkedDevices' : null, () => {
     Alert.alert('Device linked', 'A device was linked to your account.', [
@@ -53,14 +62,17 @@ export default function QRCodeScreen() {
     ]);
   });
 
-  useRealtimeTopic(user ? 'qrSessions' : null, generateRef);
-
   useEffect(() => {
     const id = setInterval(() => {
-      setTimeLeft((t) => (t > 0 ? t - 1 : 0));
+      setTimeLeft((t) => {
+        if (t > 1) return t - 1;
+        // Auto-refresh when expired so scanners never hit a dead code.
+        void generateRef();
+        return ttlSec;
+      });
     }, 1000);
     return () => clearInterval(id);
-  }, []);
+  }, [generateRef, ttlSec]);
 
   useEffect(() => {
     Animated.loop(
@@ -106,16 +118,16 @@ export default function QRCodeScreen() {
 
       <View style={styles.content}>
         <Text style={[styles.subtitle, { color: theme.listSecondaryText }]}>
-          Scan with your phone
+          Open ChatReel on your other device → Scan QR. Hold steady until it locks.
         </Text>
 
-        {/* Stays black on white regardless of theme — scanners need the contrast. */}
         <View style={styles.qrBox}>
           <QRCode
-            value={`myapp://link?ref=${qrRef}`}
+            value={`myapp://link?ref=${encodeURIComponent(qrRef)}`}
             size={240}
             color="#000"
             backgroundColor="#fff"
+            ecl="M"
           />
           <Animated.View style={[styles.ring, { transform: [{ rotate: spin }] }]}>
             <Ionicons name="sync" size={32} color={theme.primary} />
@@ -130,7 +142,7 @@ export default function QRCodeScreen() {
 
         <TouchableOpacity
           style={[styles.refreshBtn, { backgroundColor: theme.primary }]}
-          onPress={generateRef}
+          onPress={() => void generateRef()}
         >
           <Ionicons name="refresh" size={20} color="#fff" />
           <Text style={styles.refreshText}>New Code</Text>
@@ -149,9 +161,9 @@ const styles = StyleSheet.create({
     padding: 16,
     borderBottomWidth: 1,
   },
-  title: { fontSize: 20, fontWeight: 'bold' },
-  content: { flex: 1, alignItems: 'center', padding: 24 },
-  subtitle: { fontSize: 18, fontWeight: '600', marginBottom: 24 },
+  title: { fontSize: 18, fontWeight: '700' },
+  content: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  subtitle: { fontSize: 15, textAlign: 'center', marginBottom: 28, lineHeight: 22 },
   qrBox: {
     padding: 20,
     backgroundColor: '#fff',
@@ -177,7 +189,7 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   info: { marginTop: 24 },
-  timer: { fontSize: 16 },
+  timer: { fontSize: 16, textAlign: 'center' },
   bold: { fontWeight: 'bold' },
   refreshBtn: {
     flexDirection: 'row',
@@ -188,5 +200,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   refreshText: { color: '#fff', marginLeft: 8, fontWeight: '600' },
-  loading: { flex: 1, textAlign: 'center', paddingTop: 100, fontSize: 18 },
+  loading: { fontSize: 18, textAlign: 'center', marginTop: 80 },
 });

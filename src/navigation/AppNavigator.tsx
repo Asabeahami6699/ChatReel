@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import ChatListScreen from '../screens/Chat/ChatListScreen';
 import ChatRoomScreen from '../screens/Chat/ChatRoomScreen';
 import EmptyChatScreen from '../screens/Chat/EmptyChatScreen';
+import { ChatLockGate } from '../components/ChatLockGate';
 import ProfileScreen from '../screens/Profile/ProfileScreen';
 import ContactScreen from '../screens/Chat/ContactScreen';
 import ExploreNavigator from './ExploreNavigator';
@@ -76,6 +77,7 @@ type ChatStackProps = {
 export const ChatStack = ({ setSelectedChat }: ChatStackProps) => {
   const { theme } = useChatSettings();
   return (
+  <View style={{ flex: 1 }}>
   <Stack.Navigator
     screenOptions={{
       headerShown: false,
@@ -111,6 +113,8 @@ export const ChatStack = ({ setSelectedChat }: ChatStackProps) => {
       options={{ title: 'Join Group', headerShown: true }}
     />
   </Stack.Navigator>
+  <ChatLockGate />
+  </View>
   );
 };
 

@@ -329,6 +329,38 @@ export default function ReelsScreen() {
   const handlePlaybackStatus = useCallback(
     (reelId: string, status: ReelPlaybackStatus, isCurrent: boolean) => {
       if (!status.isLoaded || !isCurrent) return;
+
+      const reel = reelsRef.current.find((r) => r.id === reelId);
+      const tStatus = reel?.transcode_status;
+      const softTrim =
+        reel &&
+        (tStatus === 'pending' || tStatus === 'processing' || tStatus === 'failed') &&
+        reel.trim_end_sec != null &&
+        Number.isFinite(reel.trim_end_sec);
+      const trimStartMs = Math.max(0, Math.round((reel?.trim_start_sec ?? 0) * 1000));
+      const trimEndMs =
+        softTrim && reel?.trim_end_sec != null
+          ? Math.round(reel.trim_end_sec * 1000)
+          : null;
+
+      // Loop inside the author trim window until the server replaces the file.
+      if (
+        softTrim &&
+        trimEndMs != null &&
+        status.positionMillis != null &&
+        status.positionMillis >= trimEndMs - 80
+      ) {
+        const key = activePlayerKey(reelId);
+        const player = key ? videos.current[key] : null;
+        if (player && mediaShouldPlayRef.current) {
+          void player.setPositionAsync(trimStartMs).then(() => player.playAsync());
+        }
+        const clipLen = Math.max(1, trimEndMs - trimStartMs);
+        scheduleProgressUi(1, 1);
+        durationMillisRef.current = clipLen;
+        return;
+      }
+
       if (status.didJustFinish) {
         const key = activePlayerKey(reelId);
         void (key ? videos.current[key] : null)?.pauseAsync();
@@ -359,13 +391,22 @@ export default function ReelsScreen() {
           // Respect the current play/pause state: if the user paused, don't
           // automatically resume just because the reel ended.
           if (mediaShouldPlayRef.current) {
-            void (replayKey ? videos.current[replayKey] : null)?.replayAsync();
+            const p = replayKey ? videos.current[replayKey] : null;
+            if (softTrim && p) {
+              void p.setPositionAsync(trimStartMs).then(() => p.playAsync());
+            } else {
+              void p?.replayAsync();
+            }
           }
         }, REEL_END_SCREEN_MS);
         return;
       }
       if (status.durationMillis != null && status.durationMillis > 0) {
-        durationMillisRef.current = status.durationMillis;
+        const clipLen =
+          softTrim && trimEndMs != null
+            ? Math.max(1, trimEndMs - trimStartMs)
+            : status.durationMillis;
+        durationMillisRef.current = clipLen;
         if (isScrubbingRef.current) return;
         const buffered =
           status.bufferedMillis != null
@@ -373,7 +414,12 @@ export default function ReelsScreen() {
             : progressUiRef.current.buffered;
         const nextProgress =
           status.positionMillis != null
-            ? status.positionMillis / status.durationMillis
+            ? softTrim && trimEndMs != null
+              ? Math.min(
+                  1,
+                  Math.max(0, (status.positionMillis - trimStartMs) / clipLen)
+                )
+              : status.positionMillis / status.durationMillis
             : progressUiRef.current.progress;
         scheduleProgressUi(nextProgress, buffered);
       }
@@ -544,6 +590,21 @@ export default function ReelsScreen() {
         null;
       if (!active) return;
       try {
+        // While the server still has the full original file, clamp playback to the
+        // preview trim window so the posted reel matches what the author cut.
+        const reel = reelsRef.current.find((r) => r.id === reelId);
+        const status = reel?.transcode_status;
+        const softTrim =
+          reel &&
+          (status === 'pending' || status === 'processing' || status === 'failed') &&
+          ((reel.trim_start_sec != null && reel.trim_start_sec > 0.05) ||
+            (reel.trim_end_sec != null &&
+              reel.trim_start_sec != null &&
+              reel.trim_end_sec > reel.trim_start_sec + 0.05));
+        if (softTrim) {
+          const startMs = Math.max(0, Math.round((reel.trim_start_sec ?? 0) * 1000));
+          await active.setPositionAsync(startMs);
+        }
         await active.playAsync();
       } catch {
         /* ignore transient av errors */
@@ -641,10 +702,12 @@ export default function ReelsScreen() {
 
   const handlePullRefresh = useCallback(async () => {
     if (currentIndex !== 0) {
-      goToReelIndexRef.current(0, true);
+      goToReelIndexRef.current(0, false);
     }
+    // Full reload of page 1 so brand-new posts surface at the top.
     await refresh();
     void refreshFollowedAuthors();
+    goToReelIndexRef.current(0, false);
     const first = reelsRef.current[0];
     if (first) {
       activeReelIdRef.current = first.id;
@@ -1208,6 +1271,8 @@ export default function ReelsScreen() {
         onEndReached={() => {
           if (hasMore && !loadingMore) loadMore();
         }}
+        refreshing={refreshing}
+        onRefresh={handlePullRefresh}
         ListEmptyComponent={
           <View style={[styles.emptyContainer, { height: reelHeight, width: reelWidth }]}>
             <Ionicons
@@ -1242,19 +1307,6 @@ export default function ReelsScreen() {
           </View>
         }
       />
-      ) : reels.length === 0 ? (
-        <View style={[styles.emptyContainer, { height: reelHeight, width: reelWidth }]}>
-          <Ionicons
-            name={feedMode === 'following' ? 'people-outline' : 'film-outline'}
-            size={56}
-            color="#666"
-          />
-          <Text style={styles.emptyText}>
-            {feedMode === 'following'
-              ? 'No reels from people you follow'
-              : 'No reels yet'}
-          </Text>
-        </View>
       ) : (
         <ReelNativeFeed
           ref={nativeFeedRef}
@@ -1278,6 +1330,25 @@ export default function ReelsScreen() {
           onEndReached={() => {
             if (hasMore && !loadingMore) loadMore();
           }}
+          refreshing={refreshing}
+          onRefresh={handlePullRefresh}
+          emptyComponent={
+            <View style={[styles.emptyContainer, { height: reelHeight, width: reelWidth }]}>
+              <Ionicons
+                name={feedMode === 'following' ? 'people-outline' : 'film-outline'}
+                size={56}
+                color="#666"
+              />
+              <Text style={styles.emptyText}>
+                {feedMode === 'following'
+                  ? 'No reels from people you follow'
+                  : 'No reels yet'}
+              </Text>
+              <Text style={[styles.emptyText, { fontSize: 13, marginTop: 8, opacity: 0.7 }]}>
+                Pull down to refresh
+              </Text>
+            </View>
+          }
         />
       )}
       </View>

@@ -27,11 +27,10 @@ type State = {
   error: string | null;
 };
 
-// Load enough reels up front so the user isn't blocked waiting for the next page.
-// Backend caps at 30; keep request aligned so pagination cursors stay consistent.
-const PAGE_SIZE = 30;
+// Smaller pages for For You so ranking rotates and loadMore can exclude seen ids.
+const PAGE_SIZE = 12;
 /** Soft poll so approved posts appear without hard refresh when realtime is down. */
-const FEED_POLL_MS = 8_000;
+const FEED_POLL_MS = 12_000;
 
 function cacheKeyForSource(source: FeedSource): ReelsFeedCacheKey | null {
   if (source === 'feed') return 'feed';
@@ -84,9 +83,14 @@ export function useReelsFeed(source: FeedSource = 'feed', options: UseReelsFeedO
   const insertAfterRef = insertAfterIndexRef;
 
   const fetchPage = useCallback(
-    async (cursor: string | null) => {
+    async (cursor: string | null, excludeIds?: string[]) => {
       if (source === 'feed') {
-        return api.reels.feed({ cursor: cursor ?? undefined, limit: PAGE_SIZE });
+        return api.reels.feed({
+          cursor: cursor ?? undefined,
+          limit: PAGE_SIZE,
+          // Ranked feed paginates by excluding already-loaded ids (not created_at).
+          exclude: excludeIds?.length ? excludeIds : undefined,
+        });
       }
       if (source === 'public') {
         return api.reels.publicFeed({ cursor: cursor ?? undefined, limit: PAGE_SIZE });
@@ -105,8 +109,16 @@ export function useReelsFeed(source: FeedSource = 'feed', options: UseReelsFeedO
   );
 
   const loadInitial = useCallback(async () => {
+    const key = cacheKeyForSource(source);
+    const cached = key ? getReelsFeedCache(key, { allowStale: true }) : null;
+    // If cache is older than 2 minutes, replace with a freshly ranked page so For You
+    // doesn't stay stuck on the same prefetch snapshot.
+    const cacheAgeMs = cached ? Date.now() - cached.fetchedAt : Number.POSITIVE_INFINITY;
+    const shouldReshuffle = source === 'feed' && cacheAgeMs > 120_000;
+
     setState((s) => {
-      if (s.reels.length > 0) return s;
+      if (s.reels.length > 0 && !shouldReshuffle) return s;
+      if (s.reels.length > 0) return { ...s, error: null };
       return { ...s, loading: true, error: null };
     });
     try {
@@ -120,12 +132,10 @@ export function useReelsFeed(source: FeedSource = 'feed', options: UseReelsFeedO
         hasMore: Boolean(next_cursor),
         error: null,
       });
-      const key = cacheKeyForSource(source);
       if (key && reels.length > 0) {
         upsertReelsFeedCache(key, reels, next_cursor ?? null);
       }
     } catch (err) {
-      const key = cacheKeyForSource(source);
       const stale = key ? getReelsFeedCache(key, { allowStale: true }) : null;
       if (stale?.reels?.length) {
         setState({
@@ -174,26 +184,38 @@ export function useReelsFeed(source: FeedSource = 'feed', options: UseReelsFeedO
   }, [fetchPage, source]);
 
   const loadMore = useCallback(async () => {
+    const snapshot = {
+      cursor: state.cursor,
+      hasMore: state.hasMore,
+      loadingMore: state.loadingMore,
+      ids: reelsRef.current.map((r) => r.id),
+    };
+    if (snapshot.loadingMore || !snapshot.hasMore || !snapshot.cursor) return;
+
     setState((current) => {
       if (current.loadingMore || !current.hasMore || !current.cursor) return current;
       return { ...current, loadingMore: true };
     });
 
-    const cur = reelsRef.current;
-    const lastCursor = state.cursor;
-    if (!lastCursor) return;
-
     try {
-      const { reels, next_cursor } = await fetchPage(lastCursor);
+      const { reels, next_cursor } = await fetchPage(
+        snapshot.cursor,
+        source === 'feed' ? snapshot.ids : undefined
+      );
       setState((s) => {
         const seen = new Set(s.reels.map((r) => r.id));
-        const merged = [...s.reels, ...reels.filter((r) => !seen.has(r.id))];
+        const fresh = reels.filter((r) => !seen.has(r.id));
+        // Empty page with no new ids → stop paging so we don't loop forever.
+        const hasMore = fresh.length > 0 && Boolean(next_cursor);
+        const merged = [...s.reels, ...fresh];
+        const key = cacheKeyForSource(source);
+        if (key) upsertReelsFeedCache(key, merged, hasMore ? next_cursor : null);
         return {
           ...s,
           reels: merged,
           loadingMore: false,
-          cursor: next_cursor,
-          hasMore: Boolean(next_cursor),
+          cursor: hasMore ? next_cursor : null,
+          hasMore,
         };
       });
     } catch {
@@ -201,7 +223,7 @@ export function useReelsFeed(source: FeedSource = 'feed', options: UseReelsFeedO
     }
     // intentional dependency: state.cursor is read for snapshot
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fetchPage, state.cursor]);
+  }, [fetchPage, state.cursor, state.hasMore, state.loadingMore, source]);
 
   /**
    * Soft live update: prepend only *new* approved reels and patch counts.

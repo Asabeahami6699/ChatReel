@@ -34,56 +34,65 @@ export function FloatingActionMenu({ visible, x, y, actions, onClose }: Props) {
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose} />
-      <View
-        style={[
-          styles.menu,
-          {
-            top,
-            left,
-            width: menuWidth,
-            backgroundColor: theme.listCardBg,
-            borderColor: theme.listBorder,
-            borderWidth: theme.isDark ? 1 : 0,
-          },
-        ]}
-      >
-        {actions.map((action, index) => (
-          <TouchableOpacity
-            key={action.key}
-            style={[
-              styles.row,
-              index < actions.length - 1 && [styles.rowBorder, { borderBottomColor: theme.listBorder }],
-            ]}
-            onPress={() => {
-              onClose();
-              action.onPress();
-            }}
-            activeOpacity={0.75}
-          >
-            <Text
+      <View style={styles.root}>
+        <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Dismiss menu" />
+        <View
+          style={[
+            styles.menu,
+            {
+              top,
+              left,
+              width: menuWidth,
+              backgroundColor: theme.listCardBg,
+              borderColor: theme.listBorder,
+              borderWidth: theme.isDark ? 1 : 0,
+            },
+          ]}
+        >
+          {actions.map((action, index) => (
+            <TouchableOpacity
+              key={action.key}
               style={[
-                styles.label,
-                { color: theme.listPrimaryText },
-                action.destructive && styles.destructive,
+                styles.row,
+                index < actions.length - 1 && [
+                  styles.rowBorder,
+                  { borderBottomColor: theme.listBorder },
+                ],
               ]}
+              onPress={() => {
+                onClose();
+                action.onPress();
+              }}
+              activeOpacity={0.75}
             >
-              {action.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
+              <Text
+                style={[
+                  styles.label,
+                  { color: theme.listPrimaryText },
+                  action.destructive && styles.destructive,
+                ]}
+              >
+                {action.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
       </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+  },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.18)',
   },
   menu: {
     position: 'absolute',
+    zIndex: 2,
     backgroundColor: '#fff',
     borderRadius: 12,
     paddingVertical: 4,

@@ -41,9 +41,9 @@ export function AppLockGate() {
           style={styles.logo}
           resizeMode="contain"
         />
-        <Text style={[styles.title, { color: '#fff' }]}>ChatReel is locked</Text>
+        <Text style={[styles.title, { color: '#fff' }]}>App is locked</Text>
         <Text style={styles.subtitle}>
-          Unlock with biometrics or your device passcode to continue.
+          App lock covers ChatReel. Unlock with biometrics or your device passcode.
         </Text>
       </View>
 

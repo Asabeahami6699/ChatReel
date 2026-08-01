@@ -38,6 +38,8 @@ export type ChatMessage = {
   expires_at?: string | null;
   /** View-once media: removed after the recipient opens it. */
   view_once?: boolean;
+  /** Auto-close the viewer after N seconds (view-once). */
+  view_once_auto_close_sec?: number | null;
   viewed_at?: string | null;
   /** false = content is ciphertext (DM E2E). Missing/true = plaintext. */
   plaintext?: boolean;
@@ -68,6 +70,7 @@ export type AttachmentFile = {
   expiresInSeconds?: number | null;
   /** View-once media: removed after the recipient opens it. */
   viewOnce?: boolean;
+  viewOnceAutoCloseSec?: number | null;
   /** Video trim window (seconds). Playback uses this range. */
   trimStartSec?: number;
   trimEndSec?: number;

@@ -22,14 +22,15 @@ import { FAB, IconButton, Button, Portal, Snackbar } from 'react-native-paper'
 import { Ionicons } from '@expo/vector-icons'
 import { FloatingActionMenu } from '../../components/FloatingActionMenu'
 import { useChatSettings } from '../../context/ChatSettingsContext'
+import {
+  getAcceptedFriendsCache,
+  mapFriendshipsToRows,
+  scheduleFriendsPrefetch,
+  upsertAcceptedFriendsCache,
+  type AcceptedFriendRow,
+} from '../../lib/friendsPrefetch'
 
-type Friend = {
-  id: string
-  user_id: string
-  name: string
-  email?: string
-  avatar_url?: string
-}
+type Friend = AcceptedFriendRow
 
 type Props = {
   setSelectedChat?: (chat: any) => void
@@ -44,12 +45,15 @@ export default function FriendsListScreen({ setSelectedChat }: Props) {
 
   const { mode, groupId, groupName, existingMembers = [] } = route.params || {}
   const isSelectionMode = mode === 'select'
+  const isPrivacyMode = mode === 'privacy'
 
-  const [friendsList, setFriendsList] = useState<Friend[]>([])
-  const [filteredFriends, setFilteredFriends] = useState<Friend[]>([])
+  const cachedFriends = getAcceptedFriendsCache({ allowStale: true })?.friends ?? []
+  const [friendsList, setFriendsList] = useState<Friend[]>(() => cachedFriends)
+  const [filteredFriends, setFilteredFriends] = useState<Friend[]>(() => cachedFriends)
+  const [blockedList, setBlockedList] = useState<Friend[]>([])
   const [selectedFriends, setSelectedFriends] = useState<string[]>([])
   const [searchQuery, setSearchQuery] = useState('')
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(() => cachedFriends.length === 0)
   const currentProfilesId = useCurrentProfileId()
   const [addingToGroup, setAddingToGroup] = useState(false)
   const [friendMenu, setFriendMenu] = useState<{
@@ -61,43 +65,44 @@ export default function FriendsListScreen({ setSelectedChat }: Props) {
 
   const fetchFriendsList = async () => {
     if (!currentProfilesId) return
-    setLoading(true)
+    if (friendsList.length === 0) setLoading(true)
     try {
-      const { friendships: data } = await api.friendships.list('accepted')
-
-      const friends =
-        data
-          ?.map((f: Record<string, unknown>) => {
-            const isSender = f.user_id === currentProfilesId
-            const profile = (isSender ? f.receiver_profile : f.sender_profile) as Record<
-              string,
-              unknown
-            > | null
-
-            if (!profile) return null
-
-            return {
-              id: f.id as string,
-              user_id: (profile.user_id as string) || '',
-              name: (profile.display_name as string) || (profile.email as string) || 'Unknown',
-              email: profile.email as string | undefined,
-              avatar_url: profile.avatar_url as string | undefined,
-            }
-          })
-          .filter((f): f is Friend => Boolean(f && f.user_id)) || []
-
-      const uniqueFriends = Array.from(
-        new Map(friends.map((friend) => [friend.user_id, friend])).values()
+      const [{ friendships: accepted }, blockedRes] = await Promise.all([
+        api.friendships.list('accepted'),
+        isPrivacyMode
+          ? api.friendships.list('blocked')
+          : Promise.resolve({ friendships: [] as Record<string, unknown>[] }),
+      ])
+      const uniqueFriends = mapFriendshipsToRows(
+        (accepted ?? []) as Record<string, unknown>[],
+        currentProfilesId
       )
-
+      upsertAcceptedFriendsCache(uniqueFriends)
       setFriendsList(uniqueFriends)
       setFilteredFriends(uniqueFriends)
+      if (isPrivacyMode) {
+        // Only rows I created as blocker (not people who blocked me).
+        const mine = ((blockedRes.friendships ?? []) as Record<string, unknown>[]).filter(
+          (f) => f.user_id === currentProfilesId
+        )
+        const blocked = mapFriendshipsToRows(mine, currentProfilesId).filter((b) => b.user_id)
+        setBlockedList(blocked)
+      }
     } catch (err) {
       console.error('Fetch friends error:', err)
+      const stale = getAcceptedFriendsCache({ allowStale: true })?.friends
+      if (stale?.length) {
+        setFriendsList(stale)
+        setFilteredFriends(stale)
+      }
     } finally {
       setLoading(false)
     }
   }
+
+  useEffect(() => {
+    scheduleFriendsPrefetch(0)
+  }, [])
 
   useEffect(() => {
     fetchFriendsList()
@@ -158,9 +163,65 @@ export default function FriendsListScreen({ setSelectedChat }: Props) {
     }
   }
 
+  const handleBlockFriend = (friend: Friend) => {
+    Alert.alert(
+      'Block user',
+      `Block ${friend.name}? They won’t be able to message you, call you, or see your moments and reels — and you won’t see theirs.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Block',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              try {
+                await api.friendships.block(friend.user_id)
+                setFriendsList((prev) => prev.filter((f) => f.user_id !== friend.user_id))
+                setFilteredFriends((prev) => prev.filter((f) => f.user_id !== friend.user_id))
+                setBlockedList((prev) => {
+                  if (prev.some((b) => b.user_id === friend.user_id)) return prev
+                  return [...prev, friend]
+                })
+                setToast(`${friend.name} blocked`)
+              } catch (err) {
+                const message = err instanceof ApiError ? err.message : 'Could not block user'
+                Alert.alert('Block', message)
+              }
+            })()
+          },
+        },
+      ]
+    )
+  }
+
+  const handleUnblock = (friend: Friend) => {
+    Alert.alert('Unblock user', `Unblock ${friend.name}?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Unblock',
+        onPress: () => {
+          void (async () => {
+            try {
+              await api.friendships.unblock(friend.user_id)
+              setBlockedList((prev) => prev.filter((f) => f.user_id !== friend.user_id))
+              setToast(`${friend.name} unblocked`)
+            } catch (err) {
+              const message = err instanceof ApiError ? err.message : 'Could not unblock'
+              Alert.alert('Unblock', message)
+            }
+          })()
+        },
+      },
+    ])
+  }
+
   const handleOpenChat = (item: Friend) => {
     if (isSelectionMode) {
       toggleFriendSelection(item.user_id)
+      return
+    }
+    if (isPrivacyMode) {
+      handleBlockFriend(item)
       return
     }
 
@@ -204,7 +265,7 @@ export default function FriendsListScreen({ setSelectedChat }: Props) {
         ]}
         onPress={() => handleOpenChat(item)}
         onLongPress={(e) => {
-          if (isSelectionMode || isDisabled) return
+          if (isSelectionMode || isDisabled || isPrivacyMode) return
           setFriendMenu({ x: e.nativeEvent.pageX, y: e.nativeEvent.pageY, friend: item })
         }}
         delayLongPress={400}
@@ -267,11 +328,20 @@ export default function FriendsListScreen({ setSelectedChat }: Props) {
         />
         <View style={styles.headerTitleContainer}>
           <Text style={[styles.title, { color: theme.listPrimaryText }]}>
-            {isSelectionMode ? `Add to ${groupName || 'Group'}` : 'Accepted Friends'}
+            {isSelectionMode
+              ? `Add to ${groupName || 'Group'}`
+              : isPrivacyMode
+                ? 'Friends and blocked'
+                : 'Accepted Friends'}
           </Text>
           {isSelectionMode && (
             <Text style={[styles.subtitle, { color: theme.listSecondaryText }]}>
               Select friends to add to the group
+            </Text>
+          )}
+          {isPrivacyMode && (
+            <Text style={[styles.subtitle, { color: theme.listSecondaryText }]}>
+              Tap a friend to block them
             </Text>
           )}
         </View>
@@ -320,20 +390,69 @@ export default function FriendsListScreen({ setSelectedChat }: Props) {
           renderItem={renderFriend}
           keyExtractor={(item) => item.user_id}
           contentContainerStyle={styles.list}
+          ListHeaderComponent={
+            isPrivacyMode ? (
+              <Text style={[styles.sectionLabel, { color: theme.listSecondaryText }]}>
+                Friends
+              </Text>
+            ) : null
+          }
+          ListFooterComponent={
+            isPrivacyMode ? (
+              <View style={styles.blockedSection}>
+                <Text style={[styles.sectionLabel, { color: theme.listSecondaryText }]}>
+                  Blocked
+                </Text>
+                {blockedList.length === 0 ? (
+                  <Text style={[styles.emptySubtext, { color: theme.listSecondaryText }]}>
+                    No blocked users
+                  </Text>
+                ) : (
+                  blockedList.map((item) => (
+                    <TouchableOpacity
+                      key={item.user_id}
+                      style={[styles.friendItem, { borderBottomColor: theme.listBorder }]}
+                      onPress={() => handleUnblock(item)}
+                    >
+                      <View style={styles.friendContent}>
+                        {item.avatar_url ? (
+                          <Image source={{ uri: item.avatar_url }} style={styles.friendAvatar} />
+                        ) : (
+                          <View
+                            style={[styles.friendAvatar, { backgroundColor: theme.listBorder }]}
+                          />
+                        )}
+                        <View style={styles.friendInfo}>
+                          <Text style={[styles.friendName, { color: theme.listPrimaryText }]}>
+                            {item.name}
+                          </Text>
+                          <Text style={[styles.friendEmail, { color: theme.listSecondaryText }]}>
+                            Tap to unblock
+                          </Text>
+                        </View>
+                      </View>
+                    </TouchableOpacity>
+                  ))
+                )}
+              </View>
+            ) : null
+          }
           ListEmptyComponent={
             <View style={styles.empty}>
               <Text style={[styles.emptyText, { color: theme.listPrimaryText }]}>
-                No accepted friends found.
+                {isPrivacyMode ? 'No friends to manage.' : 'No accepted friends found.'}
               </Text>
               <Text style={[styles.emptySubtext, { color: theme.listSecondaryText }]}>
-                Add friends first to invite them to groups
+                {isPrivacyMode
+                  ? 'Blocked people appear below.'
+                  : 'Add friends first to invite them to groups'}
               </Text>
             </View>
           }
         />
       )}
 
-      {!isSelectionMode && (
+      {!isSelectionMode && !isPrivacyMode && (
         <FAB
           style={[styles.fab, { bottom: Math.max(16, insets.bottom + 12) }]}
           icon="plus"
@@ -350,6 +469,12 @@ export default function FriendsListScreen({ setSelectedChat }: Props) {
         actions={
           friendMenu
             ? [
+                {
+                  key: 'block',
+                  label: 'Block',
+                  destructive: true,
+                  onPress: () => handleBlockFriend(friendMenu.friend),
+                },
                 {
                   key: 'unfriend',
                   label: 'Unfriend',
@@ -451,4 +576,13 @@ const styles = StyleSheet.create({
   emptySubtext: { fontSize: 14, color: '#999', marginTop: 4, textAlign: 'center' },
   loading: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   fab: { position: 'absolute', margin: 16, right: 0, bottom: 16, backgroundColor: '#007AFF' },
+  sectionLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+    marginTop: 16,
+    marginBottom: 4,
+  },
+  blockedSection: { paddingBottom: 40 },
 })

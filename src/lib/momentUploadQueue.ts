@@ -288,6 +288,10 @@ export function subscribeMomentUploadQueue(listener: Listener): () => void {
   return () => listeners.delete(listener);
 }
 
+export function getMomentUploadDraft(taskId: string): MomentUploadDraft | null {
+  return taskDrafts.get(taskId) ?? null;
+}
+
 export function getVisibleMomentUploads(): MomentUploadTask[] {
   return Array.from(tasks.values())
     .filter((t) => t.status !== 'done')

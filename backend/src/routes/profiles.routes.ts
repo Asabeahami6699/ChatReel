@@ -10,7 +10,12 @@ import {
   invalidateProfileMe,
   setCachedProfileMe,
 } from '../lib/profileMeCache';
-import { asyncHandler, AuthedRequest, requireAuth } from '../middleware/auth';
+import {
+  asyncHandler,
+  AuthedRequest,
+  getProfileIdByUserId,
+  requireAuth,
+} from '../middleware/auth';
 import { getProfileSuggestions } from '../services/suggestions.service';
 
 const router = Router();
@@ -76,15 +81,22 @@ router.get(
     const q = String(req.query.q ?? '').trim();
     if (!q) return res.json({ profiles: [] });
 
+    const myProfileId = await getProfileIdByUserId(req.userId!);
+    const { getBlockedProfileIdsFor } = await import('../services/block.service');
+    const blocked = myProfileId
+      ? await getBlockedProfileIdsFor(myProfileId)
+      : new Set<string>();
+
     const { data, error } = await supabaseAdmin
       .from('profiles')
       .select('id, user_id, display_name, email, avatar_url, region, country, created_at')
       .or(`display_name.ilike.%${q}%,email.ilike.%${q}%`)
       .neq('user_id', req.userId!)
-      .limit(20);
+      .limit(40);
 
     if (error) return res.status(500).json({ error: error.message });
-    return res.json({ profiles: data ?? [] });
+    const profiles = (data ?? []).filter((p) => !blocked.has(p.id as string)).slice(0, 20);
+    return res.json({ profiles });
   })
 );
 

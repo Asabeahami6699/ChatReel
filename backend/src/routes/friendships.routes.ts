@@ -109,6 +109,19 @@ router.post(
       return res.status(400).json({ error: "You can't add yourself" });
     }
 
+    const { data: blockedEdge } = await supabaseAdmin
+      .from('friendships')
+      .select('id')
+      .eq('status', 'blocked')
+      .or(
+        `and(user_id.eq.${profileId},friend_id.eq.${friend_profile_id}),and(user_id.eq.${friend_profile_id},friend_id.eq.${profileId})`
+      )
+      .limit(1)
+      .maybeSingle();
+    if (blockedEdge) {
+      return res.status(403).json({ error: 'Cannot send friend request', code: 'USER_BLOCKED' });
+    }
+
     const now = new Date().toISOString();
     const { data, error } = await supabaseAdmin
       .from('friendships')
@@ -335,28 +348,58 @@ router.post(
       return res.status(400).json({ error: 'Cannot block yourself' });
     }
 
-    const { data: existing } = await supabaseAdmin
+    const now = new Date().toISOString();
+    // Accept creates reciprocal rows — update/remove all edges between the pair.
+    const { data: existingRows, error: fetchError } = await supabaseAdmin
       .from('friendships')
       .select('id, user_id, friend_id, status')
       .or(
         `and(user_id.eq.${profileId},friend_id.eq.${target.id}),and(user_id.eq.${target.id},friend_id.eq.${profileId})`
-      )
-      .maybeSingle();
+      );
 
-    if (existing) {
-      const { error } = await supabaseAdmin
-        .from('friendships')
-        .update({ status: 'blocked', updated_at: new Date().toISOString() })
-        .eq('id', existing.id);
-      if (error) return res.status(500).json({ error: error.message });
-      return res.json({ success: true });
+    if (fetchError) return res.status(500).json({ error: fetchError.message });
+
+    const ids = (existingRows ?? []).map((r) => r.id as string);
+    if (ids.length) {
+      const { error: delError } = await supabaseAdmin.from('friendships').delete().in('id', ids);
+      if (delError) return res.status(500).json({ error: delError.message });
     }
 
     const { error } = await supabaseAdmin.from('friendships').insert({
       user_id: profileId,
       friend_id: target.id,
       status: 'blocked',
+      created_at: now,
+      updated_at: now,
     });
+
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json({ success: true });
+  })
+);
+
+router.post(
+  '/unblock',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const profileId = await getProfileIdByUserId(req.userId!);
+    if (!profileId) return res.status(404).json({ error: 'Profile not found' });
+
+    const body = z.object({ user_id: z.string().uuid() }).parse(req.body);
+    const { data: target } = await supabaseAdmin
+      .from('profiles')
+      .select('id')
+      .eq('user_id', body.user_id)
+      .maybeSingle();
+
+    if (!target) return res.status(404).json({ error: 'User not found' });
+
+    const { error } = await supabaseAdmin
+      .from('friendships')
+      .delete()
+      .eq('user_id', profileId)
+      .eq('friend_id', target.id)
+      .eq('status', 'blocked');
 
     if (error) return res.status(500).json({ error: error.message });
     return res.json({ success: true });

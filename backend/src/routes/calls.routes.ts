@@ -128,6 +128,13 @@ router.post(
       if (!calleeProfile) {
         return res.status(404).json({ error: 'User not found' });
       }
+      const { areAuthUsersBlocked } = await import('../services/block.service');
+      if (await areAuthUsersBlocked(callerId, body.callee_id)) {
+        return res.status(403).json({
+          error: 'You cannot call this user',
+          code: 'USER_BLOCKED',
+        });
+      }
       const friends = await areAuthUsersFriends(callerId, body.callee_id);
       if (!friends) {
         return res.status(403).json({ error: 'You can only call accepted friends' });
@@ -875,8 +882,12 @@ router.post(
       });
     }
 
-    // Validate each invitee: friend of inviter, or same group member.
+    // Validate each invitee: not blocked, friend of inviter, or same group member.
+    const { areAuthUsersBlocked } = await import('../services/block.service');
     for (const uid of toInvite) {
+      if (await areAuthUsersBlocked(userId, uid)) {
+        return res.status(403).json({ error: 'You cannot invite a blocked user', code: 'USER_BLOCKED' });
+      }
       if (call.scope === 'group' && call.group_id) {
         const member = await isGroupMember(uid, call.group_id);
         if (!member) {

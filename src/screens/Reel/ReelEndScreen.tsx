@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { Animated, Easing, Image, Platform, StyleSheet, Text, View } from 'react-native';
+import { LinearGradient as ExpoLinearGradient } from 'expo-linear-gradient';
 import { USE_NATIVE_DRIVER } from '../../lib/animation';
 import { APP_NAME, REEL_END_SCREEN_MS } from './reelTheme';
 import {
@@ -19,7 +20,7 @@ type Props = {
   durationMs?: number;
 };
 
-/** Branded looping GIF + creator tag when a reel finishes. */
+/** Branded night end-card centered when a reel finishes. */
 export function ReelEndScreen({ ownerName, durationMs = REEL_END_SCREEN_MS }: Props) {
   const soundPlayerRef = useRef<AudioPlayer | null>(null);
   const overlayOpacity = useRef(new Animated.Value(0)).current;
@@ -91,13 +92,11 @@ export function ReelEndScreen({ ownerName, durationMs = REEL_END_SCREEN_MS }: Pr
 
     const seq = Animated.sequence([enter, Animated.delay(holdMs), exit]);
     seq.start();
-    // Short end-screen sound effect (subtle, fire-and-forget).
     void (async () => {
       try {
         await configurePlaybackAudio();
         await releasePlayer(soundPlayerRef.current);
         soundPlayerRef.current = createPlaybackPlayer(END_SOUND);
-        // Keep it quiet so it doesn't feel like a notification.
         try {
           soundPlayerRef.current.volume = 0.25;
         } catch {
@@ -105,7 +104,7 @@ export function ReelEndScreen({ ownerName, durationMs = REEL_END_SCREEN_MS }: Pr
         }
         soundPlayerRef.current.play();
       } catch {
-        /* ignore end-screen audio failures */
+        /* ignore */
       }
     })();
 
@@ -118,6 +117,17 @@ export function ReelEndScreen({ ownerName, durationMs = REEL_END_SCREEN_MS }: Pr
 
   return (
     <Animated.View style={[styles.overlay, { opacity: overlayOpacity }]} pointerEvents="none">
+      <ExpoLinearGradient
+        colors={['#050814', '#0b1224', '#141a2e', '#0a0e1a']}
+        locations={[0, 0.35, 0.7, 1]}
+        style={StyleSheet.absoluteFillObject}
+      />
+      <View style={styles.stars} pointerEvents="none">
+        <View style={[styles.star, { top: '18%', left: '22%' }]} />
+        <View style={[styles.star, { top: '28%', right: '18%', opacity: 0.5 }]} />
+        <View style={[styles.star, { bottom: '30%', left: '30%', opacity: 0.35 }]} />
+        <View style={[styles.star, { bottom: '22%', right: '28%', opacity: 0.6 }]} />
+      </View>
       <Animated.View
         style={[
           styles.card,
@@ -149,50 +159,61 @@ export function ReelEndScreen({ ownerName, durationMs = REEL_END_SCREEN_MS }: Pr
 
 const styles = StyleSheet.create({
   overlay: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: '#000',
+    ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'center',
-    // Sit behind captions / engagement rail (those use zIndex 15–16).
-    zIndex: 2,
-    elevation: 2,
+    zIndex: 40,
+    elevation: 40,
+  },
+  stars: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  star: {
+    position: 'absolute',
+    width: 3,
+    height: 3,
+    borderRadius: 1.5,
+    backgroundColor: 'rgba(255,255,255,0.55)',
   },
   card: {
     alignItems: 'center',
-    paddingHorizontal: 24,
-    paddingVertical: 20,
-    maxWidth: '82%',
+    justifyContent: 'center',
+    paddingHorizontal: 28,
+    paddingVertical: 24,
+    maxWidth: '86%',
   },
   gif: {
-    width: 160,
-    height: 160,
+    width: 168,
+    height: 168,
     marginBottom: 4,
   },
   appName: {
     color: '#fff',
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: '800',
-    letterSpacing: 0.3,
-    marginTop: 4,
+    letterSpacing: 0.4,
+    marginTop: 6,
   },
   ownerTag: {
-    marginTop: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
+    marginTop: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 7,
     borderRadius: 20,
     backgroundColor: 'rgba(255,255,255,0.12)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.18)',
     maxWidth: '100%',
   },
   owner: {
     color: '#fff',
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '700',
     letterSpacing: 0.2,
   },
   hint: {
-    color: 'rgba(255,255,255,0.55)',
-    fontSize: 12,
-    marginTop: 14,
+    color: 'rgba(255,255,255,0.62)',
+    fontSize: 13,
+    marginTop: 16,
     fontWeight: '500',
   },
 });

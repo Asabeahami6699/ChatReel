@@ -36,8 +36,10 @@ import { getTextBackground } from '../../lib/momentTextBackgrounds';
 import { CircularProgressRing } from '../../components/CircularProgressRing';
 import {
   dismissMomentUpload,
+  getMomentUploadDraft,
   retryMomentUpload,
   subscribeMomentUploadQueue,
+  type MomentUploadDraft,
   type MomentUploadTask,
 } from '../../lib/momentUploadQueue';
 
@@ -191,6 +193,10 @@ export default function FeedScreen() {
   const [viewerIndex, setViewerIndex] = useState(-1);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [uploadTasks, setUploadTasks] = useState<MomentUploadTask[]>([]);
+  const [uploadPreview, setUploadPreview] = useState<{
+    task: MomentUploadTask;
+    draft: MomentUploadDraft;
+  } | null>(null);
 
   const requireAuth = useCallback(
     (message?: string) => {
@@ -512,7 +518,10 @@ export default function FeedScreen() {
         onPress={() => {
           if (failed) {
             retryMomentUpload(task.id);
+            return;
           }
+          const draft = getMomentUploadDraft(task.id);
+          if (draft) setUploadPreview({ task, draft });
         }}
         onLongPress={() => {
           if (failed) dismissMomentUpload(task.id);
@@ -819,6 +828,66 @@ export default function FeedScreen() {
         onSlideViewed={handleSlideViewed}
         onSlideDeleted={removeSlide}
       />
+
+      <Modal
+        visible={!!uploadPreview}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setUploadPreview(null)}
+      >
+        <View style={styles.uploadPreviewRoot}>
+          <TouchableOpacity
+            style={styles.uploadPreviewClose}
+            onPress={() => setUploadPreview(null)}
+            hitSlop={12}
+          >
+            <Ionicons name="close" size={28} color="#fff" />
+          </TouchableOpacity>
+          {uploadPreview ? (
+            <View style={styles.uploadPreviewBody}>
+              {uploadPreview.draft.items[0]?.mediaType === 'text' ? (
+                <LinearGradient
+                  colors={[
+                    ...(getTextBackground(uploadPreview.draft.items[0].textBackground).colors),
+                  ]}
+                  style={styles.uploadPreviewMedia}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                >
+                  <Text style={styles.uploadPreviewText}>
+                    {uploadPreview.draft.items[0].caption?.trim() || '…'}
+                  </Text>
+                </LinearGradient>
+              ) : uploadPreview.task.previewUri || uploadPreview.draft.items[0]?.uri ? (
+                <Image
+                  source={{
+                    uri:
+                      uploadPreview.task.previewUri ||
+                      uploadPreview.draft.items[0]?.uri ||
+                      undefined,
+                  }}
+                  style={styles.uploadPreviewMedia}
+                  resizeMode="contain"
+                />
+              ) : (
+                <View style={[styles.uploadPreviewMedia, styles.uploadFallback]}>
+                  <Ionicons name="image-outline" size={48} color="#fff" />
+                </View>
+              )}
+              <Text style={styles.uploadPreviewHint}>
+                {uploadPreview.task.status === 'publishing'
+                  ? 'Publishing…'
+                  : `Uploading ${Math.round(uploadPreview.task.progress)}%`}
+              </Text>
+              {uploadPreview.task.caption ? (
+                <Text style={styles.uploadPreviewCaption} numberOfLines={4}>
+                  {uploadPreview.task.caption}
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1106,4 +1175,43 @@ const styles = StyleSheet.create({
     borderColor: '#3a3a3a',
   },
   pickerButtonText: { color: '#fff', fontWeight: '600' },
+
+  uploadPreviewRoot: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.94)',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  uploadPreviewClose: {
+    position: 'absolute',
+    top: 54,
+    right: 18,
+    zIndex: 2,
+    padding: 6,
+  },
+  uploadPreviewBody: { alignItems: 'center', gap: 14 },
+  uploadPreviewMedia: {
+    width: '100%',
+    maxWidth: 420,
+    aspectRatio: 9 / 16,
+    borderRadius: 18,
+    overflow: 'hidden',
+    backgroundColor: '#111',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  uploadPreviewText: {
+    color: '#fff',
+    fontSize: 22,
+    fontWeight: '700',
+    textAlign: 'center',
+    paddingHorizontal: 20,
+  },
+  uploadPreviewHint: { color: 'rgba(255,255,255,0.7)', fontSize: 14, fontWeight: '600' },
+  uploadPreviewCaption: {
+    color: '#fff',
+    fontSize: 15,
+    textAlign: 'center',
+    paddingHorizontal: 12,
+  },
 });

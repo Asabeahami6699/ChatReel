@@ -18,7 +18,14 @@ import {
   ReelVisibility,
 } from '../services/reels.service';
 import { sendPushToUserSafe, getAuthUserIdByProfileId } from '../services/push.service';
-import { isReelHlsEnabled, queueReelHlsTranscode, queueReelMp4Process } from '../services/reelTranscode.service';
+import {
+  hasMeaningfulTrim,
+  isReelHlsEnabled,
+  processReelMp4,
+  queueReelHlsTranscode,
+  queueReelMp4Process,
+  reelFilterToVf,
+} from '../services/reelTranscode.service';
 import { assertCaptionAllowed, scheduleReelModeration } from '../services/reelModeration.service';
 import { assertReelSoundActive, createReelSound, deactivateReelSoundForUser, getReelSoundById, listReelSounds } from '../services/reelSounds.service';
 import { extractSoundFromVideoUrl } from '../services/reelSoundExtract.service';
@@ -221,32 +228,45 @@ router.get(
     const profileId = await getProfileIdByUserId(req.userId!);
     if (!profileId) return res.status(404).json({ error: 'Profile not found' });
 
-    const limit = Math.min(Number(req.query.limit ?? 10), 30);
-    const cursor = req.query.cursor as string | undefined; // ISO created_at
+    const limit = Math.min(Math.max(Number(req.query.limit ?? 12) || 12, 1), 30);
+    // For You is ranked/shuffled — pagination uses exclude ids, not created_at.
+    // `cursor=more` (or any truthy value) just means "client wants the next page".
+    const wantsMore = Boolean(req.query.cursor);
+    const excludeRaw = typeof req.query.exclude === 'string' ? req.query.exclude : '';
+    const excludeIds = new Set(
+      excludeRaw
+        .split(',')
+        .map((id) => id.trim())
+        .filter((id) => /^[0-9a-f-]{36}$/i.test(id))
+        .slice(0, 200)
+    );
 
     const friendSet = await getAcceptedFriendIds(profileId);
     const friendIds = Array.from(friendSet);
 
-    const { fetchCandidateReels, fetchFreshReelsForFeed, recommendReelsForUser } = await import(
-      '../services/reelRecommendation.service'
-    );
+    const {
+      fetchCandidateReels,
+      fetchFreshReelsForFeed,
+      recommendReelsPageForUser,
+    } = await import('../services/reelRecommendation.service');
 
     const candidates = await fetchCandidateReels({
       profileId,
       friendIds,
       viewerAuthUserId: req.userId!,
-      cursor,
-      targetCount: 120,
+      excludeIds,
+      // Wider pool so later pages don't collapse back to the same top-N.
+      targetCount: wantsMore || excludeIds.size > 0 ? 220 : 160,
     });
 
-    const ranked = await recommendReelsForUser(profileId, candidates, {
-      limit: Math.min(limit * 2, 30),
+    const { reels: ranked, hasMore } = await recommendReelsPageForUser(profileId, candidates, {
+      limit,
     });
 
-    let page = ranked.slice(0, limit);
+    let page = ranked;
 
     // First page: sprinkle recent approved reels into a shuffled mix (not chronological FCFS).
-    if (!cursor) {
+    if (!wantsMore && excludeIds.size === 0) {
       const fresh = await fetchFreshReelsForFeed({
         profileId,
         friendIds,
@@ -255,7 +275,7 @@ router.get(
         maxAgeHours: 72,
       });
       const onPage = new Set(page.map((r) => r.id));
-      const inject = fresh.filter((r) => !onPage.has(r.id));
+      const inject = fresh.filter((r) => !onPage.has(r.id) && !excludeIds.has(r.id));
       const mixed = [...inject, ...page];
       for (let i = mixed.length - 1; i > 0; i -= 1) {
         const j = Math.floor(Math.random() * (i + 1));
@@ -267,7 +287,8 @@ router.get(
     }
 
     const enriched = await enrichReels(page, profileId);
-    const nextCursor = ranked.length > limit ? ranked[limit - 1].created_at : null;
+    // Sentinel cursor — client must send exclude=… on the next request.
+    const nextCursor = hasMore || page.length >= limit ? 'more' : null;
 
     return res.json({ reels: enriched, next_cursor: nextCursor });
   })
@@ -538,9 +559,13 @@ router.get(
     );
     const enriched = await enrichReels(visible, profileId);
 
+    const { getBlockedProfileIdsFor } = await import('../services/block.service');
+    const blocked = await getBlockedProfileIdsFor(profileId);
+    const profiles = (profilesRes.data ?? []).filter((p) => !blocked.has(p.id as string));
+
     return res.json({
       reels: enriched,
-      profiles: profilesRes.data ?? [],
+      profiles,
     });
   })
 );
@@ -1093,35 +1118,62 @@ router.post(
         await supabaseAdmin.from('reels').delete().eq('id', reelId);
         return res.status(500).json({ error: mediaErr.message });
       }
+    }
 
-      for (const item of mediaItems) {
-        if (item.media_type !== 'video') continue;
-        if (mediaItems.length === 1) {
-          const trimOpts = {
-            trimStartSec: item.trim_start_sec ?? body.trim_start_sec,
-            trimEndSec: item.trim_end_sec ?? body.trim_end_sec,
-            filterId:
-              item.filter_id && item.filter_id !== 'none'
-                ? item.filter_id
-                : primaryFilterId,
-          };
-          if (isReelHlsEnabled()) {
-            queueReelHlsTranscode(reelId, item.media_url, trimOpts);
-          } else {
-            queueReelMp4Process(reelId, item.media_url, trimOpts);
-          }
-        }
-      }
-    } else if (primary.media_type === 'video') {
+    // Bake trim/filter/sound into MP4 before responding so clients receive the
+    // clipped file URL (not the full original) as soon as publish completes.
+    let publishedRow = data as ReelRow;
+    if (primary.media_type === 'video' && mediaItems.length <= 1) {
       const trimOpts = {
-        trimStartSec: body.trim_start_sec,
-        trimEndSec: body.trim_end_sec,
+        trimStartSec: primaryTrimStart ?? body.trim_start_sec,
+        trimEndSec: primaryTrimEnd ?? body.trim_end_sec,
         filterId: primaryFilterId,
       };
-      if (isReelHlsEnabled()) {
-        queueReelHlsTranscode(reelId, primary.media_url, trimOpts);
-      } else {
-        queueReelMp4Process(reelId, primary.media_url, trimOpts);
+      const needsBake =
+        hasMeaningfulTrim(trimOpts, primary.duration ?? body.duration) ||
+        Boolean(reelFilterToVf(primaryFilterId)) ||
+        Boolean(body.sound_id);
+
+      let bakeSucceeded = false;
+      let asyncQueued = false;
+
+      if (needsBake) {
+        try {
+          await processReelMp4(reelId, primary.media_url, trimOpts);
+          const { data: baked } = await supabaseAdmin
+            .from('reels')
+            .select('*')
+            .eq('id', reelId)
+            .maybeSingle();
+          if (baked) {
+            publishedRow = baked as ReelRow;
+            bakeSucceeded =
+              publishedRow.transcode_status === 'ready' ||
+              publishedRow.video_url !== primary.media_url;
+          }
+        } catch (err) {
+          console.warn('[reels] sync trim bake failed, queueing async:', err);
+          if (isReelHlsEnabled()) {
+            queueReelHlsTranscode(reelId, primary.media_url, trimOpts);
+          } else {
+            queueReelMp4Process(reelId, primary.media_url, trimOpts);
+          }
+          asyncQueued = true;
+        }
+      }
+
+      if (!asyncQueued) {
+        const urlForHls = publishedRow.video_url || primary.media_url;
+        if (isReelHlsEnabled()) {
+          // Already-baked progressive MP4: don't re-apply trim on HLS encode.
+          queueReelHlsTranscode(
+            reelId,
+            urlForHls,
+            bakeSucceeded ? { filterId: null } : trimOpts
+          );
+        } else if (!needsBake) {
+          queueReelMp4Process(reelId, primary.media_url, trimOpts);
+        }
       }
     }
 
@@ -1133,7 +1185,7 @@ router.post(
       scheduleReelModeration(reelId);
     }
 
-    const [enriched] = await enrichReels([data as ReelRow], profileId);
+    const [enriched] = await enrichReels([publishedRow], profileId);
     return res.status(201).json({ reel: enriched });
   })
 );

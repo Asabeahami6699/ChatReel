@@ -16,6 +16,7 @@ import {
 } from './doubleRatchet';
 import { x3dhAlice, x3dhBob, type PreKeyBundle } from './x3dh';
 import {
+  clearSession,
   consumeLocalOpk,
   ensureSignalIdentity,
   loadOpkPrivate,
@@ -29,6 +30,16 @@ export type SignalWireFields = {
   ephemeral_public_key: string;
   plaintext: false;
 };
+
+/** Peers whose session was cleared after decrypt failure — next encrypt starts a fresh PreKey. */
+const peersNeedingResync = new Set<string>();
+/** Throttle outbound identity checks so we don't fetch a bundle on every send. */
+const lastIdentityCheckAt = new Map<string, number>();
+const IDENTITY_CHECK_MIN_MS = 120_000;
+
+export function markPeerNeedsResync(peerId: string): void {
+  if (peerId) peersNeedingResync.add(peerId);
+}
 
 function packHeader(header: MessageHeader): string {
   return DR_WIRE_PREFIX + toB64(new TextEncoder().encode(JSON.stringify(header)));
@@ -67,18 +78,76 @@ export async function fetchPreKeyBundle(userId: string): Promise<PreKeyBundle | 
   }
 }
 
+async function initBobFromPreKeyHeader(
+  myUserId: string,
+  header: MessageHeader
+): Promise<RatchetSession | null> {
+  if (header.t !== 'pk' || !header.ik || !header.ek || header.spk_id == null) return null;
+
+  const me = await ensureSignalIdentity(myUserId);
+  if (header.spk_id !== me.spkId) {
+    console.warn('[signal] SPK id mismatch', header.spk_id, me.spkId);
+  }
+  let opkPriv: Uint8Array | null = null;
+  if (header.opk_id != null) {
+    opkPriv = await loadOpkPrivate(myUserId, header.opk_id);
+  }
+  const sharedSecret = x3dhBob({
+    ourIdentityPriv: me.identityPriv,
+    ourSpkPriv: me.spkPriv,
+    ourOpkPriv: opkPriv,
+    theirIdentityPub: fromB64(header.ik),
+    theirEphemeralPub: fromB64(header.ek),
+  });
+  const session = initSessionAsBob({
+    sharedSecret,
+    ourIdentityPub: me.identityPub,
+    peerIdentityPub: fromB64(header.ik),
+    ourSpkPriv: me.spkPriv,
+    ourSpkPub: me.spkPub,
+  });
+  if (header.opk_id != null) {
+    await consumeLocalOpk(myUserId, header.opk_id);
+  }
+  return session;
+}
+
 async function ensureSessionAsAlice(
   myUserId: string,
   peerId: string
-): Promise<{ session: RatchetSession; isNew: boolean; meta?: {
-  ourIdentityPub: Uint8Array;
-  ourEphemeralPub: Uint8Array;
-  spkId: number;
-  opkId: number | null;
-} }> {
-  const existing = await loadSession(myUserId, peerId);
-  if (existing?.ckS) {
-    return { session: existing, isNew: false };
+): Promise<{
+  session: RatchetSession;
+  isNew: boolean;
+  meta?: {
+    ourIdentityPub: Uint8Array;
+    ourEphemeralPub: Uint8Array;
+    spkId: number;
+    opkId: number | null;
+  };
+}> {
+  const forceResync = peersNeedingResync.has(peerId);
+  let existing = forceResync ? null : await loadSession(myUserId, peerId);
+
+  if (existing?.ckS && !forceResync) {
+    const lastCheck = lastIdentityCheckAt.get(peerId) ?? 0;
+    if (Date.now() - lastCheck < IDENTITY_CHECK_MIN_MS) {
+      return { session: existing, isNew: false };
+    }
+    lastIdentityCheckAt.set(peerId, Date.now());
+    // Heal if the peer re-registered (new identity key) while we still hold a stale ratchet.
+    const bundle = await fetchPreKeyBundle(peerId);
+    if (bundle?.identityKey && existing.peerIdentityPub !== bundle.identityKey) {
+      console.warn('[signal] peer identity rotated — resetting session', peerId);
+      await clearSession(myUserId, peerId);
+      existing = null;
+    } else {
+      return { session: existing, isNew: false };
+    }
+  }
+
+  if (forceResync) {
+    await clearSession(myUserId, peerId);
+    peersNeedingResync.delete(peerId);
   }
 
   const me = await ensureSignalIdentity(myUserId);
@@ -138,49 +207,61 @@ export async function decryptSignalDm(
     const header = unpackHeader(wire.ephemeral_public_key);
     let session = await loadSession(myUserId, peerId);
 
-    if (!session && header.t === 'pk' && header.ik && header.ek && header.spk_id != null) {
-      // Bob receives first PreKey message
-      const me = await ensureSignalIdentity(myUserId);
-      if (header.spk_id !== me.spkId) {
-        // SPK rotated — still try with current SPK (common case: same SPK)
-        console.warn('[signal] SPK id mismatch', header.spk_id, me.spkId);
-      }
-      let opkPriv: Uint8Array | null = null;
-      if (header.opk_id != null) {
-        opkPriv = await loadOpkPrivate(myUserId, header.opk_id);
-      }
-      const sharedSecret = x3dhBob({
-        ourIdentityPriv: me.identityPriv,
-        ourSpkPriv: me.spkPriv,
-        ourOpkPriv: opkPriv,
-        theirIdentityPub: fromB64(header.ik),
-        theirEphemeralPub: fromB64(header.ek),
-      });
-      session = initSessionAsBob({
-        sharedSecret,
-        ourIdentityPub: me.identityPub,
-        peerIdentityPub: fromB64(header.ik),
-        ourSpkPriv: me.spkPriv,
-        ourSpkPub: me.spkPub,
-      });
-      if (header.opk_id != null) {
-        await consumeLocalOpk(myUserId, header.opk_id);
-      }
+    // Peer reinstalled / rotated identity and sent a fresh PreKey — drop stale ratchet.
+    if (
+      session &&
+      header.t === 'pk' &&
+      header.ik &&
+      session.peerIdentityPub &&
+      header.ik !== session.peerIdentityPub
+    ) {
+      console.warn('[signal] inbound PreKey identity mismatch — clearing session', peerId);
+      await clearSession(myUserId, peerId);
+      session = null;
+    }
+
+    if (!session && header.t === 'pk') {
+      session = await initBobFromPreKeyHeader(myUserId, header);
     }
 
     if (!session) {
-      // Sender re-reading own message — session should exist locally
       if (iAmSender) {
         session = await loadSession(myUserId, peerId);
       }
-      if (!session) return null;
+      if (!session) {
+        peersNeedingResync.add(peerId);
+        return null;
+      }
     }
 
-    const clear = ratchetDecrypt(session, header, wire.content);
-    await saveSession(myUserId, peerId, session);
-    return clear;
+    try {
+      const clear = ratchetDecrypt(session, header, wire.content);
+      await saveSession(myUserId, peerId, session);
+      return clear;
+    } catch (err) {
+      // Permanent heal: rebuild from PreKey once, else clear so next outbound starts X3DH.
+      if (header.t === 'pk' && header.ik && header.ek && header.spk_id != null) {
+        await clearSession(myUserId, peerId);
+        const rebuilt = await initBobFromPreKeyHeader(myUserId, header);
+        if (rebuilt) {
+          try {
+            const clear = ratchetDecrypt(rebuilt, header, wire.content);
+            await saveSession(myUserId, peerId, rebuilt);
+            console.warn('[signal] session rebuilt from PreKey for', peerId);
+            return clear;
+          } catch (err2) {
+            console.warn('[signal] decrypt failed after PreKey rebuild:', err2);
+          }
+        }
+      }
+      await clearSession(myUserId, peerId);
+      peersNeedingResync.add(peerId);
+      console.warn('[signal] decrypt failed; cleared session for', peerId, err);
+      return null;
+    }
   } catch (err) {
     console.warn('[signal] decrypt failed:', err);
+    peersNeedingResync.add(peerId);
     return null;
   }
 }

@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons'
 import QRCode from 'react-native-qrcode-svg'
 import AuthForm from '../../components/AuthForm'
 import PhoneAuthForm from '../../components/PhoneAuthForm'
+import { Account2FAChallenge } from '../../components/Account2FAChallenge'
 import { useAuth } from '../../hooks/useAuth'
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack'
 import type { AuthStackParamList } from '../../navigation/AuthNavigator'
@@ -15,11 +16,23 @@ type LoginNavProp = NativeStackNavigationProp<AuthStackParamList, 'Login'>
 
 export default function LoginScreen() {
   const navigation = useNavigation<LoginNavProp>()
-  const { signIn, sendPhoneOtp, verifyPhoneOtp, loading, enterGuest } = useAuth()
+  const {
+    signIn,
+    sendPhoneOtp,
+    verifyPhoneOtp,
+    complete2faChallenge,
+    recover2faChallenge,
+    loading,
+    enterGuest,
+  } = useAuth()
 
   const [method, setMethod] = useState<'phone' | 'email'>('phone')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [twoFa, setTwoFa] = useState<{
+    challengeToken: string
+    securityQuestion: string
+  } | null>(null)
 
   const { width } = useWindowDimensions()
   const isDesktop = width > 700
@@ -67,8 +80,12 @@ export default function LoginScreen() {
       Alert.alert('Please fill in all fields')
       return
     }
-    const { error } = await signIn(email.trim(), password)
-    if (error) Alert.alert('Login failed', error.message)
+    const res = await signIn(email.trim(), password)
+    if (res.requires2fa) {
+      setTwoFa(res.requires2fa)
+      return
+    }
+    if (res.error) Alert.alert('Login failed', res.error.message)
   }
 
   const handleSignUp = () => {
@@ -98,6 +115,10 @@ export default function LoginScreen() {
       }}
       onVerifyCode={async ({ phone, token }) => {
         const res = await verifyPhoneOtp(phone, token)
+        if (res.requires2fa) {
+          setTwoFa(res.requires2fa)
+          return
+        }
         if (res.error) return { error: res.error.message }
       }}
     />
@@ -122,6 +143,28 @@ export default function LoginScreen() {
   )
 
   const form = method === 'phone' ? phoneForm : emailForm
+
+  if (twoFa) {
+    return (
+      <View style={styles.twoFaWrap}>
+        <Account2FAChallenge
+          securityQuestion={twoFa.securityQuestion}
+          loading={loading}
+          onCancel={() => setTwoFa(null)}
+          onVerify={async (pin) => {
+            const res = await complete2faChallenge(twoFa.challengeToken, pin)
+            if (res.error) throw new Error(res.error.message)
+            setTwoFa(null)
+          }}
+          onRecover={async (answer, newPin) => {
+            const res = await recover2faChallenge(twoFa.challengeToken, answer, newPin)
+            if (res.error) throw new Error(res.error.message)
+            setTwoFa(null)
+          }}
+        />
+      </View>
+    )
+  }
 
   if (isDesktop) {
     return (
@@ -170,6 +213,12 @@ export default function LoginScreen() {
 }
 
 const styles = StyleSheet.create({
+  twoFaWrap: {
+    flex: 1,
+    justifyContent: 'center',
+    padding: 20,
+    backgroundColor: '#f8f9fa',
+  },
   desktopWrapper: {
     flex: 1,
     flexDirection: 'row',

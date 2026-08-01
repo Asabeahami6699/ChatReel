@@ -15,6 +15,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { ChatVideoPlayer } from './ChatVideoPlayer';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { allowViewOnceCapture, preventViewOnceCapture } from '../lib/screenCaptureGuard';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 const VIDEO_FRAME = { width: SCREEN_W, height: SCREEN_H };
@@ -25,6 +26,11 @@ export type ChatMediaItem = {
   uri: string;
   senderName?: string;
   createdAt?: string;
+  /** Shown only inside the viewer (e.g. view-once captions). */
+  caption?: string;
+  viewOnce?: boolean;
+  /** Auto-close after N seconds while viewing view-once media. */
+  autoCloseSec?: number | null;
 };
 
 type Props = {
@@ -38,11 +44,23 @@ type Props = {
 const MediaImageSlide = React.memo(function MediaImageSlide({ uri }: { uri: string }) {
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
+  const safeUri = typeof uri === 'string' ? uri.trim() : '';
 
   useEffect(() => {
     setLoading(true);
-    setFailed(false);
-  }, [uri]);
+    setFailed(!safeUri);
+  }, [safeUri]);
+
+  if (!safeUri) {
+    return (
+      <View style={styles.mediaFrame}>
+        <View style={styles.failed}>
+          <Ionicons name="image-outline" size={48} color="#666" />
+          <Text style={styles.failedText}>Could not load image</Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.mediaFrame}>
@@ -56,7 +74,7 @@ const MediaImageSlide = React.memo(function MediaImageSlide({ uri }: { uri: stri
         </View>
       ) : (
         <Image
-          source={{ uri }}
+          source={{ uri: safeUri }}
           style={styles.image}
           resizeMode="contain"
           onLoad={() => setLoading(false)}
@@ -109,6 +127,27 @@ export function ChatMediaViewer({ items, initialIndex, visible, onClose }: Props
     if (!visible || Platform.OS !== 'web') return;
     (document.activeElement as HTMLElement | null)?.blur?.();
   }, [visible]);
+
+  // Block screenshots / screen recording while any view-once item is open.
+  const guardViewOnce = visible && items.some((item) => item.viewOnce);
+  useEffect(() => {
+    if (!guardViewOnce) return;
+    void preventViewOnceCapture();
+    return () => {
+      void allowViewOnceCapture();
+    };
+  }, [guardViewOnce]);
+
+  // Timed view-once: auto-close after the selected window.
+  const autoCloseSec = visible
+    ? items[index]?.autoCloseSec ?? items[initialIndex]?.autoCloseSec ?? null
+    : null;
+  useEffect(() => {
+    if (!visible || !guardViewOnce) return;
+    if (autoCloseSec == null || autoCloseSec <= 0) return;
+    const t = setTimeout(() => onClose(), autoCloseSec * 1000);
+    return () => clearTimeout(t);
+  }, [visible, guardViewOnce, autoCloseSec, onClose, index]);
 
   const onScrollEnd = useCallback((e: { nativeEvent: { contentOffset: { x: number } } }) => {
     const next = Math.round(e.nativeEvent.contentOffset.x / SCREEN_W);
@@ -184,9 +223,23 @@ export function ChatMediaViewer({ items, initialIndex, visible, onClose }: Props
           </Text>
         </View>
 
-        {items.length > 1 && (
+        {(current.caption || current.viewOnce || items.length > 1) && (
           <View style={[styles.footer, { paddingBottom: insets.bottom + 12 }]}>
-            <Text style={styles.footerHint}>Swipe to view more</Text>
+            {current.caption ? (
+              <Text style={styles.caption} numberOfLines={6}>
+                {current.caption}
+              </Text>
+            ) : null}
+            {current.viewOnce ? (
+              <Text style={styles.footerHint}>
+                View once · screenshots blocked
+                {current.autoCloseSec
+                  ? ` · closes in ${current.autoCloseSec}s`
+                  : ' · closes when you leave'}
+              </Text>
+            ) : items.length > 1 ? (
+              <Text style={styles.footerHint}>Swipe to view more</Text>
+            ) : null}
           </View>
         )}
       </View>
@@ -282,6 +335,20 @@ const styles = StyleSheet.create({
     right: 0,
     alignItems: 'center',
     zIndex: 2,
+    paddingHorizontal: 20,
+    gap: 6,
+  },
+  caption: {
+    color: '#fff',
+    fontSize: 15,
+    lineHeight: 21,
+    textAlign: 'center',
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 14,
+    overflow: 'hidden',
+    maxWidth: '100%',
   },
   footerHint: {
     color: 'rgba(255,255,255,0.5)',

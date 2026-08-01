@@ -176,6 +176,10 @@ export async function saveSession(
   await AsyncStorage.setItem(SESSION(userId, peerId), JSON.stringify(session));
 }
 
+export async function clearSession(userId: string, peerId: string): Promise<void> {
+  await AsyncStorage.removeItem(SESSION(userId, peerId));
+}
+
 export async function clearSignalSessions(userId: string): Promise<void> {
   const keys = await AsyncStorage.getAllKeys();
   const mine = keys.filter((k) => k.startsWith(`sig_sess_${userId}_`));

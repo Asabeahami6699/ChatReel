@@ -20,13 +20,23 @@ export async function getProfileSuggestions(authUserId: string) {
     return { mutual: [], location: [], new_users: [] };
   }
 
+  const { getBlockedProfileIdsFor } = await import('./block.service');
+  const blocked = await getBlockedProfileIdsFor(profileId);
+
   const [mutual, location, newUsers] = await Promise.all([
     getMutualSuggestions(profileId, authUserId),
     getLocationSuggestions(profileId, authUserId),
     getNewUserSuggestions(authUserId),
   ]);
 
-  return { mutual, location, new_users: newUsers };
+  const keep = <T extends { id: string }>(list: T[]) =>
+    list.filter((p) => !blocked.has(p.id));
+
+  return {
+    mutual: keep(mutual),
+    location: keep(location),
+    new_users: keep(newUsers),
+  };
 }
 
 async function getMutualSuggestions(profileId: string, authUserId: string): Promise<SuggestedProfile[]> {

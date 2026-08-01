@@ -513,6 +513,9 @@ export async function createMomentReply(
 export async function buildMomentsFeed(viewerProfileId: string): Promise<MomentAuthorFeedDTO[]> {
   const now = new Date().toISOString();
 
+  const { getBlockedProfileIdsFor } = await import('./block.service');
+  const blockedProfiles = await getBlockedProfileIdsFor(viewerProfileId);
+
   const { data: rows, error } = await supabaseAdmin
     .from('moments')
     .select(
@@ -524,9 +527,11 @@ export async function buildMomentsFeed(viewerProfileId: string): Promise<MomentA
 
   if (error) throw new Error(error.message);
 
-  const moments = (rows ?? []) as unknown as Array<
+  const moments = ((rows ?? []) as unknown as Array<
     MomentRow & { author: MomentAuthorDTO | null }
-  >;
+  >).filter(
+    (m) => m.author_id === viewerProfileId || !blockedProfiles.has(m.author_id)
+  );
 
   const momentIds = moments.map((m) => m.id);
   const viewedSet = await getViewedSet(viewerProfileId, momentIds);

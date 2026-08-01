@@ -110,7 +110,7 @@ export function scheduleReelsFeedPrefetch(delayMs = 600) {
           const session = await sessionStorage.load();
           if (!session?.access_token) return;
 
-          const { reels, next_cursor } = await api.reels.feed({ limit: 30 });
+          const { reels, next_cursor } = await api.reels.feed({ limit: 12 });
           if (reels.length > 0) {
             setCache('feed', reels, next_cursor ?? null);
             warmFirstReels(reels);

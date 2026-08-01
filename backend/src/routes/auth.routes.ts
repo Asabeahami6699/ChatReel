@@ -8,6 +8,7 @@ import {
   phoneOtpSendRateLimit,
   phoneOtpVerifyRateLimit,
 } from '../middleware/rateLimit';
+import { gateSessionWith2fa } from '../services/account2fa.service';
 
 const router = Router();
 
@@ -33,6 +34,11 @@ const otpVerifySchema = z.object({
     .transform((e) => e.trim().toLowerCase())
     .optional()
     .or(z.literal('').transform(() => undefined)),
+  installation_id: z.string().min(8).max(128).optional(),
+});
+
+const credentialsWithDeviceSchema = credentialsSchema.extend({
+  installation_id: z.string().min(8).max(128).optional(),
 });
 
 function authErrorResponse(error: { message: string }) {
@@ -55,7 +61,7 @@ function authErrorResponse(error: { message: string }) {
 
 function mapSupabaseErrorMessage(message: string): string {
   if (/fetch failed|connect timeout|und_err_connect|network/i.test(message)) {
-    return 'Cannot reach Supabase right now. Check your internet connection and that the project is not paused.';
+    return 'No internet. Check your connection and try again.';
   }
   if (/unsupported phone provider|phone provider|sms provider not|phone signups? (are )?not enabled/i.test(message)) {
     return 'Phone login is not set up yet. In Supabase → Authentication → Providers → Phone, enable Phone and connect an SMS provider (Twilio, MessageBird, or Vonage). Until then, use email login.';
@@ -261,9 +267,26 @@ router.post(
       displayName: metaName,
     });
 
-    return res.json({
+    const gated = await gateSessionWith2fa({
+      userId: data.user.id,
       user: data.user,
       session: data.session,
+      installationId: body.installation_id,
+    });
+    if (gated.requires_2fa) {
+      return res.json({
+        requires_2fa: true,
+        challenge_token: gated.challenge_token,
+        security_question: gated.security_question,
+        user: null,
+        session: null,
+      });
+    }
+
+    return res.json({
+      requires_2fa: false,
+      user: gated.user,
+      session: gated.session,
     });
   })
 );
@@ -327,7 +350,7 @@ router.post(
 router.post(
   '/login',
   asyncHandler(async (req, res) => {
-    const body = credentialsSchema.parse(req.body);
+    const body = credentialsWithDeviceSchema.parse(req.body);
 
     let data: { user: unknown; session: unknown } | null = null;
     let error: { message: string } | null = null;
@@ -382,9 +405,31 @@ router.post(
       return res.status(status).json({ error: message });
     }
 
+    const user = data?.user as { id?: string } | null | undefined;
+    if (!user?.id || !data?.session) {
+      return res.status(401).json({ error: 'Login failed' });
+    }
+
+    const gated = await gateSessionWith2fa({
+      userId: user.id,
+      user: data.user,
+      session: data.session,
+      installationId: body.installation_id,
+    });
+    if (gated.requires_2fa) {
+      return res.json({
+        requires_2fa: true,
+        challenge_token: gated.challenge_token,
+        security_question: gated.security_question,
+        user: null,
+        session: null,
+      });
+    }
+
     return res.json({
-      user: data?.user,
-      session: data?.session,
+      requires_2fa: false,
+      user: gated.user,
+      session: gated.session,
     });
   })
 );

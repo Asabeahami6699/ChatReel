@@ -632,7 +632,9 @@ export function ReelImmersiveViewer({
               />
             )}
             {isCurrent && endScreenReelId === item.id && (
-              <ReelEndScreen ownerName={authorLabel(item)} />
+              <View style={styles.endScreenHost} pointerEvents="none">
+                <ReelEndScreen ownerName={authorLabel(item)} />
+              </View>
             )}
           </View>
 
@@ -885,6 +887,13 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   containerPhoneFrame: {
     backgroundColor: '#0a0a0a',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  endScreenHost: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 40,
+    elevation: 40,
     alignItems: 'center',
     justifyContent: 'center',
   },

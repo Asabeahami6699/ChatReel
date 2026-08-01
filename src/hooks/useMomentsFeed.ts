@@ -78,7 +78,7 @@ export function useMomentsFeed() {
         const message =
           err instanceof ApiError
             ? err.message
-            : "Can't reach the server right now. Check your connection and try again.";
+            : 'No internet. Check your connection and try again.';
         setError(message);
       }
     } finally {

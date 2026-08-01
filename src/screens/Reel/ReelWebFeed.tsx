@@ -3,8 +3,9 @@ import React, {
   useEffect,
   useImperativeHandle,
   useRef,
+  useState,
 } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import type { ReelDTO } from '../../lib/api';
 import { markReelWebSwipe } from './reelWebSwipeGate';
 
@@ -23,6 +24,8 @@ type Props = {
   renderItem: (info: { item: ReelDTO; index: number }) => React.ReactElement | null;
   onIndexChange: (index: number) => void;
   onEndReached?: () => void;
+  refreshing?: boolean;
+  onRefresh?: () => void | Promise<void>;
   ListEmptyComponent?: React.ReactElement | null;
 };
 
@@ -43,6 +46,8 @@ export const ReelWebFeed = forwardRef<ReelWebFeedHandle, Props>(function ReelWeb
     renderItem,
     onIndexChange,
     onEndReached,
+    refreshing = false,
+    onRefresh,
     ListEmptyComponent,
   },
   ref
@@ -52,6 +57,11 @@ export const ReelWebFeed = forwardRef<ReelWebFeedHandle, Props>(function ReelWeb
   heightRef.current = reelHeight;
   const indexRef = useRef(currentIndex);
   indexRef.current = currentIndex;
+  const onRefreshRef = useRef(onRefresh);
+  onRefreshRef.current = onRefresh;
+  const refreshingRef = useRef(refreshing);
+  refreshingRef.current = refreshing;
+  const [pullPx, setPullPx] = useState(0);
   const pageWidth = Math.max(reelWidth, feedWidth);
 
   const getEl = () => scrollerRef.current as unknown as HTMLElement | null;
@@ -113,11 +123,74 @@ export const ReelWebFeed = forwardRef<ReelWebFeedHandle, Props>(function ReelWeb
     };
   }, [onEndReached, onIndexChange, reels.length]);
 
+  // Pull-down on the first reel to fetch newer posts (web has no RefreshControl).
+  useEffect(() => {
+    const el = getEl();
+    if (!el || !onRefresh) return;
+
+    let startY = 0;
+    let pulling = false;
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (indexRef.current !== 0 || refreshingRef.current) return;
+      if (el.scrollTop > 2) return;
+      startY = e.touches[0]?.clientY ?? 0;
+      pulling = true;
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (!pulling || indexRef.current !== 0) return;
+      const y = e.touches[0]?.clientY ?? 0;
+      const delta = Math.max(0, y - startY);
+      if (delta > 8 && el.scrollTop <= 0) {
+        setPullPx(Math.min(88, delta * 0.45));
+      } else if (delta <= 8) {
+        setPullPx(0);
+      }
+    };
+
+    const onTouchEnd = () => {
+      if (!pulling) return;
+      pulling = false;
+      setPullPx((prev) => {
+        if (prev >= 54 && !refreshingRef.current) {
+          void onRefreshRef.current?.();
+        }
+        return 0;
+      });
+    };
+
+    el.addEventListener('touchstart', onTouchStart, { passive: true });
+    el.addEventListener('touchmove', onTouchMove, { passive: true });
+    el.addEventListener('touchend', onTouchEnd);
+    el.addEventListener('touchcancel', onTouchEnd);
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('touchend', onTouchEnd);
+      el.removeEventListener('touchcancel', onTouchEnd);
+    };
+  }, [onRefresh, reels.length]);
+
   if (reels.length === 0) {
     return ListEmptyComponent ?? null;
   }
 
+  const showPullHint = refreshing || pullPx > 12;
+
   return (
+    <View style={{ height: reelHeight, width: pageWidth }}>
+      {showPullHint ? (
+        <View style={[styles.pullHint, { height: refreshing ? 36 : Math.max(28, pullPx * 0.5) }]}>
+          {refreshing ? (
+            <ActivityIndicator color="#fff" size="small" />
+          ) : (
+            <Text style={styles.pullHintText}>
+              {pullPx >= 54 ? 'Release for newer reels' : 'Pull for newer reels'}
+            </Text>
+          )}
+        </View>
+      ) : null}
     <View
       ref={scrollerRef}
       style={[
@@ -161,10 +234,21 @@ export const ReelWebFeed = forwardRef<ReelWebFeedHandle, Props>(function ReelWeb
         </View>
       ))}
     </View>
+    </View>
   );
 });
 
 const styles = StyleSheet.create({
+  pullHint: {
+    position: 'absolute',
+    top: 8,
+    left: 0,
+    right: 0,
+    zIndex: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pullHintText: { color: '#fff', fontSize: 12, fontWeight: '600', opacity: 0.9 },
   scroller: {
     overflowY: 'scroll',
     overflowX: 'hidden',
