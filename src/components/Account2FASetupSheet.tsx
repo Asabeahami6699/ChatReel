@@ -12,6 +12,11 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '../lib/api';
+import {
+  getCached2faStatus,
+  prefetch2faStatus,
+  setCached2faStatus,
+} from '../lib/account2faCache';
 import { useChatSettings } from '../context/ChatSettingsContext';
 import { showAppToast } from '../lib/appToast';
 
@@ -30,9 +35,12 @@ const SUGGESTED_QUESTIONS = [
 export function Account2FASetupSheet({ visible, onClose }: Props) {
   const insets = useSafeAreaInsets();
   const { theme } = useChatSettings();
-  const [loading, setLoading] = useState(true);
-  const [enabled, setEnabled] = useState(false);
-  const [questionHint, setQuestionHint] = useState<string | null>(null);
+  const cached = getCached2faStatus();
+  const [loading, setLoading] = useState(!cached);
+  const [enabled, setEnabled] = useState(Boolean(cached?.enabled));
+  const [questionHint, setQuestionHint] = useState<string | null>(
+    cached?.security_question ?? null
+  );
   const [mode, setMode] = useState<'status' | 'enable' | 'disable' | 'reset'>('status');
   const [pin, setPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
@@ -42,10 +50,11 @@ export function Account2FASetupSheet({ visible, onClose }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = async () => {
-    setLoading(true);
+  const refresh = async (showSpinner = true) => {
+    if (showSpinner && !getCached2faStatus()) setLoading(true);
     try {
-      const res = await api.account2fa.status();
+      const res = await prefetch2faStatus(true);
+      if (!res) throw new Error('status');
       setEnabled(res.enabled);
       setQuestionHint(res.security_question);
       setMode('status');
@@ -63,7 +72,15 @@ export function Account2FASetupSheet({ visible, onClose }: Props) {
     setConfirmPin('');
     setAnswer('');
     setNewPin('');
-    void refresh();
+    const warm = getCached2faStatus();
+    if (warm) {
+      setEnabled(warm.enabled);
+      setQuestionHint(warm.security_question);
+      setLoading(false);
+      void refresh(false);
+    } else {
+      void refresh(true);
+    }
   }, [visible]);
 
   const run = async (fn: () => Promise<void>) => {
@@ -192,8 +209,9 @@ export function Account2FASetupSheet({ visible, onClose }: Props) {
                       security_question: question,
                       security_answer: answer,
                     });
+                    setCached2faStatus({ enabled: true, security_question: question });
                     showAppToast('Two-step verification is on');
-                    await refresh();
+                    await refresh(false);
                   })
                 }
               >
@@ -224,8 +242,9 @@ export function Account2FASetupSheet({ visible, onClose }: Props) {
                 onPress={() =>
                   void run(async () => {
                     await api.account2fa.disable(pin);
+                    setCached2faStatus({ enabled: false, security_question: null });
                     showAppToast('Two-step verification turned off');
-                    await refresh();
+                    await refresh(false);
                   })
                 }
               >

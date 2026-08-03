@@ -1,39 +1,51 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
+  Modal,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useIsFocused } from '@react-navigation/native';
+import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useChatLock } from '../context/ChatLockContext';
 import { useChatSettings } from '../context/ChatSettingsContext';
 
 /**
  * Privacy gate for the Chats tab only (not Reels / Explore / Calls).
- * Mount inside the Chats stack so useIsFocused tracks tab focus.
+ * Covers the entire Chats stack (list + room) with a full-screen modal.
+ * Re-locks only when leaving the Chats *tab* — never on ChatRoom push.
  */
 export function ChatLockGate() {
   const insets = useSafeAreaInsets();
-  const isFocused = useIsFocused();
+  const navigation = useNavigation();
+  // Parent is the main tab navigator; fall back if already at tab level.
+  const tabNav = navigation.getParent() ?? navigation;
   const { locked, unlocking, unlock, onChatsBlur } = useChatLock();
   const { theme } = useChatSettings();
   const autoPromptedRef = useRef(false);
+  const [tabFocused, setTabFocused] = useState(true);
 
   useEffect(() => {
-    if (!isFocused) {
+    const onFocus = () => setTabFocused(true);
+    const onBlur = () => {
+      setTabFocused(false);
       onChatsBlur();
       autoPromptedRef.current = false;
-    }
-  }, [isFocused, onChatsBlur]);
+    };
+    const unsubFocus = tabNav.addListener('focus', onFocus);
+    const unsubBlur = tabNav.addListener('blur', onBlur);
+    return () => {
+      unsubFocus();
+      unsubBlur();
+    };
+  }, [tabNav, onChatsBlur]);
 
-  // Only prompt while the Chats tab is actually visible.
   useEffect(() => {
-    if (!locked || !isFocused) return;
+    if (!locked || !tabFocused) return;
     if (autoPromptedRef.current) return;
     autoPromptedRef.current = true;
     const t = setTimeout(() => {
@@ -41,62 +53,69 @@ export function ChatLockGate() {
     }, 350);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locked, isFocused]);
+  }, [locked, tabFocused]);
 
-  if (!locked || !isFocused) return null;
+  const visible = Boolean(locked && tabFocused);
 
   return (
-    <View
-      style={[
-        styles.root,
-        {
-          backgroundColor: theme.headerBg || theme.listBg,
-          paddingTop: insets.top + 24,
-          paddingBottom: insets.bottom + 24,
-        },
-      ]}
-      pointerEvents="auto"
-      accessibilityViewIsModal
+    <Modal
+      visible={visible}
+      animationType="fade"
+      presentationStyle="fullScreen"
+      statusBarTranslucent
+      onRequestClose={() => {
+        /* must unlock via biometric / button */
+      }}
     >
-      <View style={styles.center}>
-        <View style={styles.lockBadge}>
-          <Ionicons name="lock-closed" size={28} color="#fff" />
-        </View>
-        <Image
-          source={require('../../assets/favIconChat.png')}
-          style={styles.logo}
-          resizeMode="contain"
-        />
-        <Text style={styles.title}>Chats are locked</Text>
-        <Text style={styles.subtitle}>
-          Unlock to open your conversations. Reels and other tabs stay available.
-        </Text>
-      </View>
-
-      <TouchableOpacity
-        style={[styles.btn, unlocking && styles.btnDisabled]}
-        onPress={() => void unlock()}
-        disabled={unlocking}
-        activeOpacity={0.85}
+      <View
+        style={[
+          styles.root,
+          {
+            backgroundColor: theme.headerBg || theme.listBg || '#0b1220',
+            paddingTop: insets.top + 24,
+            paddingBottom: insets.bottom + 24,
+          },
+        ]}
+        accessibilityViewIsModal
       >
-        {unlocking ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <>
-            <Ionicons name="finger-print-outline" size={22} color="#fff" />
-            <Text style={styles.btnText}>Unlock chats</Text>
-          </>
-        )}
-      </TouchableOpacity>
-    </View>
+        <View style={styles.center}>
+          <View style={styles.lockBadge}>
+            <Ionicons name="lock-closed" size={28} color="#fff" />
+          </View>
+          <Image
+            source={require('../../assets/favIconChat.png')}
+            style={styles.logo}
+            resizeMode="contain"
+          />
+          <Text style={styles.title}>Chats are locked</Text>
+          <Text style={styles.subtitle}>
+            Unlock to open your conversations. Reels and other tabs stay available.
+          </Text>
+        </View>
+
+        <TouchableOpacity
+          style={[styles.btn, unlocking && styles.btnDisabled]}
+          onPress={() => void unlock()}
+          disabled={unlocking}
+          activeOpacity={0.85}
+        >
+          {unlocking ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <>
+              <Ionicons name="finger-print-outline" size={22} color="#fff" />
+              <Text style={styles.btnText}>Unlock chats</Text>
+            </>
+          )}
+        </TouchableOpacity>
+      </View>
+    </Modal>
   );
 }
 
 const styles = StyleSheet.create({
   root: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 9000,
-    elevation: 9000,
+    flex: 1,
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 28,

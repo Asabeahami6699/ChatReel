@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  Linking,
   Modal,
   PanResponder,
   Platform,
@@ -531,9 +532,28 @@ export default function ReelsScreen() {
     });
   }, [heartScale, heartOpacity]);
 
+  const openSponsoredCta = useCallback(async (reel: ReelDTO) => {
+    if (!reel.is_sponsored) return;
+    const url = reel.cta_url?.trim();
+    const campaignId = reel.ad_campaign_id || reel.id;
+    if (!isGuestRef.current && campaignId) {
+      api.ads
+        .track({ campaign_id: campaignId, event_type: 'cta', placement: 'reels_feed' })
+        .catch(() => undefined);
+    }
+    if (!url) return;
+    try {
+      const can = await Linking.canOpenURL(url);
+      if (can) await Linking.openURL(url);
+      else showAppToast('Could not open link', { isError: true });
+    } catch {
+      showAppToast('Could not open link', { isError: true });
+    }
+  }, []);
+
   const toggleLike = useCallback(
     async (reel: ReelDTO, viaDoubleTap = false) => {
-      if (!reel?.id) return;
+      if (!reel?.id || reel.is_sponsored) return;
       if (!requireAuth('Sign in to like this reel.')) return;
       // Rapid taps would otherwise fire overlapping like/unlike calls and the
       // loser of the race rolls the heart back.
@@ -628,6 +648,7 @@ export default function ReelsScreen() {
 
   const onOpenComments = useCallback(
     (reel: ReelDTO) => {
+      if (reel.is_sponsored) return;
       if (!requireAuth('Sign in to comment on reels.')) return;
       openSheet(setOpenComments, reel);
     },
@@ -635,6 +656,7 @@ export default function ReelsScreen() {
   );
   const onOpenShare = useCallback(
     (reel: ReelDTO) => {
+      if (reel.is_sponsored) return;
       if (!requireAuth('Sign in to share reels with friends.')) return;
       openSheet(setOpenShare, reel);
     },
@@ -642,6 +664,7 @@ export default function ReelsScreen() {
   );
   const onOpenGift = useCallback(
     (reel: ReelDTO) => {
+      if (reel.is_sponsored) return;
       if (!requireAuth('Sign in to send gifts.')) return;
       void pausePlayers();
       setGiftReel(reel);
@@ -661,10 +684,14 @@ export default function ReelsScreen() {
   );
   const onOpenProfile = useCallback(
     (reel: ReelDTO) => {
+      if (reel.is_sponsored) {
+        void openSponsoredCta(reel);
+        return;
+      }
       if (!requireAuth('Sign in to view creator profiles.')) return;
       openSheet(setOpenProfile, reel);
     },
-    [openSheet, requireAuth]
+    [openSheet, openSponsoredCta, requireAuth]
   );
   const onNavigateSound = useCallback(
     (soundId: string) => {
@@ -704,9 +731,12 @@ export default function ReelsScreen() {
     if (currentIndex !== 0) {
       goToReelIndexRef.current(0, false);
     }
-    // Full reload of page 1 so brand-new posts surface at the top.
-    await refresh();
-    void refreshFollowedAuthors();
+    // Feed refresh clears the spinner; follow-authors runs in parallel (non-blocking).
+    const feedPromise = refresh();
+    if (feedMode === 'following') {
+      void refreshFollowedAuthors();
+    }
+    await feedPromise;
     goToReelIndexRef.current(0, false);
     const first = reelsRef.current[0];
     if (first) {
@@ -714,7 +744,7 @@ export default function ReelsScreen() {
       void playActiveReel(first.id);
       setIsPlaying(true);
     }
-  }, [currentIndex, refresh, refreshFollowedAuthors, playActiveReel]);
+  }, [currentIndex, feedMode, refresh, refreshFollowedAuthors, playActiveReel]);
 
   const togglePlayPause = useCallback(async () => {
     const reelId = activeReelIdRef.current;
@@ -874,7 +904,18 @@ export default function ReelsScreen() {
       viewedReelIds.current.add(reel.id);
       markReelWatched(reel.id);
       if (!isGuestRef.current) {
-        api.reels.view(reel.id).catch(() => undefined);
+        if (reel.is_sponsored) {
+          const campaignId = reel.ad_campaign_id || reel.id;
+          api.ads
+            .track({
+              campaign_id: campaignId,
+              event_type: 'impression',
+              placement: 'reels_feed',
+            })
+            .catch(() => undefined);
+        } else {
+          api.reels.view(reel.id).catch(() => undefined);
+        }
       }
     }
     void prefetchAroundRef.current(list, clamped);
@@ -1002,6 +1043,7 @@ export default function ReelsScreen() {
 
   const quickFollow = useCallback(
     async (reel: ReelDTO) => {
+      if (reel.is_sponsored) return;
       if (!requireAuth('Sign in to follow creators.')) return;
       const authorId = reel.author_id;
       if (!authorId) return;
@@ -1057,6 +1099,7 @@ export default function ReelsScreen() {
         onOpenProfile={onOpenProfile}
         onNavigateSound={onNavigateSound}
         onUseReelAudio={onUseReelAudio}
+        onSponsoredCta={openSponsoredCta}
         onReady={handleVideoReady}
         onPlaybackStatus={handlePlaybackStatus}
         onRef={registerVideoRef}
@@ -1089,6 +1132,7 @@ export default function ReelsScreen() {
       onOpenProfile,
       onNavigateSound,
       onUseReelAudio,
+      openSponsoredCta,
       handleVideoReady,
       handlePlaybackStatus,
       registerVideoRef,
@@ -1378,6 +1422,7 @@ export default function ReelsScreen() {
             onOpenProfile={() => onOpenProfile(currentReel)}
             onNavigateSound={onNavigateSound}
             onUseReelAudio={() => onUseReelAudio(currentReel)}
+            onSponsoredCta={() => void openSponsoredCta(currentReel)}
           />
         </View>
       ) : null}

@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
+import { prefetch2faStatus } from '../lib/account2faCache';
 import { scheduleCallsPrefetch } from '../lib/callsPrefetch';
 import { scheduleFriendsPrefetch } from '../lib/friendsPrefetch';
 import { scheduleGiftCatalogPrefetch } from '../lib/giftCatalogPrefetch';
@@ -16,6 +17,8 @@ export function AppPrefetchRegistrar() {
 
   useEffect(() => {
     if (!user) return;
+    // 2FA status is tiny — prefetch early so Settings opens live.
+    void prefetch2faStatus();
     scheduleExplorePrefetch(APP_PREFETCH_DELAY_MS);
     scheduleFriendsPrefetch(APP_PREFETCH_DELAY_MS + 400);
     scheduleCallsPrefetch(APP_PREFETCH_DELAY_MS + 800);

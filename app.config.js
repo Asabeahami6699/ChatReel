@@ -107,6 +107,11 @@ module.exports = {
             host: 'chat-reel.vercel.app',
             pathPrefix: '/invite',
           },
+          {
+            scheme: 'https',
+            host: 'chat-reel.vercel.app',
+            pathPrefix: '/',
+          },
         ],
         category: ['BROWSABLE', 'DEFAULT'],
       },

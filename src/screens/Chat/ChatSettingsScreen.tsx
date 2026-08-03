@@ -43,6 +43,7 @@ import { clearOfflineFeedKeys, OFFLINE_FEED_KEYS } from '../../lib/offlineFeedSt
 import { authenticateAppUnlock, getAppLockAvailability } from '../../lib/appLock';
 import { Account2FASetupSheet } from '../../components/Account2FASetupSheet';
 import { AccountDevicesSheet } from '../../components/AccountDevicesSheet';
+import { prefetch2faStatus } from '../../lib/account2faCache';
 
 type SettingsPage =
   | 'hub'
@@ -203,6 +204,11 @@ export default function ChatSettingsScreen() {
   const [clearing, setClearing] = useState(false);
   const [cacheBreakdown, setCacheBreakdown] = useState<LocalCacheBreakdown | null>(null);
   const [cacheLoading, setCacheLoading] = useState(false);
+
+  useEffect(() => {
+    if (!user) return;
+    void prefetch2faStatus();
+  }, [user]);
 
   const refreshCacheSize = useCallback(async () => {
     setCacheLoading(true);
@@ -535,6 +541,7 @@ export default function ChatSettingsScreen() {
           <Ionicons name="chevron-forward" size={20} color={sc} />
         </TouchableOpacity>
 
+        {/* Account = identity & security only. Profile card above is the edit entry. */}
         <SectionLabel title="Account" color={sc} />
         <SettingsCard bg={cardBg} border={border}>
           <LinkRow
@@ -556,7 +563,7 @@ export default function ChatSettingsScreen() {
           <LinkRow
             icon="phone-portrait-outline"
             label="Logged-in devices"
-            subtitle="See devices · log out any · remote wipe"
+            subtitle="See sessions · log out any · remote wipe"
             onPress={() => {
               if (!user) {
                 Alert.alert('Sign in required', 'Sign in to manage devices.');
@@ -569,6 +576,21 @@ export default function ChatSettingsScreen() {
             iconBg="#efebe9"
             iconColor="#8d6e63"
           />
+          <LinkRow
+            icon="lock-closed-outline"
+            label="Privacy and security"
+            subtitle="Receipts, presence, app lock, chat lock"
+            onPress={() => setPage('privacy')}
+            textColor={tc}
+            subColor={sc}
+            iconBg={a.privacy.bg}
+            iconColor={a.privacy.color}
+            last
+          />
+        </SettingsCard>
+
+        <SectionLabel title="People" color={sc} />
+        <SettingsCard bg={cardBg} border={border}>
           <LinkRow
             icon="people-outline"
             label="Friends"
@@ -592,6 +614,7 @@ export default function ChatSettingsScreen() {
           <LinkRow
             icon="mail-unread-outline"
             label="Friend requests"
+            subtitle="Incoming connection requests"
             onPress={() => navigation.navigate('FriendRequests')}
             textColor={tc}
             subColor={sc}
@@ -611,6 +634,7 @@ export default function ChatSettingsScreen() {
           <LinkRow
             icon="add-circle-outline"
             label="New group"
+            subtitle="Create a group chat"
             onPress={() => navigation.navigate('NewGroup')}
             textColor={tc}
             subColor={sc}
@@ -645,13 +669,26 @@ export default function ChatSettingsScreen() {
           <LinkRow
             icon="share-social-outline"
             label="Invite a friend"
-            subtitle="Share ChatReel with someone"
+            subtitle="Share a link to ChatReel"
             onPress={() => {
-              void Share.share({
-                message:
-                  'Join me on ChatReel — chat, calls, moments and reels in one app.',
-                title: 'Invite to ChatReel',
-              }).catch(() => undefined);
+              void (async () => {
+                try {
+                  const { buildAppInviteShareMessage } = await import(
+                    '../../lib/appInviteLinks'
+                  );
+                  const share = buildAppInviteShareMessage({
+                    fromName: profile?.display_name || user?.email || null,
+                    fromUserId: user?.id ?? null,
+                  });
+                  await Share.share({
+                    message: share.message,
+                    url: Platform.OS === 'ios' ? share.url : undefined,
+                    title: share.title,
+                  });
+                } catch {
+                  /* user dismissed sheet */
+                }
+              })();
             }}
             textColor={tc}
             subColor={sc}
@@ -717,16 +754,6 @@ export default function ChatSettingsScreen() {
             subColor={sc}
             iconBg={a.notif.bg}
             iconColor={a.notif.color}
-          />
-          <LinkRow
-            icon="lock-closed-outline"
-            label="Privacy and security"
-            subtitle="Receipts, presence, media, app lock"
-            onPress={() => setPage('privacy')}
-            textColor={tc}
-            subColor={sc}
-            iconBg={a.privacy.bg}
-            iconColor={a.privacy.color}
           />
           <LinkRow
             icon="search-outline"
@@ -1253,12 +1280,17 @@ export default function ChatSettingsScreen() {
         {
           icon: 'shield-checkmark-outline',
           title: 'Account 2FA',
-          body: 'Settings → Account security. New devices need your secret code (recover with your security question).',
+          body: 'Settings → Account → Two-step verification. New devices need your secret code (recover with your security question).',
         },
         {
           icon: 'phone-portrait-outline',
           title: 'Logged-in devices',
-          body: 'Settings → Logged-in devices to see every login, sign out any device, or remote-wipe all sessions.',
+          body: 'Settings → Account → Logged-in devices to see every login, sign out any device, or remote-wipe all sessions.',
+        },
+        {
+          icon: 'people-outline',
+          title: 'Friends & groups',
+          body: 'Settings → People for friends, requests, and creating groups — separate from your Account settings.',
         },
       ],
     },

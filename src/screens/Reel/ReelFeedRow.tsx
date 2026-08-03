@@ -45,6 +45,7 @@ export type ReelFeedRowProps = {
   onOpenProfile: (reel: ReelDTO) => void;
   onNavigateSound: (soundId: string) => void;
   onUseReelAudio: (reel: ReelDTO) => void;
+  onSponsoredCta?: (reel: ReelDTO) => void;
   onReady: (reelId: string) => void;
   onPlaybackStatus: (reelId: string, status: ReelPlaybackStatus, isCurrent: boolean) => void;
   onRef: (reelId: string, ref: ReelPlayerHandle | null) => void;
@@ -79,6 +80,7 @@ function ReelFeedRowComponent({
   onOpenProfile,
   onNavigateSound,
   onUseReelAudio,
+  onSponsoredCta,
   onReady,
   onPlaybackStatus,
   onRef,
@@ -89,6 +91,7 @@ function ReelFeedRowComponent({
   const isLiked = item.liked_by_me;
   const avatar = reelAvatarUrl(item);
   const author = reelAuthorLabel(item);
+  const sponsored = Boolean(item.is_sponsored);
   const rowPlaying = isCurrent && mediaShouldPlay;
 
   return (
@@ -161,10 +164,14 @@ function ReelFeedRowComponent({
           pointerEvents="box-none"
         >
           <View style={styles.userInfo}>
-            <TouchableOpacity onPress={() => onOpenProfile(item)}>
-              <Text style={styles.username}>@{author}</Text>
+            <TouchableOpacity onPress={() => (sponsored ? undefined : onOpenProfile(item))} disabled={sponsored}>
+              <Text style={styles.username}>{sponsored ? author : `@${author}`}</Text>
             </TouchableOpacity>
-            {item.visibility !== 'public' && (
+            {sponsored ? (
+              <View style={styles.sponsoredPill}>
+                <Text style={styles.sponsoredPillText}>Sponsored</Text>
+              </View>
+            ) : item.visibility !== 'public' ? (
               <View style={styles.visibilityPill}>
                 <Ionicons
                   name={
@@ -178,7 +185,7 @@ function ReelFeedRowComponent({
                   color="#fff"
                 />
               </View>
-            )}
+            ) : null}
           </View>
           {!!item.caption && (
             <ExpandableCaption
@@ -187,14 +194,27 @@ function ReelFeedRowComponent({
               maxWidth={Math.round(reelWidth * 0.7)}
             />
           )}
-          <View style={styles.musicContainer}>
-            <ReelSoundStrip
-              reel={item}
-              authorHandle={author}
-              onPressSound={onNavigateSound}
-              onPressOriginalAudio={onUseReelAudio}
-            />
-          </View>
+          {sponsored && item.cta_url && onSponsoredCta ? (
+            <TouchableOpacity
+              style={styles.ctaButton}
+              onPress={() => onSponsoredCta(item)}
+              activeOpacity={0.88}
+            >
+              <Text style={styles.ctaButtonText} numberOfLines={1}>
+                {item.cta_label?.trim() || 'Learn more'}
+              </Text>
+              <Ionicons name="open-outline" size={14} color="#0f172a" />
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.musicContainer}>
+              <ReelSoundStrip
+                reel={item}
+                authorHandle={author}
+                onPressSound={onNavigateSound}
+                onPressOriginalAudio={onUseReelAudio}
+              />
+            </View>
+          )}
         </View>
       </View>
 
@@ -206,7 +226,11 @@ function ReelFeedRowComponent({
         ]}
       >
         <View style={styles.profileActionWrap}>
-          <TouchableOpacity style={styles.profileButton} onPress={() => onOpenProfile(item)}>
+          <TouchableOpacity
+            style={styles.profileButton}
+            onPress={() => (sponsored ? onSponsoredCta?.(item) : onOpenProfile(item))}
+            disabled={sponsored && !onSponsoredCta}
+          >
             {avatar ? (
               <Image source={{ uri: avatar }} style={styles.profileAvatar} />
             ) : (
@@ -215,42 +239,59 @@ function ReelFeedRowComponent({
               </View>
             )}
           </TouchableOpacity>
-          <TouchableOpacity style={styles.profileFollowPlus} onPress={() => onQuickFollow(item)}>
-            <Ionicons name={isFollowing ? 'checkmark' : 'add'} size={17} color="#fff" />
-          </TouchableOpacity>
+          {!sponsored ? (
+            <TouchableOpacity style={styles.profileFollowPlus} onPress={() => onQuickFollow(item)}>
+              <Ionicons name={isFollowing ? 'checkmark' : 'add'} size={17} color="#fff" />
+            </TouchableOpacity>
+          ) : null}
         </View>
-        <TouchableOpacity style={styles.actionButton} onPress={() => onToggleLike(item)}>
-          <ReelActionIcon
-            name="heart"
-            size={36}
-            color={isLiked ? REEL_ACCENT : '#fff'}
-          />
-          <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>
-            {formatReelCount(item.like_count)}
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.actionButton} onPress={() => onOpenComments(item)}>
-          <ReelActionIcon name="chatbubble-ellipses" size={34} />
-          <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>
-            {formatReelCount(item.comment_count)}
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.actionButton} onPress={() => onOpenShare(item)}>
-          <ReelActionIcon name="paper-plane" size={32} />
-          <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>Share</Text>
-        </TouchableOpacity>
-        {myProfileId && item.author_id !== myProfileId ? (
-          <TouchableOpacity style={styles.actionButton} onPress={() => onOpenGift(item)}>
-            <ReelActionIcon name="gift" size={30} color="#fff" />
-            <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>Gift</Text>
+        {!sponsored ? (
+          <>
+            <TouchableOpacity style={styles.actionButton} onPress={() => onToggleLike(item)}>
+              <ReelActionIcon
+                name="heart"
+                size={36}
+                color={isLiked ? REEL_ACCENT : '#fff'}
+              />
+              <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>
+                {formatReelCount(item.like_count)}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.actionButton} onPress={() => onOpenComments(item)}>
+              <ReelActionIcon name="chatbubble-ellipses" size={34} />
+              <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>
+                {formatReelCount(item.comment_count)}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.actionButton} onPress={() => onOpenShare(item)}>
+              <ReelActionIcon name="paper-plane" size={32} />
+              <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>Share</Text>
+            </TouchableOpacity>
+            {myProfileId && item.author_id !== myProfileId ? (
+              <TouchableOpacity style={styles.actionButton} onPress={() => onOpenGift(item)}>
+                <ReelActionIcon name="gift" size={30} color="#fff" />
+                <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>Gift</Text>
+              </TouchableOpacity>
+            ) : null}
+            <TouchableOpacity style={styles.actionButton}>
+              <ReelActionIcon name="eye" size={30} />
+              <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>
+                {formatReelCount(item.view_count)}
+              </Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => onSponsoredCta?.(item)}
+            disabled={!onSponsoredCta}
+          >
+            <ReelActionIcon name="open" size={30} />
+            <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>
+              {(item.cta_label?.trim() || 'Open').slice(0, 8)}
+            </Text>
           </TouchableOpacity>
-        ) : null}
-        <TouchableOpacity style={styles.actionButton}>
-          <ReelActionIcon name="eye" size={30} />
-          <Text style={[styles.actionText, usePhoneFrame && styles.actionTextDesktop]}>
-            {formatReelCount(item.view_count)}
-          </Text>
-        </TouchableOpacity>
+        )}
       </View>
       </View>
     </View>
@@ -333,6 +374,36 @@ const styles = StyleSheet.create({
   },
   caption: { color: '#fff', fontSize: 14, lineHeight: 19, fontWeight: '500' },
   musicContainer: { marginTop: 4 },
+  sponsoredPill: {
+    backgroundColor: 'rgba(250, 204, 21, 0.92)',
+    borderRadius: 8,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  sponsoredPillText: {
+    color: '#0f172a',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+  ctaButton: {
+    marginTop: 8,
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    maxWidth: '78%',
+  },
+  ctaButtonText: {
+    color: '#0f172a',
+    fontSize: 13,
+    fontWeight: '800',
+    flexShrink: 1,
+  },
   actionButtons: {
     position: 'absolute',
     right: REEL_ACTION_RAIL_RIGHT,

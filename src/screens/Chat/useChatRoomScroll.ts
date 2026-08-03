@@ -7,7 +7,6 @@ type Options = {
   hasMore: boolean;
   loadingMore: boolean;
   initialLoadComplete: boolean;
-  onLoadMore: () => void;
 };
 
 export function useChatRoomScroll({
@@ -15,19 +14,16 @@ export function useChatRoomScroll({
   hasMore,
   loadingMore,
   initialLoadComplete,
-  onLoadMore,
 }: Options) {
   const flatListRef = useRef<FlatList>(null);
   const shouldStickToBottomRef = useRef(true);
   const loadingMoreRef = useRef(false);
   const didInitialScrollRef = useRef(false);
-  const loadMoreRef = useRef(onLoadMore);
 
   const [showScrollDown, setShowScrollDown] = useState(false);
+  const [nearTop, setNearTop] = useState(false);
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
-
-  loadMoreRef.current = onLoadMore;
 
   const scrollToBottom = useCallback((animated = true) => {
     const list = flatListRef.current;
@@ -60,14 +56,12 @@ export function useChatRoomScroll({
         return prev === next ? prev : next;
       });
 
-      if (
-        contentOffset.y < 80 &&
-        hasMore &&
-        !loadingMore &&
-        initialLoadComplete
-      ) {
+      // WhatsApp-style: do NOT auto-fetch older messages on scroll.
+      // Older history loads only when the user pulls to refresh at the top.
+      const atTop = contentOffset.y <= 24;
+      setNearTop((prev) => (prev === atTop ? prev : atTop));
+      if (atTop && hasMore && !loadingMore && initialLoadComplete) {
         shouldStickToBottomRef.current = false;
-        loadMoreRef.current();
       }
     },
     [messageCount, hasMore, loadingMore, initialLoadComplete]
@@ -107,6 +101,7 @@ export function useChatRoomScroll({
     shouldStickToBottomRef.current = true;
     didInitialScrollRef.current = false;
     loadingMoreRef.current = false;
+    setNearTop(false);
   }, []);
 
   const beginLoadMore = useCallback(() => {
@@ -159,6 +154,7 @@ export function useChatRoomScroll({
   return {
     flatListRef,
     showScrollDown,
+    nearTop,
     isKeyboardVisible,
     keyboardHeight,
     shouldStickToBottomRef,

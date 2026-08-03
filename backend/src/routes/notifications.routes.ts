@@ -18,6 +18,11 @@ router.post(
     const userId = req.userId!;
     const now = new Date().toISOString();
 
+    // One physical device token must belong to at most one account — otherwise
+    // the previous user on this phone keeps getting the new user's pushes
+    // (looks like "I get my own messages" when testing two accounts).
+    await supabaseAdmin.from('push_tokens').delete().eq('token', token).neq('user_id', userId);
+
     const { error } = await supabaseAdmin.from('push_tokens').upsert(
       {
         user_id: userId,

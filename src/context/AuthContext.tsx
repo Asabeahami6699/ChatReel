@@ -73,6 +73,12 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             user: stored.user,
           } as Session);
           setIsGuest(false);
+        } else {
+          // Login only on first install / after sign-out. Returning guests skip Login.
+          const { loadGuestModePreferred } = await import('../lib/guestMode');
+          if (await loadGuestModePreferred()) {
+            setIsGuest(true);
+          }
         }
       } catch (err) {
         console.error('[Auth] session restore failed:', err);
@@ -110,6 +116,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         await clearSupabaseSession();
         setSession(null);
         setUser(null);
+        setIsGuest(false);
+        void import('../lib/guestMode').then((m) => m.setGuestModePreferred(false));
       })();
     });
   }, []);
@@ -128,17 +136,14 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     setSession(newSession);
     setUser(newSession.user);
     setIsGuest(false);
-    // Track this install in the logged-in devices list.
-    try {
-      const { registerCurrentDevice } = await import('../lib/deviceSession');
-      await registerCurrentDevice();
-    } catch {
-      /* offline */
-    }
+    void import('../lib/guestMode').then((m) => m.setGuestModePreferred(false));
+    // Track this install in the logged-in devices list (non-blocking).
+    void import('../lib/deviceSession').then((m) => m.registerCurrentDevice());
   };
 
   const enterGuest = useCallback(() => {
     setIsGuest(true);
+    void import('../lib/guestMode').then((m) => m.setGuestModePreferred(true));
   }, []);
 
   const exitGuest = useCallback(() => {
@@ -325,6 +330,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     await clearUserLocalCaches(uid);
     await persistSession(null);
     setIsGuest(false);
+    // After explicit sign-out, show Login again (not guest).
+    void import('../lib/guestMode').then((m) => m.setGuestModePreferred(false));
+    void import('../lib/account2faCache').then((m) => m.clearCached2faStatus());
   };
 
   const isAuthenticated = Boolean(user && session);

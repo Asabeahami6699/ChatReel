@@ -123,7 +123,7 @@ export default function QRCodeScreen() {
 
         <View style={styles.qrBox}>
           <QRCode
-            value={`myapp://link?ref=${encodeURIComponent(qrRef)}`}
+            value={`chatapp://link?ref=${encodeURIComponent(qrRef)}`}
             size={240}
             color="#000"
             backgroundColor="#fff"

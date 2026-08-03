@@ -7,11 +7,22 @@ export function formatReelCount(n: number): string {
 }
 
 export function reelAuthorLabel(reel: ReelDTO): string {
+  if (reel.is_sponsored) {
+    return (
+      reel.advertiser_name?.trim() ||
+      reel.author?.display_name?.trim() ||
+      'Sponsored'
+    );
+  }
   return (
     reel.author?.display_name?.trim() ||
     reel.author?.email?.split('@')[0] ||
     'unknown'
   );
+}
+
+export function isSponsoredReel(reel: ReelDTO | null | undefined): boolean {
+  return Boolean(reel?.is_sponsored);
 }
 
 export function reelAvatarUrl(reel: ReelDTO): string | null {
@@ -30,6 +41,9 @@ export function reelRowDataEqual(a: ReelDTO, b: ReelDTO): boolean {
     a.visibility === b.visibility &&
     a.author_id === b.author_id &&
     a.author?.avatar_url === b.author?.avatar_url &&
-    a.author?.display_name === b.author?.display_name
+    a.author?.display_name === b.author?.display_name &&
+    a.is_sponsored === b.is_sponsored &&
+    a.cta_label === b.cta_label &&
+    a.cta_url === b.cta_url
   );
 }

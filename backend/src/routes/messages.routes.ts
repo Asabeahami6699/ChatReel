@@ -58,7 +58,12 @@ function textPushPreview(body: {
 }
 
 function mapMessageForClient(m: Record<string, unknown>) {
-  return withCdnMediaFields(m);
+  const base = withCdnMediaFields(m);
+  return {
+    ...base,
+    // Server-persisted rows are delivered for tick UI (realtime payloads omit this).
+    delivered: true,
+  };
 }
 
 const messageSchema = z.object({
@@ -524,16 +529,18 @@ router.post(
       const preview = textPushPreview(body);
 
       // Skip Expo when recipient already has this DM open (Realtime covers them).
+      // Never push back to the sender (linked-device / shared-token edge cases).
       let [needsPush] = filterUsersNeedingMessagePush(
         [body.receiver_id],
         userId,
         'individual'
       );
+      if (needsPush === userId) needsPush = undefined;
       if (needsPush) {
         const unmuted = await filterMutedChatPush([needsPush], userId, 'individual');
         needsPush = unmuted[0];
       }
-      if (needsPush) {
+      if (needsPush && needsPush !== userId) {
         sendPushToUserSafe(needsPush, {
           title: senderName,
           body: preview,

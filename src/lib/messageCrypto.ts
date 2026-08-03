@@ -78,8 +78,8 @@ export type PeerTrustRecord = {
 
 const IDENTITY_FETCH_MS = 6000;
 const IDENTITY_FETCH_ATTEMPTS = 3;
-const GROUP_ENCRYPT_MS = 12000;
-const DM_ENCRYPT_MS = 15000;
+const GROUP_ENCRYPT_MS = 3500;
+const DM_ENCRYPT_MS = 2500;
 
 /** Warm the persisted caches as early as possible. */
 void hydrateE2ECaches();

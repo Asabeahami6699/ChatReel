@@ -79,6 +79,32 @@ export type ReelDTO = {
   trim_start_sec?: number | null;
   trim_end_sec?: number | null;
   filter_id?: string | null;
+  /** Present when this feed row is a first-party sponsored creative. */
+  is_sponsored?: boolean;
+  ad_campaign_id?: string;
+  cta_url?: string | null;
+  cta_label?: string | null;
+  advertiser_name?: string | null;
+};
+
+export type ExploreAdDTO = {
+  id: string;
+  advertiser_name: string;
+  caption: string | null;
+  media_url: string;
+  media_type: 'video' | 'image';
+  thumbnail_url: string | null;
+  avatar_url: string | null;
+  cta_url: string | null;
+  cta_label: string;
+  is_sponsored: true;
+};
+
+export type AdsConfigDTO = {
+  enabled: boolean;
+  every_n: number;
+  placement_reels: boolean;
+  placement_explore: boolean;
 };
 
 export type GiftCatalogDTO = {
@@ -1501,5 +1527,23 @@ export const api = {
       apiRequest<{ payouts: PayoutRequestDTO[] }>(
         `/api/wallet/payout/history?limit=${limit}`
       ),
+  },
+
+  ads: {
+    config: () =>
+      apiRequest<{ ads: AdsConfigDTO }>('/api/ads/config', { auth: false }),
+    active: () =>
+      apiRequest<{ ads: ExploreAdDTO[]; config: AdsConfigDTO }>('/api/ads/active', {
+        auth: false,
+      }),
+    track: (body: {
+      campaign_id: string;
+      event_type: 'impression' | 'click' | 'cta';
+      placement?: 'reels_feed' | 'explore';
+    }) =>
+      apiRequest<{ ok: boolean }>('/api/ads/track', {
+        method: 'POST',
+        body,
+      }),
   },
 };

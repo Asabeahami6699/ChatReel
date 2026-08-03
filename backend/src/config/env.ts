@@ -89,6 +89,17 @@ export const env = {
   },
   /** Optional Expo push access token (Expo dashboard → Access tokens). */
   expoAccessToken: process.env.EXPO_ACCESS_TOKEN ?? '',
+  /**
+   * First-party sponsored ads (For You injection + Explore cards).
+   * ADS_ENABLED=false kills all placements. ADS_ADMIN_KEY gates create/list.
+   */
+  ads: {
+    enabled: process.env.ADS_ENABLED !== 'false',
+    everyN: Math.max(3, Math.min(20, Number(process.env.ADS_EVERY_N ?? 8) || 8)),
+    placementReels: process.env.ADS_PLACEMENT_REELS !== 'false',
+    placementExplore: process.env.ADS_PLACEMENT_EXPLORE !== 'false',
+    adminKey: (process.env.ADS_ADMIN_KEY ?? '').trim(),
+  },
 };
 
 export function isReelModerationEnabled(): boolean {

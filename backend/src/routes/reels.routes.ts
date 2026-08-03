@@ -34,8 +34,31 @@ import { buildWatermarkedReelDownload } from '../services/reelDownload.service';
 import { cleanupReelStorage, getReelMediaUrls } from '../services/reelStorage.service';
 import { probeVideoDimensionsFromUrl } from '../lib/videoProbe';
 import { publicReelsRateLimit } from '../middleware/rateLimit';
+import {
+  getAdsConfig,
+  injectSponsoredIntoFeed,
+  listActiveCampaigns,
+} from '../services/ads.service';
 
 const router = Router();
+
+async function withSponsoredFeedAds<T extends { id: string }>(
+  enriched: T[],
+  excludeIds: Set<string>
+): Promise<T[]> {
+  const config = getAdsConfig();
+  if (!config.enabled || !config.placement_reels) return enriched;
+  try {
+    const campaigns = await listActiveCampaigns(12);
+    return injectSponsoredIntoFeed(enriched as never, campaigns, {
+      everyN: config.every_n,
+      excludeIds,
+    }) as unknown as T[];
+  } catch (err) {
+    console.warn('[ads] feed inject failed:', err instanceof Error ? err.message : err);
+    return enriched;
+  }
+}
 
 async function enrichCommentLikes<T extends { id: string }>(
   comments: T[],
@@ -146,7 +169,11 @@ router.get(
     }
 
     const enriched = await enrichPublicReels(page);
-    return res.json({ reels: enriched, next_cursor: nextCursor });
+    // Guests have no exclude-id pagination — only inject on the first page.
+    const withAds = cursor
+      ? enriched
+      : await withSponsoredFeedAds(enriched, new Set());
+    return res.json({ reels: withAds, next_cursor: nextCursor });
   })
 );
 
@@ -287,10 +314,11 @@ router.get(
     }
 
     const enriched = await enrichReels(page, profileId);
+    const withAds = await withSponsoredFeedAds(enriched, excludeIds);
     // Sentinel cursor — client must send exclude=… on the next request.
     const nextCursor = hasMore || page.length >= limit ? 'more' : null;
 
-    return res.json({ reels: enriched, next_cursor: nextCursor });
+    return res.json({ reels: withAds, next_cursor: nextCursor });
   })
 );
 

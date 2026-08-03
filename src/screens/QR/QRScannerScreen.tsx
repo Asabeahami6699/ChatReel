@@ -20,8 +20,10 @@ import { withPrivacyLockPause } from '../../lib/privacyLockPause';
 
 const isWeb = Platform.OS === 'web';
 
-/** Prefer a stable read: same payload seen this many times before linking. */
-const STABLE_HITS = 3;
+/** Prefer a stable read: same *ref* seen this many times before linking. */
+const STABLE_HITS = 5;
+/** Green frame is 280×280 centered — require the QR bbox center inside it. */
+const FRAME_SIZE = 280;
 
 function parseLinkRef(raw: string): string | null {
   const trimmed = String(raw || '').trim();
@@ -90,7 +92,8 @@ function VisionQRScanner({
   const [lockHint, setLockHint] = useState('Align the QR code in the frame');
   const [permissionAsked, setPermissionAsked] = useState(false);
   const linkingRef = useRef(false);
-  const pendingRef = useRef<{ value: string; hits: number } | null>(null);
+  const pendingRef = useRef<{ ref: string; hits: number } | null>(null);
+  const [viewport, setViewport] = useState({ w: 0, h: 0 });
 
   useEffect(() => {
     if (hasPermission || permissionAsked) return;
@@ -142,18 +145,41 @@ function VisionQRScanner({
     [loading, navigation, user?.id]
   );
 
+  const codeInFrame = useCallback(
+    (frame?: { x: number; y: number; width: number; height: number } | null) => {
+      if (!frame || viewport.w <= 0 || viewport.h <= 0) return true; // no bbox → don't block
+      const cx = frame.x + frame.width / 2;
+      const cy = frame.y + frame.height / 2;
+      const left = (viewport.w - FRAME_SIZE) / 2;
+      const top = (viewport.h - FRAME_SIZE) / 2;
+      const pad = 24;
+      return (
+        cx >= left - pad &&
+        cx <= left + FRAME_SIZE + pad &&
+        cy >= top - pad &&
+        cy <= top + FRAME_SIZE + pad
+      );
+    },
+    [viewport.h, viewport.w]
+  );
+
   const onRawCode = useCallback(
-    (value: string) => {
+    (value: string, frame?: { x: number; y: number; width: number; height: number } | null) => {
       if (scanned || loading || linkingRef.current) return;
       const ref = parseLinkRef(value);
       if (!ref) {
         setLockHint('Unrecognized code — use a ChatReel link QR');
         return;
       }
+      if (!codeInFrame(frame)) {
+        setLockHint('Align the QR code in the frame');
+        pendingRef.current = null;
+        return;
+      }
 
       const pending = pendingRef.current;
-      if (!pending || pending.value !== value) {
-        pendingRef.current = { value, hits: 1 };
+      if (!pending || pending.ref !== ref) {
+        pendingRef.current = { ref, hits: 1 };
         setLockHint('Hold steady… locking onto QR');
         return;
       }
@@ -162,10 +188,10 @@ function VisionQRScanner({
         setLockHint(`Hold steady… ${pending.hits}/${STABLE_HITS}`);
         return;
       }
-      // Stable read — proceed.
-      void completeLink(value);
+      // Stable ref inside the frame — proceed with the normalized ref.
+      void completeLink(`chatapp://link?ref=${encodeURIComponent(ref)}`);
     },
-    [completeLink, loading, scanned]
+    [codeInFrame, completeLink, loading, scanned]
   );
 
   const pickFromGallery = useCallback(async () => {
@@ -195,9 +221,16 @@ function VisionQRScanner({
     codeTypes: ['qr'],
     onCodeScanned: (codes) => {
       if (scanned || loading || linkingRef.current) return;
-      // Prefer the largest / first QR with a value.
-      const value = codes.map((c) => c.value).find((v): v is string => Boolean(v));
-      if (value) onRawCode(value);
+      // Prefer the largest QR (most of the frame) that has a value.
+      const ranked = [...codes]
+        .filter((c) => Boolean(c.value))
+        .sort((a, b) => {
+          const areaA = (a.frame?.width ?? 0) * (a.frame?.height ?? 0);
+          const areaB = (b.frame?.width ?? 0) * (b.frame?.height ?? 0);
+          return areaB - areaA;
+        });
+      const best = ranked[0];
+      if (best?.value) onRawCode(best.value, best.frame ?? null);
     },
   });
 
@@ -239,7 +272,14 @@ function VisionQRScanner({
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
+    <SafeAreaView
+      style={styles.container}
+      edges={['left', 'right', 'bottom']}
+      onLayout={(e) => {
+        const { width, height } = e.nativeEvent.layout;
+        setViewport({ w: width, h: height });
+      }}
+    >
       <Camera
         style={StyleSheet.absoluteFill}
         device={device}

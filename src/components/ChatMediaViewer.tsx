@@ -13,12 +13,20 @@ import {
   Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import Animated, {
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import { ChatVideoPlayer } from './ChatVideoPlayer';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { allowViewOnceCapture, preventViewOnceCapture } from '../lib/screenCaptureGuard';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 const VIDEO_FRAME = { width: SCREEN_W, height: SCREEN_H };
+const AnimatedImage = Animated.createAnimatedComponent(Image);
 
 export type ChatMediaItem = {
   id: string;
@@ -41,15 +49,97 @@ type Props = {
 };
 
 /** Own loading state so parent FlatList does not re-render on every image load event. */
-const MediaImageSlide = React.memo(function MediaImageSlide({ uri }: { uri: string }) {
+const MediaImageSlide = React.memo(function MediaImageSlide({
+  uri,
+  onZoomChange,
+}: {
+  uri: string;
+  onZoomChange?: (zoomed: boolean) => void;
+}) {
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   const safeUri = typeof uri === 'string' ? uri.trim() : '';
+  const scale = useSharedValue(1);
+  const savedScale = useSharedValue(1);
+  const tx = useSharedValue(0);
+  const ty = useSharedValue(0);
+  const savedTx = useSharedValue(0);
+  const savedTy = useSharedValue(0);
 
   useEffect(() => {
     setLoading(true);
     setFailed(!safeUri);
+    scale.value = 1;
+    savedScale.value = 1;
+    tx.value = 0;
+    ty.value = 0;
+    savedTx.value = 0;
+    savedTy.value = 0;
+    onZoomChange?.(false);
   }, [safeUri]);
+
+  const notifyZoom = (z: boolean) => {
+    onZoomChange?.(z);
+  };
+
+  const pinch = Gesture.Pinch()
+    .onUpdate((e) => {
+      const next = Math.min(4, Math.max(1, savedScale.value * e.scale));
+      scale.value = next;
+    })
+    .onEnd(() => {
+      if (scale.value < 1.05) {
+        scale.value = withTiming(1);
+        tx.value = withTiming(0);
+        ty.value = withTiming(0);
+        savedScale.value = 1;
+        savedTx.value = 0;
+        savedTy.value = 0;
+        runOnJS(notifyZoom)(false);
+      } else {
+        savedScale.value = scale.value;
+        runOnJS(notifyZoom)(true);
+      }
+    });
+
+  const pan = Gesture.Pan()
+    .averageTouches(true)
+    .onUpdate((e) => {
+      if (savedScale.value <= 1.05 && scale.value <= 1.05) return;
+      tx.value = savedTx.value + e.translationX;
+      ty.value = savedTy.value + e.translationY;
+    })
+    .onEnd(() => {
+      savedTx.value = tx.value;
+      savedTy.value = ty.value;
+    });
+
+  const doubleTap = Gesture.Tap()
+    .numberOfTaps(2)
+    .onEnd(() => {
+      if (scale.value > 1.1) {
+        scale.value = withTiming(1);
+        tx.value = withTiming(0);
+        ty.value = withTiming(0);
+        savedScale.value = 1;
+        savedTx.value = 0;
+        savedTy.value = 0;
+        runOnJS(notifyZoom)(false);
+      } else {
+        scale.value = withTiming(2.2);
+        savedScale.value = 2.2;
+        runOnJS(notifyZoom)(true);
+      }
+    });
+
+  const gesture = Gesture.Simultaneous(pinch, pan, doubleTap);
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: tx.value },
+      { translateY: ty.value },
+      { scale: scale.value },
+    ],
+  }));
 
   if (!safeUri) {
     return (
@@ -73,16 +163,18 @@ const MediaImageSlide = React.memo(function MediaImageSlide({ uri }: { uri: stri
           <Text style={styles.failedText}>Could not load image</Text>
         </View>
       ) : (
-        <Image
-          source={{ uri: safeUri }}
-          style={styles.image}
-          resizeMode="contain"
-          onLoad={() => setLoading(false)}
-          onError={() => {
-            setLoading(false);
-            setFailed(true);
-          }}
-        />
+        <GestureDetector gesture={gesture}>
+          <AnimatedImage
+            source={{ uri: safeUri }}
+            style={[styles.image, animatedStyle]}
+            resizeMode="contain"
+            onLoad={() => setLoading(false)}
+            onError={() => {
+              setLoading(false);
+              setFailed(true);
+            }}
+          />
+        </GestureDetector>
       )}
     </View>
   );
@@ -113,6 +205,7 @@ export function ChatMediaViewer({ items, initialIndex, visible, onClose }: Props
   const insets = useSafeAreaInsets();
   const listRef = useRef<FlatList<ChatMediaItem>>(null);
   const [index, setIndex] = useState(initialIndex);
+  const [zoomed, setZoomed] = useState(false);
 
   useEffect(() => {
     if (!visible) return;
@@ -158,7 +251,7 @@ export function ChatMediaViewer({ items, initialIndex, visible, onClose }: Props
     ({ item, index: itemIndex }: { item: ChatMediaItem; index: number }) => (
       <View style={styles.page}>
         {item.type === 'image' ? (
-          <MediaImageSlide uri={item.uri} />
+          <MediaImageSlide uri={item.uri} onZoomChange={setZoomed} />
         ) : (
           <MediaVideoSlide uri={item.uri} active={itemIndex === index} />
         )}
@@ -183,6 +276,7 @@ export function ChatMediaViewer({ items, initialIndex, visible, onClose }: Props
 
   return (
     <Modal visible={visible} animationType="fade" onRequestClose={onClose}>
+      <GestureHandlerRootView style={styles.root}>
       <StatusBar barStyle="light-content" />
       <View style={styles.root}>
         <FlatList
@@ -191,6 +285,7 @@ export function ChatMediaViewer({ items, initialIndex, visible, onClose }: Props
           data={items}
           horizontal
           pagingEnabled
+          scrollEnabled={!zoomed}
           showsHorizontalScrollIndicator={false}
           keyExtractor={(item) => item.id}
           initialScrollIndex={initialIndex}
@@ -200,7 +295,7 @@ export function ChatMediaViewer({ items, initialIndex, visible, onClose }: Props
             index: i,
           })}
           onMomentumScrollEnd={onScrollEnd}
-          extraData={index}
+          extraData={`${index}:${zoomed ? 1 : 0}`}
           renderItem={renderItem}
         />
 
@@ -223,7 +318,7 @@ export function ChatMediaViewer({ items, initialIndex, visible, onClose }: Props
           </Text>
         </View>
 
-        {(current.caption || current.viewOnce || items.length > 1) && (
+        {(current.caption || current.viewOnce || items.length > 1 || current.type === 'image') && (
           <View style={[styles.footer, { paddingBottom: insets.bottom + 12 }]}>
             {current.caption ? (
               <Text style={styles.caption} numberOfLines={6}>
@@ -238,11 +333,17 @@ export function ChatMediaViewer({ items, initialIndex, visible, onClose }: Props
                   : ' · closes when you leave'}
               </Text>
             ) : items.length > 1 ? (
-              <Text style={styles.footerHint}>Swipe to view more</Text>
+              <Text style={styles.footerHint}>
+                Swipe to view more
+                {current.type === 'image' ? ' · pinch to zoom' : ''}
+              </Text>
+            ) : current.type === 'image' ? (
+              <Text style={styles.footerHint}>Pinch or double-tap to zoom</Text>
             ) : null}
           </View>
         )}
       </View>
+      </GestureHandlerRootView>
     </Modal>
   );
 }

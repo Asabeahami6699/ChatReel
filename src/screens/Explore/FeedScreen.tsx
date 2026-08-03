@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Linking,
   Modal,
   Platform,
   RefreshControl,
@@ -18,7 +19,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { SoftFadeImage } from '../../components/SoftFadeImage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { api, type MomentAuthorFeedDTO, type MomentSlideDTO } from '../../lib/api';
+import { api, type ExploreAdDTO, type MomentAuthorFeedDTO, type MomentSlideDTO } from '../../lib/api';
 import {
   getMomentVideoThumbnailUri,
   peekMomentVideoThumbnailUri,
@@ -197,6 +198,58 @@ export default function FeedScreen() {
     task: MomentUploadTask;
     draft: MomentUploadDraft;
   } | null>(null);
+  const [exploreAds, setExploreAds] = useState<ExploreAdDTO[]>([]);
+  const seenAdIdsRef = React.useRef<Set<string>>(new Set());
+
+  const loadExploreAds = useCallback(async () => {
+    try {
+      const { ads, config } = await api.ads.active();
+      if (!config.enabled || !config.placement_explore) {
+        setExploreAds([]);
+        return;
+      }
+      setExploreAds(ads.slice(0, 6));
+    } catch {
+      /* ads are optional — keep Explore usable */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isScreenFocused) return;
+    void loadExploreAds();
+  }, [isScreenFocused, loadExploreAds]);
+
+  const openExploreAd = useCallback(
+    async (ad: ExploreAdDTO) => {
+      if (!isGuest && !seenAdIdsRef.current.has(`cta:${ad.id}`)) {
+        seenAdIdsRef.current.add(`cta:${ad.id}`);
+        api.ads
+          .track({ campaign_id: ad.id, event_type: 'cta', placement: 'explore' })
+          .catch(() => undefined);
+      }
+      const url = ad.cta_url?.trim();
+      if (!url) return;
+      try {
+        const can = await Linking.canOpenURL(url);
+        if (can) await Linking.openURL(url);
+      } catch {
+        /* ignore */
+      }
+    },
+    [isGuest]
+  );
+
+  useEffect(() => {
+    if (!isScreenFocused || isGuest || exploreAds.length === 0) return;
+    for (const ad of exploreAds.slice(0, 3)) {
+      const key = `imp:${ad.id}`;
+      if (seenAdIdsRef.current.has(key)) continue;
+      seenAdIdsRef.current.add(key);
+      api.ads
+        .track({ campaign_id: ad.id, event_type: 'impression', placement: 'explore' })
+        .catch(() => undefined);
+    }
+  }, [exploreAds, isGuest, isScreenFocused]);
 
   const requireAuth = useCallback(
     (message?: string) => {
@@ -637,7 +690,14 @@ export default function FeedScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={C.primary} />
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => {
+              void refresh();
+              void loadExploreAds();
+            }}
+            tintColor={C.primary}
+          />
         }
       >
         {loading && authors.length === 0 && uploadTasks.length === 0 ? (
@@ -676,6 +736,56 @@ export default function FeedScreen() {
                   uploadTasks.map((task) => renderUploadBubble(task))}
               </ScrollView>
             </View>
+
+            {exploreAds.length > 0 && (
+              <View style={styles.section}>
+                <View style={styles.sectionHead}>
+                  <View style={[styles.sectionDot, { backgroundColor: '#f59e0b' }]} />
+                  <Text style={[styles.sectionTitle, { color: C.text }]}>Sponsored</Text>
+                </View>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.adScroll}
+                >
+                  {exploreAds.map((ad) => {
+                    const thumb = ad.thumbnail_url || ad.media_url;
+                    return (
+                      <TouchableOpacity
+                        key={ad.id}
+                        style={[styles.adCard, { backgroundColor: C.bg, borderColor: C.border }]}
+                        activeOpacity={0.88}
+                        onPress={() => void openExploreAd(ad)}
+                      >
+                        {thumb ? (
+                          <Image source={{ uri: thumb }} style={styles.adThumb} />
+                        ) : (
+                          <View style={[styles.adThumb, styles.adThumbFallback]}>
+                            <Ionicons name="megaphone-outline" size={28} color={C.muted} />
+                          </View>
+                        )}
+                        <View style={styles.adBody}>
+                          <Text style={[styles.adSponsored, { color: '#b45309' }]}>Sponsored</Text>
+                          <Text style={[styles.adTitle, { color: C.text }]} numberOfLines={1}>
+                            {ad.advertiser_name}
+                          </Text>
+                          {!!ad.caption && (
+                            <Text style={[styles.adCaption, { color: C.muted }]} numberOfLines={2}>
+                              {ad.caption}
+                            </Text>
+                          )}
+                          <View style={[styles.adCta, { backgroundColor: C.primary }]}>
+                            <Text style={styles.adCtaText} numberOfLines={1}>
+                              {ad.cta_label || 'Learn more'}
+                            </Text>
+                          </View>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            )}
 
             {myFeed && myFeed.slides.length > 0 && (
               <TouchableOpacity
@@ -1065,6 +1175,27 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
+  adScroll: { gap: 10, paddingRight: 8 },
+  adCard: {
+    width: 220,
+    borderRadius: 14,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  adThumb: { width: '100%', height: 118, backgroundColor: '#e5e7eb' },
+  adThumbFallback: { alignItems: 'center', justifyContent: 'center' },
+  adBody: { padding: 12, gap: 4 },
+  adSponsored: { fontSize: 11, fontWeight: '800', letterSpacing: 0.3 },
+  adTitle: { fontSize: 15, fontWeight: '800' },
+  adCaption: { fontSize: 12, lineHeight: 16 },
+  adCta: {
+    marginTop: 6,
+    alignSelf: 'flex-start',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  adCtaText: { color: '#fff', fontSize: 12, fontWeight: '800' },
 
   listRow: {
     flexDirection: 'row',

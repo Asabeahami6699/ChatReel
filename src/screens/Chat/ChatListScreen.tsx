@@ -33,6 +33,7 @@ import { useIncomingFriendRequestCount } from '../../hooks/useIncomingFriendRequ
 import { useCurrentProfileId } from '../../hooks/useCurrentProfileId'
 import { useFriendshipsRealtime } from '../../hooks/useFriendshipsRealtime'
 import { useChatSettings } from '../../context/ChatSettingsContext'
+import { useChatLock } from '../../context/ChatLockContext'
 import { api } from '../../lib/api'
 import { scheduleChatThreadsPrefetch } from '../../lib/chatThreadsPrefetch'
 import FriendRequestsScreen from './FriendRequestsScreen'
@@ -135,6 +136,7 @@ type AllFeedItem =
 export default function ChatListScreen({ setSelectedChat }: Props) {
   const { user, isGuest, exitGuest } = useAuth()
   const { theme } = useChatSettings()
+  const { locked, unlock } = useChatLock()
   const isFocused = useIsFocused()
   const myProfileId = useCurrentProfileId()
   const navigation = useNavigation<any>()
@@ -569,7 +571,8 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
     Promise.all([refreshIndividuals(), refreshGroups(), fetchIncomingRequests()])
   }, [fetchIncomingRequests, refreshGroups, refreshIndividuals, groupsOnline, individualOnline])
 
-  const isRefreshing = individualRefreshing || groupsRefreshing || requestsLoading
+  // Friend-request fetches must not drive the pull spinner (looks like a stuck circle).
+  const isRefreshing = individualRefreshing || groupsRefreshing
   const isOnline = individualOnline && groupsOnline
 
   const closeFabMenu = useCallback(() => {
@@ -717,6 +720,10 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
 
   const handleChatPress = async (item: any, isGroup = false) => {
     if (!requireAuth('Sign in to open chats.')) return
+    if (locked) {
+      void unlock()
+      return
+    }
 
     const params = {
       chatId: isGroup ? item.id : item.user_id,

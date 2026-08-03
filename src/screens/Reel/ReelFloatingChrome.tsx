@@ -33,6 +33,7 @@ type Props = {
   onOpenProfile: () => void;
   onNavigateSound: (soundId: string) => void;
   onUseReelAudio: () => void;
+  onSponsoredCta?: () => void;
 };
 
 /**
@@ -56,10 +57,12 @@ function ReelFloatingChromeComponent({
   onOpenProfile,
   onNavigateSound,
   onUseReelAudio,
+  onSponsoredCta,
 }: Props) {
   const avatar = reelAvatarUrl(reel);
   const author = reelAuthorLabel(reel);
   const isLiked = reel.liked_by_me;
+  const sponsored = Boolean(reel.is_sponsored);
   // Short phones (and split-screen) can't fit the full-size rail above the caption.
   const compact = !usePhoneFrame && reelHeight > 0 && reelHeight < REEL_COMPACT_HEIGHT;
   const icon = (size: number) => (compact ? Math.round(size * 0.85) : size);
@@ -91,10 +94,14 @@ function ReelFloatingChromeComponent({
           pointerEvents="box-none"
         >
           <View style={styles.userInfo}>
-            <TouchableOpacity onPress={onOpenProfile}>
-              <Text style={styles.username}>@{author}</Text>
+            <TouchableOpacity onPress={sponsored ? onSponsoredCta : onOpenProfile} disabled={sponsored && !onSponsoredCta}>
+              <Text style={styles.username}>{sponsored ? author : `@${author}`}</Text>
             </TouchableOpacity>
-            {reel.visibility !== 'public' && (
+            {sponsored ? (
+              <View style={styles.sponsoredPill}>
+                <Text style={styles.sponsoredPillText}>Sponsored</Text>
+              </View>
+            ) : reel.visibility !== 'public' ? (
               <View style={styles.visibilityPill}>
                 <Ionicons
                   name={
@@ -108,7 +115,7 @@ function ReelFloatingChromeComponent({
                   color="#fff"
                 />
               </View>
-            )}
+            ) : null}
           </View>
           {!!reel.caption && (
             <ExpandableCaption
@@ -117,12 +124,21 @@ function ReelFloatingChromeComponent({
               maxWidth={Math.round(reelWidth * 0.7)}
             />
           )}
-          <ReelSoundStrip
-            reel={reel}
-            authorHandle={author}
-            onPressSound={onNavigateSound}
-            onPressOriginalAudio={onUseReelAudio}
-          />
+          {sponsored && reel.cta_url && onSponsoredCta ? (
+            <TouchableOpacity style={styles.ctaButton} onPress={onSponsoredCta} activeOpacity={0.88}>
+              <Text style={styles.ctaButtonText} numberOfLines={1}>
+                {reel.cta_label?.trim() || 'Learn more'}
+              </Text>
+              <Ionicons name="open-outline" size={14} color="#0f172a" />
+            </TouchableOpacity>
+          ) : (
+            <ReelSoundStrip
+              reel={reel}
+              authorHandle={author}
+              onPressSound={onNavigateSound}
+              onPressOriginalAudio={onUseReelAudio}
+            />
+          )}
         </View>
       </View>
 
@@ -138,8 +154,9 @@ function ReelFloatingChromeComponent({
         <View style={styles.profileActionWrap}>
           <TouchableOpacity
             style={styles.profileButton}
-            onPress={onOpenProfile}
+            onPress={sponsored ? onSponsoredCta : onOpenProfile}
             hitSlop={HIT_SLOP}
+            disabled={sponsored && !onSponsoredCta}
           >
             {avatar ? (
               <Image source={{ uri: avatar }} style={[styles.profileAvatar, compact && styles.profileAvatarCompact]} />
@@ -149,42 +166,60 @@ function ReelFloatingChromeComponent({
               </View>
             )}
           </TouchableOpacity>
-          <TouchableOpacity style={styles.profileFollowPlus} onPress={onQuickFollow} hitSlop={HIT_SLOP}>
-            <Ionicons name={isFollowing ? 'checkmark' : 'add'} size={17} color="#fff" />
-          </TouchableOpacity>
+          {!sponsored ? (
+            <TouchableOpacity style={styles.profileFollowPlus} onPress={onQuickFollow} hitSlop={HIT_SLOP}>
+              <Ionicons name={isFollowing ? 'checkmark' : 'add'} size={17} color="#fff" />
+            </TouchableOpacity>
+          ) : null}
         </View>
-        <TouchableOpacity style={styles.actionButton} onPress={onToggleLike} hitSlop={HIT_SLOP}>
-          <ReelActionIcon name="heart" size={icon(36)} color={isLiked ? REEL_ACCENT : '#fff'} />
-          <Text style={actionTextStyle} maxFontSizeMultiplier={1.2} numberOfLines={1}>
-            {formatReelCount(reel.like_count)}
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.actionButton} onPress={onOpenComments} hitSlop={HIT_SLOP}>
-          <ReelActionIcon name="chatbubble-ellipses" size={icon(34)} />
-          <Text style={actionTextStyle} maxFontSizeMultiplier={1.2} numberOfLines={1}>
-            {formatReelCount(reel.comment_count)}
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.actionButton} onPress={onOpenShare} hitSlop={HIT_SLOP}>
-          <ReelActionIcon name="paper-plane" size={icon(32)} />
-          <Text style={actionTextStyle} maxFontSizeMultiplier={1.2} numberOfLines={1}>
-            Share
-          </Text>
-        </TouchableOpacity>
-        {myProfileId && reel.author_id !== myProfileId ? (
-          <TouchableOpacity style={styles.actionButton} onPress={onOpenGift} hitSlop={HIT_SLOP}>
-            <ReelActionIcon name="gift" size={icon(30)} color="#fff" />
+        {!sponsored ? (
+          <>
+            <TouchableOpacity style={styles.actionButton} onPress={onToggleLike} hitSlop={HIT_SLOP}>
+              <ReelActionIcon name="heart" size={icon(36)} color={isLiked ? REEL_ACCENT : '#fff'} />
+              <Text style={actionTextStyle} maxFontSizeMultiplier={1.2} numberOfLines={1}>
+                {formatReelCount(reel.like_count)}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.actionButton} onPress={onOpenComments} hitSlop={HIT_SLOP}>
+              <ReelActionIcon name="chatbubble-ellipses" size={icon(34)} />
+              <Text style={actionTextStyle} maxFontSizeMultiplier={1.2} numberOfLines={1}>
+                {formatReelCount(reel.comment_count)}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.actionButton} onPress={onOpenShare} hitSlop={HIT_SLOP}>
+              <ReelActionIcon name="paper-plane" size={icon(32)} />
+              <Text style={actionTextStyle} maxFontSizeMultiplier={1.2} numberOfLines={1}>
+                Share
+              </Text>
+            </TouchableOpacity>
+            {myProfileId && reel.author_id !== myProfileId ? (
+              <TouchableOpacity style={styles.actionButton} onPress={onOpenGift} hitSlop={HIT_SLOP}>
+                <ReelActionIcon name="gift" size={icon(30)} color="#fff" />
+                <Text style={actionTextStyle} maxFontSizeMultiplier={1.2} numberOfLines={1}>
+                  Gift
+                </Text>
+              </TouchableOpacity>
+            ) : null}
+            <TouchableOpacity style={styles.actionButton}>
+              <ReelActionIcon name="eye" size={icon(30)} />
+              <Text style={actionTextStyle} maxFontSizeMultiplier={1.2} numberOfLines={1}>
+                {formatReelCount(reel.view_count)}
+              </Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={onSponsoredCta}
+            hitSlop={HIT_SLOP}
+            disabled={!onSponsoredCta}
+          >
+            <ReelActionIcon name="open" size={icon(30)} />
             <Text style={actionTextStyle} maxFontSizeMultiplier={1.2} numberOfLines={1}>
-              Gift
+              {(reel.cta_label?.trim() || 'Open').slice(0, 8)}
             </Text>
           </TouchableOpacity>
-        ) : null}
-        <TouchableOpacity style={styles.actionButton}>
-          <ReelActionIcon name="eye" size={icon(30)} />
-          <Text style={actionTextStyle} maxFontSizeMultiplier={1.2} numberOfLines={1}>
-            {formatReelCount(reel.view_count)}
-          </Text>
-        </TouchableOpacity>
+        )}
       </View>
     </View>
   );
@@ -218,6 +253,36 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   caption: { color: '#fff', fontSize: 14, lineHeight: 19, fontWeight: '500' },
+  sponsoredPill: {
+    backgroundColor: 'rgba(250, 204, 21, 0.92)',
+    borderRadius: 8,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  sponsoredPillText: {
+    color: '#0f172a',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+  ctaButton: {
+    marginTop: 8,
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    maxWidth: '78%',
+  },
+  ctaButtonText: {
+    color: '#0f172a',
+    fontSize: 13,
+    fontWeight: '800',
+    flexShrink: 1,
+  },
   actionButtons: {
     position: 'absolute',
     right: REEL_ACTION_RAIL_RIGHT,

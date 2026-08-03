@@ -153,7 +153,7 @@ export const ReelWebFeed = forwardRef<ReelWebFeedHandle, Props>(function ReelWeb
       if (!pulling) return;
       pulling = false;
       setPullPx((prev) => {
-        if (prev >= 54 && !refreshingRef.current) {
+        if (prev >= 36 && !refreshingRef.current) {
           void onRefreshRef.current?.();
         }
         return 0;
@@ -186,7 +186,7 @@ export const ReelWebFeed = forwardRef<ReelWebFeedHandle, Props>(function ReelWeb
             <ActivityIndicator color="#fff" size="small" />
           ) : (
             <Text style={styles.pullHintText}>
-              {pullPx >= 54 ? 'Release for newer reels' : 'Pull for newer reels'}
+              {pullPx >= 36 ? 'Release for newer reels' : 'Pull for newer reels'}
             </Text>
           )}
         </View>

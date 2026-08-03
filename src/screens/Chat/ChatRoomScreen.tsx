@@ -19,6 +19,7 @@ import {
   FlatList,
   StatusBar,
   ImageBackground,
+  RefreshControl,
 } from 'react-native';
 import { useAuth } from '../../hooks/useAuth';
 import { api, ApiError } from '../../lib/api';
@@ -107,6 +108,10 @@ import {
   syncGroupSenderKeysForMe,
 } from '../../lib/groupSenderKeys';
 import { rememberChatThread, recallChatThread, clearChatThread } from '../../lib/chatThreadCache';
+
+/** First paint: recent window only. Older history is pull-to-load (WhatsApp-style). */
+const INITIAL_MESSAGE_PAGE = 30;
+const OLDER_MESSAGE_PAGE = 40;
 import { ChatLoadingSkeleton } from './ChatLoadingSkeleton';
 
 export default function ChatRoomScreen() {
@@ -129,9 +134,15 @@ export default function ChatRoomScreen() {
   const { theme } = useChatSettings();
 
   const cachedThread = chatId ? recallChatThread<Message>(chatId) : null;
-  const [messages, setMessages] = useState<Message[]>(() => cachedThread ?? []);
+  const [messages, setMessages] = useState<Message[]>(() =>
+    cachedThread && cachedThread.length > 0
+      ? cachedThread.slice(-INITIAL_MESSAGE_PAGE)
+      : []
+  );
   const [loading, setLoading] = useState(() => !(cachedThread && cachedThread.length > 0));
   const [loadingMore, setLoadingMore] = useState(false);
+  const messagesRef = useRef<Message[]>(messages);
+  messagesRef.current = messages;
   // Header sits outside KeyboardAvoidingView.
   const keyboardVerticalOffset = Platform.OS === 'ios' ? 70 + insets.top : 0;
 
@@ -259,8 +270,9 @@ export default function ChatRoomScreen() {
   const {
     flatListRef,
     showScrollDown,
+    nearTop,
     isKeyboardVisible,
-    keyboardHeight,
+    keyboardHeight: _keyboardHeight,
     shouldStickToBottomRef: shouldScrollToBottomRef,
     scrollToBottom,
     scrollToBottomAndStick,
@@ -277,14 +289,12 @@ export default function ChatRoomScreen() {
     hasMore,
     loadingMore,
     initialLoadComplete,
-    onLoadMore: () => loadMoreMessagesRef.current(),
   });
 
-  // Edge-to-edge Android often ignores window resize — pad the composer manually.
-  const androidKeyboardPad =
-    Platform.OS === 'android' && isKeyboardVisible
-      ? Math.max(0, keyboardHeight - insets.bottom)
-      : 0;
+  // Android uses softwareKeyboardLayoutMode: 'resize' — do not also pad by
+  // keyboardHeight or the composer gets an extra upward lift above the IME.
+  // iOS uses KeyboardAvoidingView below.
+  const androidKeyboardPad = 0;
 
   const persistMessages = useCallback(
     (updater: (prev: Message[]) => Message[]) => {
@@ -687,7 +697,11 @@ export default function ChatRoomScreen() {
     [chatId, chatType, user?.id]
   );
 
-  const syncWithServer = async (localMessages: Message[], loadMore: boolean = false) => {
+  const syncWithServer = async (
+    localMessages: Message[],
+    loadMore: boolean = false,
+    beforeCursor?: string
+  ) => {
     if (!isOnline || syncInProgressRef.current || !user?.id) return;
 
     try {
@@ -699,12 +713,14 @@ export default function ChatRoomScreen() {
         setSyncing(true);
       }
 
+      const pageSize = loadMore ? OLDER_MESSAGE_PAGE : INITIAL_MESSAGE_PAGE;
       const before =
-        loadMore && localMessages.length > 0 ? localMessages[0].created_at : undefined;
+        beforeCursor ||
+        (loadMore && localMessages.length > 0 ? localMessages[0].created_at : undefined);
       const { messages: rawMessages } = await api.messages.list(
         chatId,
         chatType === 'group',
-        50,
+        pageSize,
         before,
         clearedAt ?? undefined
       );
@@ -808,9 +824,16 @@ export default function ChatRoomScreen() {
 
         setMessages(finalMessages);
         rememberChatThread(chatId, finalMessages);
-        setHasMore(messagesData.length === 50);
+        setHasMore(messagesData.length >= pageSize);
 
-        await messageStorage.saveMessages(chatId, finalMessages);
+        // Persist full thread when loading more; on first page keep prior older locals.
+        if (loadMore) {
+          await messageStorage.saveMessages(chatId, finalMessages);
+        } else {
+          const priorLocal = sanitizeChatMessages(localMessages);
+          const mergedStore = deduplicateMessages([...priorLocal, ...finalMessages]);
+          await messageStorage.saveMessages(chatId, mergedStore);
+        }
 
         // Warm ChatReel local cache for recent media (offline open).
         for (const m of finalMessages.slice(-20)) {
@@ -835,8 +858,8 @@ export default function ChatRoomScreen() {
               mime: m.file_type,
             }).then((localUri) => {
               if (!localUri) return;
-              setMessages((prev) => {
-                const next = prev.map((row) => {
+              setMessages((prev) =>
+                prev.map((row) => {
                   if (row.id !== m.id && row.client_message_id !== m.client_message_id) {
                     return row;
                   }
@@ -844,10 +867,10 @@ export default function ChatRoomScreen() {
                     return { ...row, local_audio_uri: localUri };
                   }
                   return { ...row, local_file_uri: localUri };
-                });
-                void messageStorage.saveMessages(chatId, next);
-                return next;
-              });
+                })
+              );
+              // Don't rewrite full storage from the visible page — older history
+              // must stay available for pull-to-load.
             });
           }
         }
@@ -859,8 +882,9 @@ export default function ChatRoomScreen() {
           )
         );
         if (kept.length > 0) {
-          setMessages(kept);
-          setHasMore(false);
+          const recent = kept.slice(-INITIAL_MESSAGE_PAGE);
+          setMessages(recent);
+          setHasMore(kept.length > recent.length);
           await messageStorage.saveMessages(chatId, kept);
         } else {
           await messageStorage.clearMessages(chatId);
@@ -872,14 +896,20 @@ export default function ChatRoomScreen() {
         setHasMore(false);
         if (!loadMore) {
           const deduped = deduplicateMessages(localMessages);
-          setMessages(deduped);
+          const recent = deduped.slice(-INITIAL_MESSAGE_PAGE);
+          setMessages(recent);
+          setHasMore(deduped.length > recent.length);
         }
       }
     } catch (err: any) {
       console.error('Sync error:', err);
       if (!loadMore) {
         const deduped = deduplicateMessages(localMessages);
-        if (deduped.length > 0) setMessages(deduped);
+        if (deduped.length > 0) {
+          const recent = deduped.slice(-INITIAL_MESSAGE_PAGE);
+          setMessages(recent);
+          setHasMore(deduped.length > recent.length);
+        }
       }
     } finally {
       if (loadMore) {
@@ -903,6 +933,7 @@ export default function ChatRoomScreen() {
 
     if (loadMore) {
       setLoadingMore(true);
+      beginLoadMore();
     } else if (!initialLoadComplete && messages.length === 0) {
       setLoading(true);
     }
@@ -911,32 +942,69 @@ export default function ChatRoomScreen() {
       const localMessages = await messageStorage.getMessages(chatId);
       const dedupedLocalMessages = deduplicateMessages(
         filterByClearedAt(sanitizeChatMessages(localMessages))
-      );
+      ).filter((m) => messageBelongsToChat(m));
 
-      const localReady = await decryptChatMessages(dedupedLocalMessages, user.id);
-      for (const m of localReady) {
-        if (m.decrypted) rememberDecryptedText(m.id, m.decrypted);
-      }
-      
-      if (!loadMore && localReady.length > 0) {
-        setMessages(localReady);
-        rememberChatThread(chatId, localReady);
-        setLoading(false);
-      }
+      if (!loadMore) {
+        // Fast first paint: only the recent window (decrypt that slice, not the whole archive).
+        const recentSlice = dedupedLocalMessages.slice(-INITIAL_MESSAGE_PAGE);
+        const localReady = await decryptChatMessages(recentSlice, user.id);
+        for (const m of localReady) {
+          if (m.decrypted) rememberDecryptedText(m.id, m.decrypted);
+        }
+        if (localReady.length > 0) {
+          setMessages(localReady);
+          rememberChatThread(chatId, localReady);
+          setHasMore(
+            dedupedLocalMessages.length > recentSlice.length || isOnline
+          );
+          setLoading(false);
+        }
 
-      if (isOnline) {
-        await syncWithServer(localReady, loadMore);
-      } else {
-        if (!loadMore) {
-          if (localReady.length === 0) {
-            setMessages([]);
-          } else {
-            setMessages(localReady);
-          }
+        if (isOnline) {
+          await syncWithServer(dedupedLocalMessages, false);
+        } else {
+          if (localReady.length === 0) setMessages([]);
+          setHasMore(dedupedLocalMessages.length > recentSlice.length);
           setLoading(false);
           setInitialLoadComplete(true);
         }
+        return;
+      }
+
+      // ---- Pull-to-load older messages ----
+      const oldestDisplayed = messagesRef.current[0]?.created_at;
+      if (!oldestDisplayed) {
+        setHasMore(false);
         setLoadingMore(false);
+        endLoadMore();
+        return;
+      }
+
+      const olderLocal = dedupedLocalMessages.filter(
+        (m) => new Date(m.created_at).getTime() < new Date(oldestDisplayed).getTime()
+      );
+      const localPage = olderLocal.slice(-OLDER_MESSAGE_PAGE);
+      if (localPage.length > 0) {
+        const decryptedOlder = await decryptChatMessages(localPage, user.id);
+        for (const m of decryptedOlder) {
+          if (m.decrypted) rememberDecryptedText(m.id, m.decrypted);
+        }
+        setMessages((prev) => {
+          const next = deduplicateMessages([...decryptedOlder, ...prev]);
+          rememberChatThread(chatId, next);
+          return next;
+        });
+        setHasMore(
+          olderLocal.length > localPage.length || isOnline
+        );
+      }
+
+      if (isOnline) {
+        await syncWithServer(messagesRef.current, true, oldestDisplayed);
+      } else {
+        setHasMore(olderLocal.length > localPage.length);
+        setLoadingMore(false);
+        endLoadMore();
       }
     } catch (error) {
       console.error('Fetch messages error:', error);
@@ -945,8 +1013,19 @@ export default function ChatRoomScreen() {
         setInitialLoadComplete(true);
       }
       setLoadingMore(false);
+      endLoadMore();
     }
-  }, [user?.id, chatId, isOnline, initialLoadComplete, filterByClearedAt, clearedAt]);
+  }, [
+    user?.id,
+    chatId,
+    isOnline,
+    initialLoadComplete,
+    filterByClearedAt,
+    clearedAt,
+    beginLoadMore,
+    endLoadMore,
+    messageBelongsToChat,
+  ]);
 
   const markMessagesAsRead = useCallback(async () => {
     if (!user?.id || !isValidUuid(chatId)) return;
@@ -1219,17 +1298,18 @@ export default function ChatRoomScreen() {
         (typeof payload.file_url === 'string' && /^https?:\/\//i.test(payload.file_url)) ||
         (typeof payload.audio_url === 'string' && /^https?:\/\//i.test(String(payload.audio_url)));
       if (canOutbox) {
-        try {
-          await messageStorage.enqueueOutbox({
+        // Don't await outbox before the network send — persistence is best-effort.
+        void messageStorage
+          .enqueueOutbox({
             client_message_id: clientMessageId,
             chatId,
             chatType,
             payload,
             created_at: message.created_at || new Date().toISOString(),
+          })
+          .catch((outboxErr) => {
+            console.warn('[outbox] enqueue failed (send continues):', outboxErr);
           });
-        } catch (outboxErr) {
-          console.warn('[outbox] enqueue failed (send continues):', outboxErr);
-        }
       }
 
       const { message: rawData } = await api.messages.send(payload);
@@ -1505,10 +1585,19 @@ export default function ChatRoomScreen() {
     stickBeforeSend();
     setTimeout(() => scrollToBottom(), 50);
 
-    // Snapshot network at send time (stale isOnline alone is unreliable on web).
-    const net = await NetInfo.fetch();
-    const onlineNow =
-      Boolean(net.isConnected) && net.isInternetReachable !== false;
+    // Don't block send on a slow NetInfo round-trip — race a short probe with
+    // the cached connectivity flag so encryption/network can start immediately.
+    const onlineNow = await Promise.race([
+      NetInfo.fetch()
+        .then(
+          (net) =>
+            Boolean(net.isConnected) && net.isInternetReachable !== false
+        )
+        .catch(() => isOnline),
+      new Promise<boolean>((resolve) => {
+        setTimeout(() => resolve(isOnline), 120);
+      }),
+    ]);
 
     if (!onlineNow) {
       const payload = buildChatSendPayload(chatType, chatId, {
@@ -2326,6 +2415,14 @@ export default function ChatRoomScreen() {
               audio_url: incoming.audio_url || existing.audio_url,
               profiles: incoming.profiles ?? existing.profiles,
               decrypted: incoming.decrypted ?? existing.decrypted,
+              // Realtime rows omit delivery flags — never let them wipe ticks.
+              delivered: Boolean(existing.delivered || incoming.delivered) ||
+                (isOutgoing && !String(incoming.id).startsWith('temp-')),
+              is_read: Boolean(existing.is_read || incoming.is_read),
+              _status:
+                existing._status === 'pending' || existing._status === 'failed'
+                  ? existing._status
+                  : incoming._status ?? existing._status ?? 'sent',
             };
             void messageStorage.saveMessages(chatId, next);
             return next;
@@ -2347,6 +2444,7 @@ export default function ChatRoomScreen() {
                 profiles: temp.profiles ?? incoming.profiles,
                 decrypted: incoming.decrypted ?? temp.decrypted ?? temp.content,
                 _status: 'sent',
+                delivered: true,
               };
               const deduped = deduplicateMessages(next);
               void messageStorage.saveMessages(chatId, deduped);
@@ -2378,7 +2476,8 @@ export default function ChatRoomScreen() {
             markSingleMessageAsRead(incoming.id);
           }
 
-          setTimeout(() => void pullLatestMessagesRef.current(), 400);
+          // Soft catch-up only for partner inserts; avoid re-merging outbound ticks.
+          setTimeout(() => void pullLatestMessagesRef.current(), 1200);
         }
 
         if (
@@ -2466,22 +2565,33 @@ export default function ChatRoomScreen() {
             if (!fresh) return m;
             const expiresChanged =
               Boolean(fresh.expires_at) && fresh.expires_at !== m.expires_at;
-            const readChanged = Boolean(fresh.is_read) && fresh.is_read !== m.is_read;
+            const readChanged = Boolean(fresh.is_read) && !m.is_read;
+            const deliveredChanged = Boolean(fresh.delivered) && !m.delivered;
             const viewedChanged =
               Boolean(fresh.viewed_at) && fresh.viewed_at !== m.viewed_at;
             const decryptChanged =
               Boolean(fresh.decrypted) && fresh.decrypted !== m.decrypted;
-            if (expiresChanged || readChanged || viewedChanged || decryptChanged) {
+            if (
+              expiresChanged ||
+              readChanged ||
+              deliveredChanged ||
+              viewedChanged ||
+              decryptChanged
+            ) {
               changed = true;
               return {
                 ...m,
                 ...fresh,
                 decrypted: fresh.decrypted ?? m.decrypted,
                 expires_at: fresh.expires_at ?? m.expires_at,
-                is_read: fresh.is_read ?? m.is_read,
+                is_read: Boolean(m.is_read || fresh.is_read),
+                delivered:
+                  Boolean(m.delivered || fresh.delivered) ||
+                  (m.sender_id === user.id && !String(m.id).startsWith('temp-')),
                 viewed_at: fresh.viewed_at ?? m.viewed_at,
                 local_file_uri: m.local_file_uri ?? fresh.local_file_uri,
                 local_audio_uri: m.local_audio_uri ?? fresh.local_audio_uri,
+                _status: m._status === 'pending' || m._status === 'failed' ? m._status : m._status ?? 'sent',
               };
             }
             return m;
@@ -2517,9 +2627,15 @@ export default function ChatRoomScreen() {
         const merged = deduplicateMessages([...kept, ...incoming, ...uniquePending]);
 
         const readIds = new Set(prev.filter((m) => m.is_read).map((m) => m.id));
-        const withReadState = merged.map((m) =>
-          readIds.has(m.id) ? { ...m, is_read: true } : m
-        );
+        const deliveredIds = new Set(prev.filter((m) => m.delivered).map((m) => m.id));
+        const withReadState = merged.map((m) => ({
+          ...m,
+          is_read: readIds.has(m.id) || Boolean(m.is_read),
+          delivered:
+            deliveredIds.has(m.id) ||
+            Boolean(m.delivered) ||
+            (m.sender_id === user.id && !String(m.id).startsWith('temp-')),
+        }));
 
         void messageStorage.saveMessages(chatId, withReadState);
         return withReadState;
@@ -2618,10 +2734,8 @@ export default function ChatRoomScreen() {
   /* ------------------------------------------------------------------ */
   const loadMoreMessages = useCallback(async () => {
     if (loadingMore || !hasMore || !initialLoadComplete) return;
-
-    beginLoadMore();
     await fetchMessages(true);
-  }, [loadingMore, hasMore, fetchMessages, initialLoadComplete, beginLoadMore]);
+  }, [loadingMore, hasMore, fetchMessages, initialLoadComplete]);
 
   useEffect(() => {
     loadMoreMessagesRef.current = () => {
@@ -3349,11 +3463,34 @@ export default function ChatRoomScreen() {
                   <ActivityIndicator size="small" color={chatTheme.primary} />
                   <Text style={styles.loadingMoreText}>Loading older messages…</Text>
                 </View>
+              ) : hasMore && nearTop ? (
+                <View style={styles.loadingMoreContainer}>
+                  <Text style={styles.loadingMoreText}>Pull down for older messages</Text>
+                </View>
+              ) : hasMore ? (
+                <View style={styles.loadingMoreContainer}>
+                  <Text style={[styles.loadingMoreText, { opacity: 0.55 }]}>
+                    Scroll up · pull to load older
+                  </Text>
+                </View>
               ) : null
             }
-            initialNumToRender={24}
-            maxToRenderPerBatch={16}
-            windowSize={15}
+            refreshControl={
+              hasMore && initialLoadComplete ? (
+                <RefreshControl
+                  refreshing={loadingMore}
+                  onRefresh={() => {
+                    void loadMoreMessages();
+                  }}
+                  tintColor={chatTheme.primary}
+                  colors={[chatTheme.primary]}
+                  progressViewOffset={8}
+                />
+              ) : undefined
+            }
+            initialNumToRender={20}
+            maxToRenderPerBatch={12}
+            windowSize={11}
             removeClippedSubviews={false}
             maintainVisibleContentPosition={
               Platform.OS === 'web'
@@ -3395,7 +3532,7 @@ export default function ChatRoomScreen() {
           pendingAttachmentCount={pendingAttachments.length}
           onPendingAttachmentsPress={() => setShowAttachmentPreview(true)}
           mentionMembers={chatType === 'group' ? groupMembers : undefined}
-          style={{ paddingBottom: isKeyboardVisible ? 0 : insets.bottom }}
+          style={{ paddingBottom: isKeyboardVisible ? 6 : insets.bottom }}
           disabled={!user?.id}
         />
       </KeyboardAvoidingView>

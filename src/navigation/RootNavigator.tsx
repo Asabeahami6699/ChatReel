@@ -11,16 +11,21 @@ import { AuthNavigator } from './AuthNavigator';
 import { AppNavigator } from './AppNavigator';
 import { GuestNavigator } from './GuestNavigator';
 import { parseInviteTokenFromUrl } from '../lib/groupInviteLinks';
+import { config } from '../lib/config';
 import {
   consumePendingInviteToken,
   setPendingInviteToken,
 } from '../lib/pendingInvite';
+import { captureAppInviteFromUrl } from '../lib/pendingAppInvite';
+import { AppInviteDownloadPrompt } from '../components/AppInviteDownloadPrompt';
 import { navigateToInvite, rootNavigationRef } from './rootNavigation';
 
 const prefix = Linking.createURL('/');
+const webHost = config.webUrl.replace(/\/$/, '');
 
 const linking = {
-  prefixes: [prefix, 'chatapp://', 'yourapp://'],
+  // Include HTTPS web host so shared invite links open the right screen in-app.
+  prefixes: [prefix, 'chatapp://', 'yourapp://', webHost, `${webHost}/`],
   config: {
     screens: {
       Invite: 'invite/:token',
@@ -46,6 +51,7 @@ export const RootNavigator = () => {
   const handleInviteUrl = useCallback(
     (url: string | null | undefined) => {
       if (!url) return;
+      void captureAppInviteFromUrl(url);
       const token = parseInviteTokenFromUrl(url);
       if (!token) return;
       if (isAuthenticated) {
@@ -97,6 +103,7 @@ export const RootNavigator = () => {
       linking={linking}
       theme={navigationTheme}
     >
+      <AppInviteDownloadPrompt />
       {isAuthenticated ? <AppNavigator /> : isGuest ? <GuestNavigator /> : <AuthNavigator />}
     </NavigationContainer>
   );

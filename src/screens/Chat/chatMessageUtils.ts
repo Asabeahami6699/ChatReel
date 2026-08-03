@@ -48,9 +48,12 @@ export async function openFileUrl(url: string): Promise<void> {
       return;
     }
   }
-  const normalized = url.startsWith('http') ? url : `https://${url}`;
+  const normalized =
+    /^(https?:|chatapp:|yourapp:|mailto:|tel:)/i.test(url)
+      ? url
+      : `https://${url}`;
   const can = await Linking.canOpenURL(normalized);
-  if (!can) throw new Error('Cannot open this file');
+  if (!can) throw new Error('Cannot open this link');
   await Linking.openURL(normalized);
 }
 

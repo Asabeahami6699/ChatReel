@@ -28,7 +28,8 @@ type State = {
 };
 
 // Smaller pages for For You so ranking rotates and loadMore can exclude seen ids.
-const PAGE_SIZE = 12;
+/** Slightly smaller first page so pull-to-refresh returns sooner. */
+const PAGE_SIZE = 8;
 /** Soft poll so approved posts appear without hard refresh when realtime is down. */
 const FEED_POLL_MS = 12_000;
 

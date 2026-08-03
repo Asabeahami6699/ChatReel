@@ -69,21 +69,44 @@ async function withDecryptedGroupPreviews(
 
 /** Keep group avatar/name stable across message-driven refetches unless metadata changed. */
 function mergeGroupsPreservingProfiles(prev: Group[], next: Group[]): Group[] {
+  // Keep newer live previews when a lagging API soft-refresh races realtime.
   if (!prev.length) return next;
   const prevById = new Map(prev.map((g) => [g.id, g]));
-  return next.map((group) => {
+  const mergedList = next.map((group) => {
     const old = prevById.get(group.id);
     if (!old) return group;
     const avatarChanged =
       Boolean(group.avatar_url) &&
       (group.avatar_url || '').split('?')[0] !== (old.avatar_url || '').split('?')[0];
     const nameChanged = Boolean(group.name) && group.name !== old.name;
+    const oldAt = old.last_message_at ? Date.parse(old.last_message_at) : 0;
+    const nextAt = group.last_message_at ? Date.parse(group.last_message_at) : 0;
+    const keepLive = oldAt > nextAt;
     return {
       ...group,
       avatar_url: avatarChanged ? group.avatar_url : old.avatar_url,
       name: nameChanged ? group.name : old.name,
+      ...(keepLive
+        ? {
+            last_message: old.last_message,
+            last_message_at: old.last_message_at,
+            unread_count: Math.max(old.unread_count ?? 0, group.unread_count ?? 0),
+          }
+        : {
+            unread_count: Math.max(old.unread_count ?? 0, group.unread_count ?? 0),
+          }),
     };
   });
+  const nextIds = new Set(next.map((g) => g.id));
+  for (const old of prev) {
+    if (!nextIds.has(old.id)) mergedList.push(old);
+  }
+  mergedList.sort((a, b) => {
+    const at = a.last_message_at ? Date.parse(a.last_message_at) : 0;
+    const bt = b.last_message_at ? Date.parse(b.last_message_at) : 0;
+    return bt - at;
+  });
+  return mergedList;
 }
 
 export const useGroupList = (searchQuery = '') => {
@@ -488,8 +511,10 @@ export const useGroupList = (searchQuery = '') => {
           last_message_iv: (row.iv as string | null | undefined) ?? null,
           last_message_ephemeral_public_key:
             (row.ephemeral_public_key as string | null | undefined) ?? null,
-          // Unread comes from local chat_index (push/sync/persist projector).
-          unread_count: next[idx].unread_count,
+          unread_count:
+            senderId !== user.id
+              ? (next[idx].unread_count ?? 0) + 1
+              : next[idx].unread_count,
         };
         next.splice(idx, 1);
         return [updated, ...next];

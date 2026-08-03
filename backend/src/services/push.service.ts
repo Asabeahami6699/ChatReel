@@ -216,10 +216,16 @@ export async function sendPushToUsers(userIds: string[], payload: PushPayload): 
   const uniqueIds = [...new Set(userIds.filter(Boolean))];
   if (uniqueIds.length === 0) return;
 
+  // Never notify the sender of their own outbound message.
+  const senderId =
+    typeof payload.data?.sender_id === 'string' ? (payload.data.sender_id as string) : null;
+  const recipientIds = senderId ? uniqueIds.filter((id) => id !== senderId) : uniqueIds;
+  if (recipientIds.length === 0) return;
+
   const { data: tokens, error } = await supabaseAdmin
     .from('push_tokens')
     .select('token, user_id')
-    .in('user_id', uniqueIds);
+    .in('user_id', recipientIds);
 
   if (error || !tokens?.length) return;
 
@@ -230,10 +236,10 @@ export async function sendPushToUsers(userIds: string[], payload: PushPayload): 
   // Resolve badge once per recipient so the icon count matches SMS-style unread.
   const badgeByUser = new Map<string, number>();
   if (payload.badge != null && Number.isFinite(payload.badge)) {
-    for (const id of uniqueIds) badgeByUser.set(id, Math.max(0, Math.floor(payload.badge)));
+    for (const id of recipientIds) badgeByUser.set(id, Math.max(0, Math.floor(payload.badge)));
   } else if (isMessage || payload.data?.type === 'friend_request') {
     await Promise.all(
-      uniqueIds.map(async (id) => {
+      recipientIds.map(async (id) => {
         try {
           badgeByUser.set(id, await getUnreadBadgeCount(id));
         } catch (err) {
@@ -249,7 +255,7 @@ export async function sendPushToUsers(userIds: string[], payload: PushPayload): 
     { title: string; body: string; data: Record<string, unknown> }
   >();
   if (isMessage) {
-    for (const id of uniqueIds) {
+    for (const id of recipientIds) {
       messageContentByUser.set(id, accumulateMessageGroup(id, payload));
     }
   }
