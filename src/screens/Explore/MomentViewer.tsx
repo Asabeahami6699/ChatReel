@@ -173,7 +173,7 @@ export function MomentViewer({
     [currentSlide, soundClipSec]
   );
   const overlaySoundActive = reelNeedsOverlaySound(soundSource);
-  const videoVoiceVolume = soundSource ? reelVideoVoiceVolume(soundSource) : 1;
+  const videoVoiceVolume = soundSource ? reelVideoVoiceVolume(soundSource, 1) : 1;
 
   useReelSoundPlayback(soundSource, {
     active: visible && overlaySoundActive,

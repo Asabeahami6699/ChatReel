@@ -50,11 +50,21 @@ export function reelNeedsOverlaySound(item: SoundPlaybackItem | null | undefined
   return true;
 }
 
+function clampMediaVolume(n: number): number {
+  if (!Number.isFinite(n)) return 1;
+  if (n < 0) return 0;
+  if (n > 1) return 1;
+  return n;
+}
+
 /** Video player volume when overlay music is active (voice track). */
-export function reelVideoVoiceVolume(item: SoundPlaybackItem, masterVolume: number): number {
-  if (!reelNeedsOverlaySound(item)) return masterVolume;
-  const voice = item.original_audio_volume ?? 1;
-  return masterVolume * voice;
+export function reelVideoVoiceVolume(item: SoundPlaybackItem, masterVolume = 1): number {
+  const master = clampMediaVolume(masterVolume);
+  if (!reelNeedsOverlaySound(item)) return master;
+  const voice = clampMediaVolume(
+    typeof item.original_audio_volume === 'number' ? item.original_audio_volume : 1
+  );
+  return clampMediaVolume(master * voice);
 }
 
 /** Moments never mux audio — map slide + clip length to reel-style playback source. */
@@ -152,7 +162,11 @@ export function useReelSoundPlayback(
         ? Math.min(startSec + clipSec, sound.duration_sec)
         : startSec + clipSec;
     const url = sound.preview_url ?? sound.audio_url;
-    const musicVol = (item.sound_volume ?? 0.45) * (opts.masterVolume ?? 1);
+    const musicVol = clampMediaVolume(
+      (typeof item.sound_volume === 'number' && Number.isFinite(item.sound_volume)
+        ? item.sound_volume
+        : 0.45) * (opts.masterVolume ?? 1)
+    );
 
     void (async () => {
       stopPlayer();

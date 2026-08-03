@@ -97,7 +97,10 @@ export const WebHlsVideo = forwardRef<ReelPlayerHandle, Props>(function WebHlsVi
 
   const applyPlayback = (video: HTMLVideoElement) => {
     video.muted = mutedRef.current;
-    if (volumeRef.current !== undefined) video.volume = volumeRef.current;
+    const vol = volumeRef.current;
+    if (typeof vol === 'number' && Number.isFinite(vol)) {
+      video.volume = Math.min(1, Math.max(0, vol));
+    }
     if (!shouldPlayRef.current) {
       video.pause();
       emitStatusThrottled(video, true);

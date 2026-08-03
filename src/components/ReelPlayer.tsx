@@ -60,10 +60,15 @@ export const ReelPlayer = forwardRef<ReelPlayerHandle, Props>(function ReelPlaye
   onStatusRef.current = onPlaybackStatusUpdate;
   onReadyRef.current = onReadyForDisplay;
 
+  const safeVolume =
+    typeof volume === 'number' && Number.isFinite(volume)
+      ? Math.min(1, Math.max(0, volume))
+      : undefined;
+
   const player = useVideoPlayer(source, (p) => {
     p.loop = isLooping;
     p.muted = isMuted;
-    if (volume !== undefined) p.volume = volume;
+    if (safeVolume !== undefined) p.volume = safeVolume;
     p.timeUpdateEventInterval = progressUpdateIntervalMillis / 1000;
   });
 
@@ -105,8 +110,8 @@ export const ReelPlayer = forwardRef<ReelPlayerHandle, Props>(function ReelPlaye
   }, [isMuted, player]);
 
   useEffect(() => {
-    if (volume !== undefined) player.volume = volume;
-  }, [volume, player]);
+    if (safeVolume !== undefined) player.volume = safeVolume;
+  }, [safeVolume, player]);
 
   useEffect(() => {
     player.timeUpdateEventInterval = progressUpdateIntervalMillis / 1000;
