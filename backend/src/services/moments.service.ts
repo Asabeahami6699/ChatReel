@@ -1,5 +1,6 @@
 import { filterUsersNeedingMessagePush } from '../lib/activeChatFocus';
 import { supabaseAdmin } from '../lib/supabaseAdmin';
+import { chatKeyFor, emitToChat, emitToUser } from '../realtime/wsGateway';
 import {
   getAuthUserIdByProfileId,
   sendPushToUserSafe,
@@ -456,6 +457,26 @@ export async function createMomentReply(
       throw new Error(chatError?.message ?? 'Failed to send chat message');
     }
 
+    const { data: fullMsg } = await supabaseAdmin
+      .from('messages')
+      .select('*')
+      .eq('id', chatMessage.id)
+      .maybeSingle();
+
+    if (fullMsg && chatReceiverUserId) {
+      const key = chatKeyFor({
+        isGroup: false,
+        chatId: chatReceiverUserId,
+        userA: senderUserId,
+        userB: chatReceiverUserId,
+      });
+      const clientMessage = { ...fullMsg, delivered: true };
+      const evt = { type: 'message.created' as const, chat_key: key, message: clientMessage };
+      emitToChat(key, evt);
+      emitToUser(chatReceiverUserId, evt);
+      emitToUser(senderUserId, { ...evt, self: true });
+    }
+
     const { data: senderProfile } = await supabaseAdmin
       .from('profiles')
       .select('display_name, email')
@@ -465,11 +486,25 @@ export async function createMomentReply(
     const senderName =
       senderProfile?.display_name || senderProfile?.email?.split('@')[0] || 'New message';
 
-    const [needsPush] = filterUsersNeedingMessagePush(
-      [chatReceiverUserId],
-      senderUserId,
-      'individual'
-    );
+    // Skip push when the recipient muted this DM (chat_id = peer auth user id).
+    let pushAllowed = true;
+    try {
+      const { data: prefs } = await supabaseAdmin
+        .from('chat_preferences')
+        .select('muted_until')
+        .eq('user_id', chatReceiverUserId)
+        .eq('chat_id', senderUserId)
+        .eq('chat_type', 'individual')
+        .maybeSingle();
+      const mutedUntil = prefs?.muted_until as string | null | undefined;
+      if (mutedUntil && new Date(mutedUntil) > new Date()) pushAllowed = false;
+    } catch {
+      /* optional */
+    }
+
+    const [needsPush] = pushAllowed
+      ? filterUsersNeedingMessagePush([chatReceiverUserId], senderUserId, 'individual')
+      : [];
     if (needsPush) {
       sendPushToUserSafe(needsPush, {
         title: senderName,

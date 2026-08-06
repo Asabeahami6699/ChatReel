@@ -3,16 +3,19 @@ import {
   FlatList,
   Image,
   Modal,
+  Platform,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { CallFriendRow } from '../lib/callFriends';
 import { useChatSettings } from '../context/ChatSettingsContext';
+import { MOBILE_BREAKPOINT } from '../navigation/navigationUtils';
 
 type Props = {
   visible: boolean;
@@ -27,8 +30,10 @@ type Props = {
 
 export function CallFriendPickerSheet({ visible, friends, onClose, onCall }: Props) {
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
   const { theme } = useChatSettings();
   const [query, setQuery] = useState('');
+  const isDesktop = Platform.OS === 'web' && width >= MOBILE_BREAKPOINT;
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -38,12 +43,16 @@ export function CallFriendPickerSheet({ visible, friends, onClose, onCall }: Pro
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={styles.backdrop}>
+      <View style={[styles.backdrop, isDesktop && styles.backdropDesktop]}>
         <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={onClose} />
         <View
           style={[
             styles.sheet,
-            { paddingBottom: insets.bottom + 12, backgroundColor: theme.listCardBg },
+            {
+              paddingBottom: insets.bottom + 12,
+              backgroundColor: theme.listCardBg,
+            },
+            isDesktop && styles.sheetDesktop,
           ]}
         >
           <View style={[styles.handle, { backgroundColor: theme.listBorder }]} />
@@ -139,6 +148,11 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     backgroundColor: 'rgba(0,0,0,0.45)',
   },
+  backdropDesktop: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
   sheet: {
     backgroundColor: '#fff',
     borderTopLeftRadius: 20,
@@ -146,6 +160,13 @@ const styles = StyleSheet.create({
     maxHeight: '78%',
     minHeight: 320,
     paddingTop: 8,
+    width: '100%',
+  },
+  sheetDesktop: {
+    width: '100%',
+    maxWidth: 360,
+    maxHeight: '72%',
+    borderRadius: 16,
   },
   handle: {
     alignSelf: 'center',

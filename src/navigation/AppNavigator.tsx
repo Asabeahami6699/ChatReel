@@ -1,6 +1,13 @@
 // src/navigation/AppNavigator.tsx
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
-import { Platform, StyleSheet, Text, View, StatusBar, useWindowDimensions } from 'react-native';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  Animated,
+  Platform,
+  StyleSheet,
+  View,
+  StatusBar,
+  useWindowDimensions,
+} from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getFocusedRouteName, MOBILE_BREAKPOINT } from './navigationUtils';
 import {
@@ -10,7 +17,8 @@ import {
 } from './chatNavigationBridge';
 import { createMaterialTopTabNavigator } from '@react-navigation/material-top-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { Ionicons } from '@expo/vector-icons';
+import { AnimatedTabIcon } from './AnimatedTabIcon';
+import { USE_NATIVE_DRIVER } from '../lib/animation';
 
 // === SCREENS ===
 import ChatListScreen from '../screens/Chat/ChatListScreen';
@@ -169,8 +177,18 @@ function TabBarLabel({
   color: string;
   focused: boolean;
 }) {
+  const opacity = useRef(new Animated.Value(focused ? 1 : 0.78)).current;
+
+  useEffect(() => {
+    Animated.timing(opacity, {
+      toValue: focused ? 1 : 0.78,
+      duration: 160,
+      useNativeDriver: USE_NATIVE_DRIVER,
+    }).start();
+  }, [focused, opacity]);
+
   return (
-    <Text
+    <Animated.Text
       style={{
         fontSize: 12,
         letterSpacing: 0.2,
@@ -178,10 +196,11 @@ function TabBarLabel({
         color,
         fontWeight: focused ? '800' : '600',
         marginTop: 2,
+        opacity,
       }}
     >
       {label}
-    </Text>
+    </Animated.Text>
   );
 }
 
@@ -244,10 +263,12 @@ const MainTabNavigator = () => {
               <TabBarLabel label="Chats" color={color} focused={focused} />
             ),
             tabBarIcon: ({ color, focused }) => (
-              <Ionicons
-                name={focused ? 'chatbubble' : 'chatbubble-outline'}
+              <AnimatedTabIcon
+                name="chatbubble-ellipses-outline"
+                focusedName="chatbubble-ellipses"
                 size={24}
                 color={color}
+                focused={focused}
               />
             ),
           };
@@ -264,10 +285,12 @@ const MainTabNavigator = () => {
             <TabBarLabel label="Explore" color={color} focused={focused} />
           ),
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons
-              name={focused ? 'compass' : 'compass-outline'}
+            <AnimatedTabIcon
+              name="compass-outline"
+              focusedName="compass"
               size={24}
               color={color}
+              focused={focused}
             />
           ),
         }}
@@ -283,7 +306,13 @@ const MainTabNavigator = () => {
             <TabBarLabel label="Calls" color={color} focused={focused} />
           ),
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons name={focused ? 'call' : 'call-outline'} size={24} color={color} />
+            <AnimatedTabIcon
+              name="call-outline"
+              focusedName="call"
+              size={24}
+              color={color}
+              focused={focused}
+            />
           ),
         }}
       />
@@ -298,10 +327,12 @@ const MainTabNavigator = () => {
             <TabBarLabel label="Reels" color={color} focused={focused} />
           ),
           tabBarIcon: ({ color, focused }) => (
-            <Ionicons
-              name={focused ? 'play-circle' : 'play-circle-outline'}
+            <AnimatedTabIcon
+              name="play-circle-outline"
+              focusedName="play-circle"
               size={24}
               color={color}
+              focused={focused}
             />
           ),
           lazy: true,
@@ -381,10 +412,12 @@ const WebDesktopMain = () => {
                 <TabBarLabel label="Chats" color={color} focused={focused} />
               ),
               tabBarIcon: ({ color, focused }) => (
-                <Ionicons
-                  name={focused ? 'chatbubble' : 'chatbubble-outline'}
+                <AnimatedTabIcon
+                  name="chatbubble-ellipses-outline"
+                  focusedName="chatbubble-ellipses"
                   size={22}
                   color={color}
+                  focused={focused}
                 />
               ),
             }}
@@ -400,10 +433,12 @@ const WebDesktopMain = () => {
                 <TabBarLabel label="Explore" color={color} focused={focused} />
               ),
               tabBarIcon: ({ color, focused }) => (
-                <Ionicons
-                  name={focused ? 'compass' : 'compass-outline'}
+                <AnimatedTabIcon
+                  name="compass-outline"
+                  focusedName="compass"
                   size={22}
                   color={color}
+                  focused={focused}
                 />
               ),
             }}
@@ -416,7 +451,13 @@ const WebDesktopMain = () => {
                 <TabBarLabel label="Calls" color={color} focused={focused} />
               ),
               tabBarIcon: ({ color, focused }) => (
-                <Ionicons name={focused ? 'call' : 'call-outline'} size={22} color={color} />
+                <AnimatedTabIcon
+                  name="call-outline"
+                  focusedName="call"
+                  size={22}
+                  color={color}
+                  focused={focused}
+                />
               ),
             }}
           />
@@ -428,10 +469,12 @@ const WebDesktopMain = () => {
                 <TabBarLabel label="Reels" color={color} focused={focused} />
               ),
               tabBarIcon: ({ color, focused }) => (
-                <Ionicons
-                  name={focused ? 'play-circle' : 'play-circle-outline'}
+                <AnimatedTabIcon
+                  name="play-circle-outline"
+                  focusedName="play-circle"
                   size={22}
                   color={color}
+                  focused={focused}
                 />
               ),
             }}

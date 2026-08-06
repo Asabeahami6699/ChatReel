@@ -231,15 +231,31 @@ export function ChatMediaViewer({ items, initialIndex, visible, onClose }: Props
     };
   }, [guardViewOnce]);
 
-  // Timed view-once: auto-close after the selected window.
+  // Timed view-once: live countdown + auto-close after the selected window.
   const autoCloseSec = visible
     ? items[index]?.autoCloseSec ?? items[initialIndex]?.autoCloseSec ?? null
     : null;
+  const [closeInSec, setCloseInSec] = useState<number | null>(null);
   useEffect(() => {
-    if (!visible || !guardViewOnce) return;
-    if (autoCloseSec == null || autoCloseSec <= 0) return;
-    const t = setTimeout(() => onClose(), autoCloseSec * 1000);
-    return () => clearTimeout(t);
+    if (!visible || !guardViewOnce) {
+      setCloseInSec(null);
+      return;
+    }
+    if (autoCloseSec == null || autoCloseSec <= 0) {
+      setCloseInSec(null);
+      return;
+    }
+    setCloseInSec(autoCloseSec);
+    const startedAt = Date.now();
+    const tick = setInterval(() => {
+      const remaining = Math.max(0, autoCloseSec - Math.floor((Date.now() - startedAt) / 1000));
+      setCloseInSec(remaining);
+      if (remaining <= 0) {
+        clearInterval(tick);
+        onClose();
+      }
+    }, 250);
+    return () => clearInterval(tick);
   }, [visible, guardViewOnce, autoCloseSec, onClose, index]);
 
   const onScrollEnd = useCallback((e: { nativeEvent: { contentOffset: { x: number } } }) => {
@@ -328,9 +344,11 @@ export function ChatMediaViewer({ items, initialIndex, visible, onClose }: Props
             {current.viewOnce ? (
               <Text style={styles.footerHint}>
                 View once · screenshots blocked
-                {current.autoCloseSec
-                  ? ` · closes in ${current.autoCloseSec}s`
-                  : ' · closes when you leave'}
+                {closeInSec != null
+                  ? ` · closes in ${closeInSec}s`
+                  : current.autoCloseSec
+                    ? ` · closes in ${current.autoCloseSec}s`
+                    : ' · closes when you leave'}
               </Text>
             ) : items.length > 1 ? (
               <Text style={styles.footerHint}>

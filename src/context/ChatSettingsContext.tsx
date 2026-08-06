@@ -1,9 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { AppState } from 'react-native';
 import { chatThemePresets, isChatThemeId, type ChatThemeId, type ChatThemeTokens } from '../lib/chatThemes';
 import { api, type UserRingtoneDTO } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
 import { setPushNotificationsEnabled } from '../lib/pushPrefs';
+import { onChatSocketEvent } from '../lib/chatSocket';
 
 export type ChatAppSettings = {
   themeId: ChatThemeId;
@@ -30,6 +32,10 @@ export type ChatAppSettings = {
   appLockBiometric: boolean;
   /** Lock only the Chats tab (separate from full App lock). */
   chatLockEnabled: boolean;
+  /** `all` = entire Chats tab; `selected` = only listed conversations. */
+  chatLockScope: 'all' | 'selected';
+  /** Keys like `individual:uuid` / `group:uuid` when scope is selected. */
+  chatLockedKeys: string[];
   /** Hide call video / show privacy cover when leaving the app mid-call. */
   callPrivacyOnBackground: boolean;
   mediaAutoDownload: boolean;
@@ -56,6 +62,8 @@ const DEFAULT_SETTINGS: ChatAppSettings = {
   saveMediaToGallery: false,
   appLockBiometric: false,
   chatLockEnabled: false,
+  chatLockScope: 'all',
+  chatLockedKeys: [],
   callPrivacyOnBackground: true,
   mediaAutoDownload: true,
   enterToSend: false,
@@ -79,6 +87,9 @@ export function ChatSettingsProvider({ children }: { children: React.ReactNode }
   const [settings, setSettings] = useState<ChatAppSettings>(DEFAULT_SETTINGS);
   const [ringtoneLibrary, setRingtoneLibrary] = useState<UserRingtoneDTO[]>([]);
   const [ready, setReady] = useState(false);
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const syncingPrivacyRef = useRef(false);
 
   useEffect(() => {
     let alive = true;
@@ -91,7 +102,18 @@ export function ChatSettingsProvider({ children }: { children: React.ReactNode }
         }
         const parsed = JSON.parse(raw) as Partial<ChatAppSettings>;
         const themeId = isChatThemeId(parsed.themeId) ? parsed.themeId : DEFAULT_SETTINGS.themeId;
-        const next = { ...DEFAULT_SETTINGS, ...parsed, themeId };
+        const chatLockScope: ChatAppSettings['chatLockScope'] =
+          parsed.chatLockScope === 'selected' ? 'selected' : 'all';
+        const chatLockedKeys = Array.isArray(parsed.chatLockedKeys)
+          ? parsed.chatLockedKeys.filter((k): k is string => typeof k === 'string')
+          : [];
+        const next: ChatAppSettings = {
+          ...DEFAULT_SETTINGS,
+          ...parsed,
+          themeId,
+          chatLockScope,
+          chatLockedKeys,
+        };
         setSettings(next);
         setPushNotificationsEnabled(next.pushNotifications);
       })
@@ -109,6 +131,69 @@ export function ChatSettingsProvider({ children }: { children: React.ReactNode }
     if (!ready) return;
     setPushNotificationsEnabled(settings.pushNotifications);
   }, [ready, settings.pushNotifications]);
+
+  const applyPrivacyLockRemote = useCallback(
+    (remote: { app_lock_enabled: boolean; chat_lock_enabled: boolean }) => {
+      setSettings((prev) => {
+        if (
+          prev.appLockBiometric === remote.app_lock_enabled &&
+          prev.chatLockEnabled === remote.chat_lock_enabled
+        ) {
+          return prev;
+        }
+        const next = {
+          ...prev,
+          appLockBiometric: remote.app_lock_enabled,
+          chatLockEnabled: remote.chat_lock_enabled,
+        };
+        void AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+        return next;
+      });
+    },
+    []
+  );
+
+  const pullPrivacyLock = useCallback(async () => {
+    if (!user?.id) return;
+    try {
+      const remote = await api.privacyLock.get();
+      applyPrivacyLockRemote(remote);
+    } catch (err) {
+      console.warn('[privacy-lock] pull failed', err);
+    }
+  }, [applyPrivacyLockRemote, user?.id]);
+
+  const pushPrivacyLock = useCallback(
+    async (patch: { appLockBiometric?: boolean; chatLockEnabled?: boolean }) => {
+      if (!user?.id) return;
+      if (
+        typeof patch.appLockBiometric !== 'boolean' &&
+        typeof patch.chatLockEnabled !== 'boolean'
+      ) {
+        return;
+      }
+      syncingPrivacyRef.current = true;
+      try {
+        const remote = await api.privacyLock.update({
+          ...(typeof patch.appLockBiometric === 'boolean'
+            ? { app_lock_enabled: patch.appLockBiometric }
+            : {}),
+          ...(typeof patch.chatLockEnabled === 'boolean'
+            ? { chat_lock_enabled: patch.chatLockEnabled }
+            : {}),
+        });
+        applyPrivacyLockRemote(remote);
+      } catch (err) {
+        console.warn('[privacy-lock] push failed', err);
+      } finally {
+        // Ignore echo of our own WS event briefly.
+        setTimeout(() => {
+          syncingPrivacyRef.current = false;
+        }, 800);
+      }
+    },
+    [applyPrivacyLockRemote, user?.id]
+  );
 
   const updateSettings = useCallback(
     async (patch: Partial<ChatAppSettings>) => {
@@ -128,9 +213,46 @@ export function ChatSettingsProvider({ children }: { children: React.ReactNode }
           console.warn('[settings] push toggle sync failed:', err);
         }
       }
+      if (
+        typeof patch.appLockBiometric === 'boolean' ||
+        typeof patch.chatLockEnabled === 'boolean'
+      ) {
+        void pushPrivacyLock({
+          appLockBiometric: patch.appLockBiometric,
+          chatLockEnabled: patch.chatLockEnabled,
+        });
+      }
     },
-    [user?.id]
+    [pushPrivacyLock, user?.id]
   );
+
+  // Pull account privacy lock after login / hydrate.
+  useEffect(() => {
+    if (!ready || !user?.id) return;
+    void pullPrivacyLock();
+  }, [ready, user?.id, pullPrivacyLock]);
+
+  // Live sync when another device toggles lock.
+  useEffect(() => {
+    if (!user?.id) return;
+    return onChatSocketEvent((ev) => {
+      if (ev.type !== 'privacy_lock.updated') return;
+      if (syncingPrivacyRef.current) return;
+      applyPrivacyLockRemote({
+        app_lock_enabled: Boolean(ev.app_lock_enabled),
+        chat_lock_enabled: Boolean(ev.chat_lock_enabled),
+      });
+    });
+  }, [applyPrivacyLockRemote, user?.id]);
+
+  // Refresh when returning to the foreground (covers missed WS events).
+  useEffect(() => {
+    if (!user?.id) return;
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void pullPrivacyLock();
+    });
+    return () => sub.remove();
+  }, [pullPrivacyLock, user?.id]);
 
   const refreshRingtoneLibrary = useCallback(async () => {
     if (!user?.id) {

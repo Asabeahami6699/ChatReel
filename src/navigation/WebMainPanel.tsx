@@ -5,6 +5,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import ChatRoomScreen from '../screens/Chat/ChatRoomScreen';
 import ContactScreen from '../screens/Chat/ContactScreen';
 import EmptyChatScreen from '../screens/Chat/EmptyChatScreen';
+import ChatSettingsScreen from '../screens/Chat/ChatSettingsScreen';
 import GroupInfoScreen from '../screens/Group/GroupInfoScreen';
 import { useChatSettings } from '../context/ChatSettingsContext';
 import { buildNavigationTheme } from '../theme/buildAppTheme';
@@ -44,6 +45,7 @@ function WebChatRoomPanel({ params }: { params: ChatParams }) {
           />
           <Stack.Screen name="GroupInfo" component={GroupInfoScreen} />
           <Stack.Screen name="Contact" component={ContactScreen} />
+          <Stack.Screen name="Settings" component={ChatSettingsScreen} />
         </Stack.Navigator>
       </NavigationContainer>
     </NavigationIndependentTree>

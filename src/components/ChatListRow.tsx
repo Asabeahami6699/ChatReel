@@ -7,6 +7,7 @@ import {
   ScrollView,
   RefreshControl,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { ChatListAvatar } from './ChatListAvatar';
 
 export type ChatListRowItem = {
@@ -26,6 +27,8 @@ export type ChatListRowItem = {
 type RowProps = {
   item: ChatListRowItem;
   isGroup?: boolean;
+  muted?: boolean;
+  chatLocked?: boolean;
   listBg: string;
   primaryText: string;
   secondaryText: string;
@@ -40,6 +43,8 @@ export const ChatListRow = memo(
   function ChatListRow({
     item,
     isGroup,
+    muted,
+    chatLocked,
     listBg,
     primaryText,
     secondaryText,
@@ -85,6 +90,22 @@ export const ChatListRow = memo(
               )}
             </Text>
             <View style={styles.timeContainer}>
+              {chatLocked ? (
+                <Ionicons
+                  name="lock-closed"
+                  size={13}
+                  color={secondaryText}
+                  style={styles.muteIcon}
+                />
+              ) : null}
+              {muted ? (
+                <Ionicons
+                  name="notifications-off"
+                  size={14}
+                  color={secondaryText}
+                  style={styles.muteIcon}
+                />
+              ) : null}
               {!!timeLabel && (
                 <Text style={[styles.time, { color: secondaryText }]}>{timeLabel}</Text>
               )}
@@ -129,7 +150,9 @@ export const ChatListRow = memo(
     prev.listBg === next.listBg &&
     prev.primaryText === next.primaryText &&
     prev.secondaryText === next.secondaryText &&
-    prev.isGroup === next.isGroup
+    prev.isGroup === next.isGroup &&
+    prev.muted === next.muted &&
+    prev.chatLocked === next.chatLocked
 );
 
 type PaneProps = {
@@ -203,7 +226,8 @@ const styles = StyleSheet.create({
   },
   chatName: { fontSize: 16, fontWeight: '600', flex: 1 },
   memberCountText: { fontSize: 12, fontWeight: 'normal' },
-  timeContainer: { flexDirection: 'row', alignItems: 'center' },
+  timeContainer: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  muteIcon: { marginRight: 2 },
   time: { fontSize: 12 },
   messageContainer: {
     flexDirection: 'row',

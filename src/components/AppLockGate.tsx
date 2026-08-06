@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
+  Platform,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -11,6 +12,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppLock } from '../context/AppLockContext';
 import { useChatSettings } from '../context/ChatSettingsContext';
+import { AppLockPinPad } from './AppLockPinPad';
+import { hasAppLockPin, setAppLockPin } from '../lib/appLock';
 
 /**
  * Full-screen privacy gate shown while App Lock is engaged.
@@ -19,8 +22,34 @@ export function AppLockGate() {
   const insets = useSafeAreaInsets();
   const { locked, unlocking, unlock } = useAppLock();
   const { theme } = useChatSettings();
+  const [pinError, setPinError] = useState<string | null>(null);
+  const [needsPinSetup, setNeedsPinSetup] = useState(false);
+  const [setupDraft, setSetupDraft] = useState<string | null>(null);
+  const isWeb = Platform.OS === 'web';
+
+  useEffect(() => {
+    if (!locked || !isWeb) {
+      setNeedsPinSetup(false);
+      setSetupDraft(null);
+      setPinError(null);
+      return;
+    }
+    let alive = true;
+    void hasAppLockPin().then((has) => {
+      if (alive) setNeedsPinSetup(!has);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [locked, isWeb]);
 
   if (!locked) return null;
+
+  const webSubtitle = needsPinSetup
+    ? setupDraft
+      ? 'Confirm your new PIN to unlock.'
+      : 'App lock is on for your account. Create a PIN for this browser.'
+    : 'Enter your app lock PIN to continue.';
 
   return (
     <View
@@ -43,32 +72,77 @@ export function AppLockGate() {
         />
         <Text style={[styles.title, { color: '#fff' }]}>App is locked</Text>
         <Text style={styles.subtitle}>
-          App lock covers ChatReel. Unlock with biometrics or your device passcode.
+          {isWeb
+            ? webSubtitle
+            : 'App lock covers ChatReel. Unlock with biometrics or your device passcode.'}
         </Text>
+
+        {isWeb ? (
+          <AppLockPinPad
+            title={
+              needsPinSetup
+                ? setupDraft
+                  ? 'Confirm PIN'
+                  : 'Create PIN'
+                : undefined
+            }
+            error={pinError}
+            busy={unlocking}
+            onSubmit={async (pin) => {
+              setPinError(null);
+              if (needsPinSetup) {
+                if (!setupDraft) {
+                  setSetupDraft(pin);
+                  return;
+                }
+                if (pin !== setupDraft) {
+                  setPinError('Codes do not match. Try again.');
+                  setSetupDraft(null);
+                  return;
+                }
+                const result = await setAppLockPin(pin);
+                if (!result.ok) {
+                  setPinError(result.error);
+                  setSetupDraft(null);
+                  return;
+                }
+                setNeedsPinSetup(false);
+                setSetupDraft(null);
+                const ok = await unlock(pin);
+                if (!ok) setPinError('Could not unlock');
+                return;
+              }
+              const ok = await unlock(pin);
+              if (!ok) setPinError('Wrong code');
+            }}
+          />
+        ) : null}
       </View>
 
-      <TouchableOpacity
-        style={[styles.btn, unlocking && styles.btnDisabled]}
-        onPress={() => void unlock()}
-        disabled={unlocking}
-        activeOpacity={0.85}
-      >
-        {unlocking ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <>
-            <Ionicons name="finger-print-outline" size={22} color="#fff" />
-            <Text style={styles.btnText}>Unlock</Text>
-          </>
-        )}
-      </TouchableOpacity>
+      {!isWeb ? (
+        <TouchableOpacity
+          style={[styles.btn, unlocking && styles.btnDisabled]}
+          onPress={() => void unlock()}
+          disabled={unlocking}
+          activeOpacity={0.85}
+        >
+          {unlocking ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <>
+              <Ionicons name="finger-print-outline" size={22} color="#fff" />
+              <Text style={styles.btnText}>Unlock</Text>
+            </>
+          )}
+        </TouchableOpacity>
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   root: {
-    ...StyleSheet.absoluteFill,
+    ...StyleSheet.absoluteFillObject,
     zIndex: 9999,
     elevation: 9999,
     justifyContent: 'space-between',
@@ -80,6 +154,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     gap: 12,
+    width: '100%',
   },
   logo: { width: 88, height: 88, marginBottom: 8 },
   title: { fontSize: 22, fontWeight: '800', textAlign: 'center' },
@@ -89,6 +164,7 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.78)',
     textAlign: 'center',
     maxWidth: 300,
+    marginBottom: 8,
   },
   btn: {
     flexDirection: 'row',

@@ -22,6 +22,7 @@ import { FAB, IconButton, Button, Portal, Snackbar } from 'react-native-paper'
 import { Ionicons } from '@expo/vector-icons'
 import { FloatingActionMenu } from '../../components/FloatingActionMenu'
 import { useChatSettings } from '../../context/ChatSettingsContext'
+import { useToastLayout } from '../../lib/toastLayout'
 import {
   getAcceptedFriendsCache,
   mapFriendshipsToRows,
@@ -40,6 +41,7 @@ export default function FriendsListScreen({ setSelectedChat }: Props) {
   const { user } = useAuth()
   const { theme } = useChatSettings()
   const insets = useSafeAreaInsets()
+  const { wrapperStyle, snackbarStyle, textStyle } = useToastLayout()
   const navigation = useNavigation()
   const route = useRoute<any>()
 
@@ -487,8 +489,14 @@ export default function FriendsListScreen({ setSelectedChat }: Props) {
       />
 
       <Portal>
-        <Snackbar visible={Boolean(toast)} onDismiss={() => setToast(null)} duration={3000}>
-          {toast}
+        <Snackbar
+          visible={Boolean(toast)}
+          onDismiss={() => setToast(null)}
+          duration={3000}
+          wrapperStyle={wrapperStyle}
+          style={[snackbarStyle, { backgroundColor: '#111827' }]}
+        >
+          <Text style={[{ color: '#fff' }, textStyle]}>{toast}</Text>
         </Snackbar>
       </Portal>
     </SafeAreaView>

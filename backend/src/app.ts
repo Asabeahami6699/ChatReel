@@ -7,6 +7,7 @@ import { errorHandler } from './middleware/errorHandler';
 import authRoutes from './routes/auth.routes';
 import account2faRoutes from './routes/account-2fa.routes';
 import accountSessionsRoutes from './routes/account-sessions.routes';
+import privacyLockRoutes from './routes/privacy-lock.routes';
 import profilesRoutes from './routes/profiles.routes';
 import friendshipsRoutes from './routes/friendships.routes';
 import groupsRoutes from './routes/groups.routes';
@@ -57,6 +58,7 @@ export function createApp() {
   app.use('/api/auth', authRoutes);
   app.use('/api/account/2fa', account2faRoutes);
   app.use('/api/account/sessions', accountSessionsRoutes);
+  app.use('/api/account/privacy-lock', privacyLockRoutes);
   app.use('/api/profiles', profilesRoutes);
   app.use('/api/friendships', friendshipsRoutes);
   app.use('/api/groups', groupsRoutes);

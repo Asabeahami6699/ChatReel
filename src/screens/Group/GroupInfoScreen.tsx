@@ -34,6 +34,7 @@ import type { ChatThemeTokens } from '../../lib/chatThemes';
 import { useRealtimeTopic } from '../../hooks/useRealtimeTopic';
 import { notifyRealtimeTopic } from '../../lib/realtimeHub';
 import { buildGroupInviteLink } from '../../lib/groupInviteLinks';
+import { patchChatListMeta } from '../../lib/chatListMeta';
 import * as ImagePicker from 'expo-image-picker';
 
 // Storage keys
@@ -572,7 +573,11 @@ useEffect(() => {
       try {
         const { preferences } = await api.chatSettings.get('group', groupId);
         const mutedUntil = preferences.muted_until as string | null;
-        setNotificationsMuted(Boolean(mutedUntil && new Date(mutedUntil) > new Date()));
+        const isMutedNow = Boolean(mutedUntil && new Date(mutedUntil) > new Date());
+        setNotificationsMuted(isMutedNow);
+        void patchChatListMeta('group', groupId, {
+          mutedUntil: isMutedNow ? mutedUntil : null,
+        });
       } catch {
         /* optional */
       }
@@ -803,12 +808,14 @@ useEffect(() => {
 
   const toggleGroupNotifications = async (muted: boolean) => {
     setNotificationsMuted(muted);
+    const nextUntil = muted
+      ? new Date(Date.now() + 365 * 86400_000).toISOString()
+      : null;
     try {
       await api.chatSettings.update('group', groupId, {
-        muted_until: muted
-          ? new Date(Date.now() + 365 * 86400_000).toISOString()
-          : null,
+        muted_until: nextUntil,
       });
+      void patchChatListMeta('group', groupId, { mutedUntil: nextUntil });
     } catch {
       setNotificationsMuted(!muted);
       Alert.alert('Error', 'Could not update notification settings');

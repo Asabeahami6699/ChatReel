@@ -10,6 +10,7 @@ import {
   Pressable,
   KeyboardAvoidingView,
   Platform,
+  useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -34,6 +35,8 @@ function previewFor(message: ChatListMessage): string {
 export function ChatSearchOverlay({ visible, messages, onClose, onSelect }: Props) {
   const { theme } = useChatSettings();
   const insets = useSafeAreaInsets();
+  const { width: windowWidth } = useWindowDimensions();
+  const sheetWidth = Math.min(420, Math.max(280, windowWidth - 48));
   const [query, setQuery] = useState('');
 
   useEffect(() => {
@@ -70,6 +73,7 @@ export function ChatSearchOverlay({ visible, messages, onClose, onSelect }: Prop
           style={[
             styles.sheet,
             {
+              width: sheetWidth,
               paddingTop: insets.top + 8,
               backgroundColor: theme.listCardBg,
               borderColor: theme.listBorder,
@@ -158,14 +162,18 @@ export function ChatSearchOverlay({ visible, messages, onClose, onSelect }: Prop
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, justifyContent: 'flex-start' },
+  flex: {
+    flex: 1,
+    justifyContent: 'flex-start',
+    alignItems: 'center',
+  },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.45)',
   },
   sheet: {
-    marginHorizontal: 10,
-    marginTop: 4,
+    alignSelf: 'center',
+    marginTop: 12,
     borderRadius: 16,
     borderWidth: StyleSheet.hairlineWidth,
     maxHeight: '78%',

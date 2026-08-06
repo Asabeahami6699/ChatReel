@@ -83,9 +83,9 @@ export default function ChatMenuDropdown({
         onRequestClose={closeMenu}
         statusBarTranslucent
       >
-        <Pressable style={styles.modalOverlay} onPress={closeMenu}>
-          <Pressable
-            onPress={(e) => e.stopPropagation()}
+        <View style={styles.modalRoot} pointerEvents="box-none">
+          <Pressable style={styles.modalOverlay} onPress={closeMenu} />
+          <View
             style={[
               styles.menuContainer,
               {
@@ -115,9 +115,10 @@ export default function ChatMenuDropdown({
                     },
                   ]}
                   onPress={() => {
+                    const action = item.onPress;
                     closeMenu();
                     // Let the modal unmount before navigating / alerting.
-                    setTimeout(() => item.onPress(), 40);
+                    setTimeout(() => action(), 50);
                   }}
                   disabled={item.disabled}
                   activeOpacity={0.7}
@@ -144,8 +145,8 @@ export default function ChatMenuDropdown({
                 </TouchableOpacity>
               ))}
             </ScrollView>
-          </Pressable>
-        </Pressable>
+          </View>
+        </View>
       </Modal>
     </>
   );
@@ -157,8 +158,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  modalOverlay: {
+  modalRoot: {
     flex: 1,
+  },
+  modalOverlay: {
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0, 0, 0, 0.28)',
   },
   menuContainer: {
@@ -171,6 +175,7 @@ const styles = StyleSheet.create({
     elevation: 12,
     overflow: 'hidden',
     paddingVertical: 4,
+    zIndex: 2,
   },
   menuItem: {
     flexDirection: 'row',

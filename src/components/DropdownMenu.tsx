@@ -9,9 +9,11 @@ import {
   Easing,
   Platform,
   Modal,
+  useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { OfflineAvatar } from './OfflineAvatar';
 import { useAuth } from '../hooks/useAuth';
 import { useRealtimeTopic } from '../hooks/useRealtimeTopic';
@@ -24,6 +26,8 @@ import {
   prefetchMyProfile,
   subscribeCachedProfile,
 } from '../lib/profileCache';
+import { MOBILE_BREAKPOINT } from '../navigation/navigationUtils';
+import Portal from './Portal';
 
 interface DropdownMenuProps {
   triggerIcon?: 'ellipsis-horizontal' | 'ellipsis-vertical';
@@ -35,8 +39,12 @@ interface Profile {
   email: string;
 }
 
+const MENU_WIDTH = 240;
+
 export default function DropdownMenu({ triggerIcon = 'ellipsis-vertical' }: DropdownMenuProps) {
   const [visible, setVisible] = useState(false);
+  const [anchor, setAnchor] = useState({ top: 56, left: 12 });
+  const triggerRef = useRef<View>(null);
   const [profile, setProfile] = useState<Profile | null>(() => {
     const cached = getCachedProfile();
     if (!cached) return null;
@@ -49,6 +57,9 @@ export default function DropdownMenu({ triggerIcon = 'ellipsis-vertical' }: Drop
   const { user, signOut, isGuest, exitGuest } = useAuth();
   const { theme } = useChatSettings();
   const navigation = useNavigation<any>();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const isWebDesktop = Platform.OS === 'web' && windowWidth >= MOBILE_BREAKPOINT;
 
   const scaleAnim = useRef(new Animated.Value(0.8)).current;
   const opacityAnim = useRef(new Animated.Value(0)).current;
@@ -98,8 +109,7 @@ export default function DropdownMenu({ triggerIcon = 'ellipsis-vertical' }: Drop
     ]).start(() => setVisible(false));
   };
 
-  const openMenu = () => {
-    setVisible(true);
+  const playOpenAnim = () => {
     opacityAnim.setValue(0);
     scaleAnim.setValue(0.8);
     Animated.parallel([
@@ -116,6 +126,19 @@ export default function DropdownMenu({ triggerIcon = 'ellipsis-vertical' }: Drop
         tension: 80,
       }),
     ]).start();
+  };
+
+  const openMenu = () => {
+    triggerRef.current?.measureInWindow((x, y, w, h) => {
+      const left = Math.max(8, Math.min(x + w - MENU_WIDTH, windowWidth - MENU_WIDTH - 8));
+      const top = Math.min(y + h + 6, windowHeight - 280);
+      setAnchor({
+        top: Math.max(insets.top + 4, top),
+        left,
+      });
+      setVisible(true);
+      playOpenAnim();
+    });
   };
 
   const toggleMenu = () => {
@@ -176,82 +199,110 @@ export default function DropdownMenu({ triggerIcon = 'ellipsis-vertical' }: Drop
         },
       ];
 
-  return (
-    <>
-      <TouchableOpacity onPress={toggleMenu} style={styles.trigger} accessibilityLabel="Open menu">
-        <Ionicons name={triggerIcon} size={24} color={theme.listHeaderText} />
-      </TouchableOpacity>
+  const dropdownPanel = (
+    <Animated.View
+      style={[
+        styles.dropdown,
+        {
+          opacity: opacityAnim,
+          transform: [{ scale: scaleAnim }],
+          top: anchor.top,
+          left: anchor.left,
+          maxHeight: Math.min(480, windowHeight - anchor.top - 16),
+          backgroundColor: theme.listCardBg,
+          borderColor: theme.listBorder,
+          borderWidth: theme.isDark || isWebDesktop ? 1 : 0,
+        },
+      ]}
+    >
+      <View style={styles.userInfo}>
+        <OfflineAvatar
+          uri={profile?.avatar_url}
+          name={profile?.display_name || 'User'}
+          size={60}
+          style={styles.avatar}
+        />
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.displayName, { color: theme.listPrimaryText }]} numberOfLines={1}>
+            {profile?.display_name || profile?.email || user?.email || 'Loading…'}
+          </Text>
+          <Text style={[styles.email, { color: theme.listSecondaryText }]} numberOfLines={1}>
+            {profile?.email || user?.email || ''}
+          </Text>
+        </View>
+      </View>
 
-      <Modal
-        visible={visible}
-        transparent
-        animationType="none"
-        onRequestClose={closeMenu}
-        statusBarTranslucent
-      >
-        <View style={styles.modalRoot}>
-          <Pressable style={styles.overlay} onPress={closeMenu} accessibilityLabel="Dismiss menu" />
-          <Animated.View
+      <View style={[styles.separator, { backgroundColor: theme.listBorder }]} />
+
+      {menuItems.map((item, index) => (
+        <TouchableOpacity
+          key={index}
+          style={styles.menuItem}
+          onPress={() => {
+            closeMenu();
+            item.onPress();
+          }}
+        >
+          <Ionicons
+            name={item.icon as any}
+            size={20}
+            color={item.danger ? '#ff3b30' : theme.listPrimaryText}
+          />
+          <Text
             style={[
-              styles.dropdown,
-              {
-                opacity: opacityAnim,
-                transform: [{ scale: scaleAnim }],
-                top: Platform.OS === 'web' ? 70 : 56,
-                right: Platform.OS === 'web' ? 16 : 10,
-                backgroundColor: theme.listCardBg,
-                borderColor: theme.listBorder,
-                borderWidth: theme.isDark ? 1 : 0,
-              },
+              styles.menuText,
+              { color: theme.listPrimaryText },
+              item.danger && styles.dangerText,
             ]}
           >
-            <View style={styles.userInfo}>
-              <OfflineAvatar
-                uri={profile?.avatar_url}
-                name={profile?.display_name || 'User'}
-                size={60}
-                style={styles.avatar}
-              />
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.displayName, { color: theme.listPrimaryText }]} numberOfLines={1}>
-                  {profile?.display_name || profile?.email || user?.email || 'Loading…'}
-                </Text>
-                <Text style={[styles.email, { color: theme.listSecondaryText }]} numberOfLines={1}>
-                  {profile?.email || user?.email || ''}
-                </Text>
-              </View>
-            </View>
+            {item.title}
+          </Text>
+        </TouchableOpacity>
+      ))}
+    </Animated.View>
+  );
 
-            <View style={[styles.separator, { backgroundColor: theme.listBorder }]} />
+  return (
+    <>
+      <View ref={triggerRef} collapsable={false}>
+        <TouchableOpacity onPress={toggleMenu} style={styles.trigger} accessibilityLabel="Open menu">
+          <Ionicons name={triggerIcon} size={24} color={theme.listHeaderText} />
+        </TouchableOpacity>
+      </View>
 
-            {menuItems.map((item, index) => (
-              <TouchableOpacity
-                key={index}
-                style={styles.menuItem}
-                onPress={() => {
-                  closeMenu();
-                  item.onPress();
-                }}
-              >
-                <Ionicons
-                  name={item.icon as any}
-                  size={20}
-                  color={item.danger ? '#ff3b30' : theme.listPrimaryText}
+      {isWebDesktop
+        ? visible
+          ? (
+            <Portal>
+              <View style={styles.webFloatRoot} pointerEvents="box-none">
+                <Pressable
+                  style={styles.webFloatDismiss}
+                  onPress={closeMenu}
+                  accessibilityLabel="Dismiss menu"
                 />
-                <Text
-                  style={[
-                    styles.menuText,
-                    { color: theme.listPrimaryText },
-                    item.danger && styles.dangerText,
-                  ]}
-                >
-                  {item.title}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </Animated.View>
-        </View>
-      </Modal>
+                {dropdownPanel}
+              </View>
+            </Portal>
+            )
+          : null
+        : (
+          <Modal
+            visible={visible}
+            transparent
+            animationType="none"
+            onRequestClose={closeMenu}
+            statusBarTranslucent
+          >
+            <View style={styles.modalRoot} pointerEvents="box-none">
+              <Pressable
+                style={[styles.overlay, styles.overlayDim]}
+                onPress={closeMenu}
+                accessibilityLabel="Dismiss menu"
+              />
+              {dropdownPanel}
+            </View>
+          </Modal>
+          )}
     </>
   );
 }
@@ -266,7 +317,30 @@ const styles = StyleSheet.create({
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,
+  },
+  overlayDim: {
     backgroundColor: 'rgba(0,0,0,0.3)',
+  },
+  webFloatRoot: {
+    ...Platform.select({
+      web: {
+        position: 'fixed' as any,
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 10050,
+      },
+      default: {
+        ...StyleSheet.absoluteFillObject,
+        zIndex: 10050,
+        elevation: 10050,
+      },
+    }),
+  },
+  webFloatDismiss: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'transparent',
   },
   dropdown: {
     position: 'absolute',
@@ -274,12 +348,13 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     paddingVertical: 12,
     paddingHorizontal: 12,
-    width: 240,
+    width: MENU_WIDTH,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.2,
     shadowRadius: 12,
     elevation: 20,
+    zIndex: 10051,
   },
   userInfo: {
     flexDirection: 'row',

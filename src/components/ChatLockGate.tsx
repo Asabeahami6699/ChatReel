@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Image,
   Modal,
+  Platform,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -13,21 +14,27 @@ import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useChatLock } from '../context/ChatLockContext';
 import { useChatSettings } from '../context/ChatSettingsContext';
+import { AppLockPinPad } from './AppLockPinPad';
+import { hasAppLockPin, setAppLockPin } from '../lib/appLock';
 
 /**
- * Privacy gate for the Chats tab only (not Reels / Explore / Calls).
- * Covers the entire Chats stack (list + room) with a full-screen modal.
- * Re-locks only when leaving the Chats *tab* — never on ChatRoom push.
+ * Privacy gate for the Chats tab when Chat Lock scope is "all chats".
+ * Covers list + conversations. Re-locks only when leaving the Chats *tab*
+ * — never on app background (that is App Lock).
  */
 export function ChatLockGate() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   // Parent is the main tab navigator; fall back if already at tab level.
   const tabNav = navigation.getParent() ?? navigation;
-  const { locked, unlocking, unlock, onChatsBlur } = useChatLock();
+  const { locked, unlocking, unlock, onChatsBlur, scope } = useChatLock();
   const { theme } = useChatSettings();
   const autoPromptedRef = useRef(false);
   const [tabFocused, setTabFocused] = useState(true);
+  const [pinError, setPinError] = useState<string | null>(null);
+  const [needsPinSetup, setNeedsPinSetup] = useState(false);
+  const [setupDraft, setSetupDraft] = useState<string | null>(null);
+  const isWeb = Platform.OS === 'web';
 
   useEffect(() => {
     const onFocus = () => setTabFocused(true);
@@ -35,6 +42,8 @@ export function ChatLockGate() {
       setTabFocused(false);
       onChatsBlur();
       autoPromptedRef.current = false;
+      setPinError(null);
+      setSetupDraft(null);
     };
     const unsubFocus = tabNav.addListener('focus', onFocus);
     const unsubBlur = tabNav.addListener('blur', onBlur);
@@ -45,6 +54,7 @@ export function ChatLockGate() {
   }, [tabNav, onChatsBlur]);
 
   useEffect(() => {
+    if (isWeb) return;
     if (!locked || !tabFocused) return;
     if (autoPromptedRef.current) return;
     autoPromptedRef.current = true;
@@ -53,9 +63,30 @@ export function ChatLockGate() {
     }, 350);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locked, tabFocused]);
+  }, [locked, tabFocused, isWeb]);
 
-  const visible = Boolean(locked && tabFocused);
+  const visible = Boolean(scope === 'all' && locked && tabFocused);
+
+  useEffect(() => {
+    if (!visible || !isWeb) {
+      setNeedsPinSetup(false);
+      setSetupDraft(null);
+      return;
+    }
+    let alive = true;
+    void hasAppLockPin().then((has) => {
+      if (alive) setNeedsPinSetup(!has);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [visible, isWeb]);
+
+  const webSubtitle = needsPinSetup
+    ? setupDraft
+      ? 'Confirm your new PIN to unlock chats.'
+      : 'Chat lock is on for your account. Create a PIN for this browser.'
+    : 'Enter your PIN to open Chats.';
 
   return (
     <Modal
@@ -64,7 +95,7 @@ export function ChatLockGate() {
       presentationStyle="fullScreen"
       statusBarTranslucent
       onRequestClose={() => {
-        /* must unlock via biometric / button */
+        /* must unlock via biometric / PIN */
       }}
     >
       <View
@@ -89,25 +120,70 @@ export function ChatLockGate() {
           />
           <Text style={styles.title}>Chats are locked</Text>
           <Text style={styles.subtitle}>
-            Unlock to open your conversations. Reels and other tabs stay available.
+            {isWeb
+              ? webSubtitle
+              : 'Unlock to open conversations. Leaving ChatReel does not re-lock — use App lock for that.'}
           </Text>
+
+          {isWeb ? (
+            <AppLockPinPad
+              title={
+                needsPinSetup
+                  ? setupDraft
+                    ? 'Confirm PIN'
+                    : 'Create PIN'
+                  : undefined
+              }
+              error={pinError}
+              busy={unlocking}
+              onSubmit={async (pin) => {
+                setPinError(null);
+                if (needsPinSetup) {
+                  if (!setupDraft) {
+                    setSetupDraft(pin);
+                    return;
+                  }
+                  if (pin !== setupDraft) {
+                    setPinError('Codes do not match. Try again.');
+                    setSetupDraft(null);
+                    return;
+                  }
+                  const result = await setAppLockPin(pin);
+                  if (!result.ok) {
+                    setPinError(result.error);
+                    setSetupDraft(null);
+                    return;
+                  }
+                  setNeedsPinSetup(false);
+                  setSetupDraft(null);
+                  const ok = await unlock(pin);
+                  if (!ok) setPinError('Could not unlock');
+                  return;
+                }
+                const ok = await unlock(pin);
+                if (!ok) setPinError('Wrong code');
+              }}
+            />
+          ) : null}
         </View>
 
-        <TouchableOpacity
-          style={[styles.btn, unlocking && styles.btnDisabled]}
-          onPress={() => void unlock()}
-          disabled={unlocking}
-          activeOpacity={0.85}
-        >
-          {unlocking ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <>
-              <Ionicons name="finger-print-outline" size={22} color="#fff" />
-              <Text style={styles.btnText}>Unlock chats</Text>
-            </>
-          )}
-        </TouchableOpacity>
+        {!isWeb ? (
+          <TouchableOpacity
+            style={[styles.btn, unlocking && styles.btnDisabled]}
+            onPress={() => void unlock()}
+            disabled={unlocking}
+            activeOpacity={0.85}
+          >
+            {unlocking ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <>
+                <Ionicons name="finger-print-outline" size={22} color="#fff" />
+                <Text style={styles.btnText}>Unlock chats</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        ) : null}
       </View>
     </Modal>
   );
@@ -125,6 +201,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     gap: 10,
+    width: '100%',
   },
   lockBadge: {
     width: 52,

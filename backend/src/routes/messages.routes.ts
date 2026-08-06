@@ -480,6 +480,19 @@ router.post(
         .single());
     }
 
+    // Migration 043 optional: retry without auto-close seconds.
+    if (error && /view_once_auto_close_sec/.test(error.message)) {
+      const { view_once_auto_close_sec: _omitSec, ...withoutAutoClose } = disappearingInsert as Record<
+        string,
+        unknown
+      > & { view_once_auto_close_sec?: number | null };
+      ({ data, error } = await supabaseAdmin
+        .from('messages')
+        .insert(withoutAutoClose)
+        .select()
+        .single());
+    }
+
     // Older DBs without client_message_id column — retry without it.
     if (error && /client_message_id/.test(error.message) && body.client_message_id) {
       const { client_message_id: _omit, ...withoutClientId } = disappearingInsert as Record<

@@ -30,9 +30,10 @@ import {
   useReelSoundPlayback,
 } from '../../hooks/useReelSoundPlayback';
 import { dedupeMomentSlides } from '../../lib/momentSlides';
-import { navigateToReelPreview } from '../../navigation/navigateToChat';
+import { navigateToChat, navigateToReelPreview } from '../../navigation/navigateToChat';
 import { MomentViewersSheet } from './MomentViewersSheet';
 import { allowViewOnceCapture, preventViewOnceCapture } from '../../lib/screenCaptureGuard';
+import { showAppToast } from '../../lib/appToast';
 import {
   CaptionChoiceModal,
   captionChoiceToApi,
@@ -302,15 +303,25 @@ export function MomentViewer({
   );
 
   const sendComposer = async () => {
-    if (!currentSlide || !composerText.trim() || sendingComposer || composerMode !== 'reply') return;
+    if (!author || !currentSlide || !composerText.trim() || sendingComposer || composerMode !== 'reply') {
+      return;
+    }
     setSendingComposer(true);
     try {
       await api.moments.reply(currentSlide.id, composerText.trim(), undefined, { to_chat: true });
+      const name = authorName(author.author);
       setComposerText('');
       Keyboard.dismiss();
       setComposerMode(null);
       setComposerFocused(false);
-      setPaused(false);
+      showAppToast(`Sent to ${name}`);
+      navigateToChat({
+        chatId: author.author.user_id,
+        chatType: 'individual',
+        chatName: name,
+        avatarUrl: author.author.avatar_url ?? undefined,
+      });
+      onClose();
     } catch {
       Alert.alert('Reply', 'Could not send your reply. Try again.');
     } finally {

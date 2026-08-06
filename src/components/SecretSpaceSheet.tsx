@@ -2,12 +2,14 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Animated,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -25,6 +27,7 @@ import {
 } from '../lib/chatVault';
 import type { ChatListEntryKind } from '../lib/chatListHidden';
 import { api } from '../lib/api';
+import { MOBILE_BREAKPOINT } from '../navigation/navigationUtils';
 
 type Mode = 'setup' | 'confirm' | 'unlock' | 'list' | 'recover';
 
@@ -57,7 +60,10 @@ export function SecretSpaceSheet({
   preUnlocked = false,
 }: Props) {
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
   const { theme } = useChatSettings();
+  const isDesktop = Platform.OS === 'web' && width >= MOBILE_BREAKPOINT;
+  const sheetMaxWidth = isDesktop ? 360 : undefined;
   const [mode, setMode] = useState<Mode>('unlock');
   const [pin, setPin] = useState('');
   const [setupPin, setSetupPin] = useState('');
@@ -270,7 +276,17 @@ export function SecretSpaceSheet({
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <View style={[styles.backdrop, { paddingTop: insets.top + 8, paddingBottom: insets.bottom + 8 }]}>
+      <View
+        style={[
+          styles.backdrop,
+          {
+            paddingTop: insets.top + 8,
+            paddingBottom: insets.bottom + 8,
+            justifyContent: isDesktop ? 'center' : 'flex-end',
+            alignItems: isDesktop ? 'center' : 'stretch',
+          },
+        ]}
+      >
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <View
           style={[
@@ -278,6 +294,9 @@ export function SecretSpaceSheet({
             {
               backgroundColor: theme.listCardBg || theme.listBg,
               borderColor: theme.listBorder,
+              width: isDesktop ? sheetMaxWidth : '100%',
+              maxWidth: isDesktop ? sheetMaxWidth : undefined,
+              alignSelf: isDesktop ? 'center' : 'stretch',
             },
           ]}
         >

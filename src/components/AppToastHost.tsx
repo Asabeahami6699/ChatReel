@@ -6,9 +6,11 @@ import {
   scheduleAppToastClear,
   subscribeAppToast,
 } from '../lib/appToast';
+import { useToastLayout } from '../lib/toastLayout';
 
 /** Global snackbar host for short status toasts. */
 export function AppToastHost() {
+  const { wrapperStyle, snackbarStyle, textStyle } = useToastLayout();
   const [toast, setToast] = useState<{
     message: string;
     isError?: boolean;
@@ -36,9 +38,13 @@ export function AppToastHost() {
         visible={Boolean(toast)}
         onDismiss={() => clearAppToast()}
         duration={toast?.durationMs ?? 3200}
-        style={toast?.isError ? { backgroundColor: '#dc2626' } : { backgroundColor: '#111827' }}
+        wrapperStyle={wrapperStyle}
+        style={[
+          snackbarStyle,
+          toast?.isError ? { backgroundColor: '#dc2626' } : { backgroundColor: '#111827' },
+        ]}
       >
-        <Text style={{ color: '#fff', fontWeight: '600' }}>{toast?.message ?? ''}</Text>
+        <Text style={[{ color: '#fff' }, textStyle]}>{toast?.message ?? ''}</Text>
       </Snackbar>
     </Portal>
   );

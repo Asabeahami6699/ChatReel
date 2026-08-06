@@ -35,6 +35,7 @@ export async function flushOutboxItem(
         audioDuration,
         expires_at,
         view_once,
+        view_once_auto_close_sec,
         content: uploadContent,
       } = item.upload;
       const stamp = Date.now();
@@ -80,6 +81,9 @@ export async function flushOutboxItem(
           ...(mediaContent ? { push_preview: mediaContent.slice(0, 120) } : {}),
           ...(expires_at ? { expires_at } : {}),
           ...(view_once ? { view_once: true } : {}),
+          ...(view_once && view_once_auto_close_sec
+            ? { view_once_auto_close_sec }
+            : {}),
         };
       }
 

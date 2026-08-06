@@ -55,6 +55,7 @@ import { chatTheme } from './chatTheme';
 import { buildChatRows, type ChatRow } from './chatListModel';
 import { ChatMessageRow } from './ChatMessageRow';
 import { ChatMediaAlbum } from './ChatMediaAlbum';
+import { ChatRoomLockCover } from '../../components/ChatRoomLockCover';
 import { navigateToReelPreview } from '../../navigation/navigateToChat';
 import { ensureSupabaseSession } from '../../lib/ensureSupabaseSession';
 import { useChatTyping } from '../../hooks/useChatTyping';
@@ -108,6 +109,7 @@ import {
   syncGroupSenderKeysForMe,
 } from '../../lib/groupSenderKeys';
 import { rememberChatThread, recallChatThread, clearChatThread } from '../../lib/chatThreadCache';
+import { patchChatListMeta } from '../../lib/chatListMeta';
 
 /** First paint: recent window only. Older history is pull-to-load (WhatsApp-style). */
 const INITIAL_MESSAGE_PAGE = 30;
@@ -132,6 +134,7 @@ export default function ChatRoomScreen() {
 
   const insets = useSafeAreaInsets();
   const { theme } = useChatSettings();
+  const roomKind = chatType === 'group' ? 'group' : 'individual';
 
   const cachedThread = chatId ? recallChatThread<Message>(chatId) : null;
   const [messages, setMessages] = useState<Message[]>(() =>
@@ -342,7 +345,11 @@ export default function ChatRoomScreen() {
       setClearedAt((preferences.cleared_at as string) ?? null);
       setStarredIds((preferences.starred_message_ids as string[]) ?? []);
       const mutedUntil = preferences.muted_until as string | null;
-      setChatMuted(Boolean(mutedUntil && new Date(mutedUntil) > new Date()));
+      const isMutedNow = Boolean(mutedUntil && new Date(mutedUntil) > new Date());
+      setChatMuted(isMutedNow);
+      void patchChatListMeta(chatType === 'group' ? 'group' : 'individual', chatId, {
+        mutedUntil: isMutedNow ? mutedUntil : null,
+      });
       const disappear = preferences.disappear_after_seconds;
       setDisappearAfterSeconds(
         typeof disappear === 'number' && disappear > 0 ? disappear : null
@@ -1925,6 +1932,9 @@ export default function ChatRoomScreen() {
           fileName: cleanFileName,
           expires_at: options?.expiresAt,
           view_once: options?.viewOnce,
+          view_once_auto_close_sec: options?.viewOnce
+            ? options.viewOnceAutoCloseSec ?? null
+            : null,
           content: displayContent,
         },
       });
@@ -2764,10 +2774,14 @@ export default function ChatRoomScreen() {
       const { preferences } = await api.chatSettings.get(chatType, chatId);
       const muted = preferences.muted_until as string | null;
       const isMuted = muted && new Date(muted) > new Date();
+      const nextUntil = isMuted ? null : new Date(Date.now() + 365 * 86400_000).toISOString();
       await api.chatSettings.update(chatType, chatId, {
-        muted_until: isMuted ? null : new Date(Date.now() + 365 * 86400_000).toISOString(),
+        muted_until: nextUntil,
       });
       setChatMuted(!isMuted);
+      void patchChatListMeta(chatType === 'group' ? 'group' : 'individual', chatId, {
+        mutedUntil: nextUntil,
+      });
       showAppToast(isMuted ? 'Chat unmuted' : 'Chat muted');
     } catch {
       showAppToast('Could not update mute setting', { isError: true });
@@ -3658,6 +3672,13 @@ export default function ChatRoomScreen() {
         messageId={readReceiptMessageId}
         visible={!!readReceiptMessageId}
         onClose={() => setReadReceiptMessageId(null)}
+      />
+
+      <ChatRoomLockCover
+        kind={roomKind}
+        chatId={chatId}
+        chatName={chatName}
+        onBack={() => navigation.goBack()}
       />
     </SafeAreaView>
   );

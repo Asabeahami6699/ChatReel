@@ -1,12 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Portal, Snackbar, Text } from 'react-native-paper';
+import { Text } from 'react-native';
+import { Portal, Snackbar } from 'react-native-paper';
 import {
   subscribeMomentUploadQueue,
   type MomentUploadTask,
 } from '../lib/momentUploadQueue';
+import { useToastLayout } from '../lib/toastLayout';
 
 /** Snackbar-only feedback; progress lives on the Moments strip thumbnails. */
 export function MomentUploadToast() {
+  const { wrapperStyle, snackbarStyle, textStyle } = useToastLayout();
   const [snackbar, setSnackbar] = useState<{
     visible: boolean;
     message: string;
@@ -43,7 +46,9 @@ export function MomentUploadToast() {
         visible={snackbar.visible}
         onDismiss={() => setSnackbar((s) => ({ ...s, visible: false }))}
         duration={3200}
-        style={
+        wrapperStyle={wrapperStyle}
+        style={[
+          snackbarStyle,
           snackbar.isError
             ? { backgroundColor: '#dc2626' }
             : {
@@ -55,10 +60,10 @@ export function MomentUploadToast() {
                 shadowRadius: 8,
                 shadowOffset: { width: 0, height: 2 },
                 elevation: 4,
-              }
-        }
+              },
+        ]}
       >
-        <Text style={{ color: snackbar.isError ? '#fff' : '#1f2937', fontWeight: '600' }}>
+        <Text style={[{ color: snackbar.isError ? '#fff' : '#1f2937' }, textStyle]}>
           {snackbar.message}
         </Text>
       </Snackbar>

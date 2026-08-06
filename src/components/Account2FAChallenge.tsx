@@ -1,13 +1,16 @@
 import React, { useState } from 'react';
 import {
   ActivityIndicator,
+  Platform,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { MOBILE_BREAKPOINT } from '../navigation/navigationUtils';
 
 type Props = {
   securityQuestion: string;
@@ -24,6 +27,8 @@ export function Account2FAChallenge({
   onRecover,
   onCancel,
 }: Props) {
+  const { width } = useWindowDimensions();
+  const isDesktop = Platform.OS === 'web' && width >= MOBILE_BREAKPOINT;
   const [mode, setMode] = useState<'pin' | 'recover'>('pin');
   const [pin, setPin] = useState('');
   const [answer, setAnswer] = useState('');
@@ -45,7 +50,7 @@ export function Account2FAChallenge({
   };
 
   return (
-    <View style={styles.card}>
+    <View style={[styles.card, isDesktop && styles.cardDesktop]}>
       <View style={styles.iconWrap}>
         <Ionicons name="shield-checkmark" size={28} color="#fff" />
       </View>
@@ -176,6 +181,11 @@ const styles = StyleSheet.create({
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 8 },
     elevation: 6,
+  },
+  cardDesktop: {
+    maxWidth: 320,
+    padding: 16,
+    borderRadius: 14,
   },
   iconWrap: {
     width: 52,

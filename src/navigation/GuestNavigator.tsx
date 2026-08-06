@@ -3,7 +3,6 @@ import { Platform, StyleSheet } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createMaterialTopTabNavigator } from '@react-navigation/material-top-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ReelsScreen from '../screens/Reel/ReelsScreen';
 import ReelSearchScreen from '../screens/Reel/ReelSearchScreen';
@@ -18,6 +17,7 @@ import { useChatSettings } from '../context/ChatSettingsContext';
 import { getFocusedRouteName } from './navigationUtils';
 import { blurActiveElementOnWeb } from '../lib/webFocus';
 import { ReelsMainTabFocusContext } from '../context/ReelsMainTabFocusContext';
+import { AnimatedTabIcon } from './AnimatedTabIcon';
 
 type GuestMainTabParamList = {
   Chats: undefined;
@@ -144,8 +144,14 @@ export function GuestNavigator() {
           return {
             lazy: false,
             tabBarStyle: hideTabBar ? { display: 'none' } : tabBarBase,
-            tabBarIcon: ({ color }) => (
-              <Ionicons name="chatbubble-outline" size={20} color={color} />
+            tabBarIcon: ({ color, focused }) => (
+              <AnimatedTabIcon
+                name="chatbubble-ellipses-outline"
+                focusedName="chatbubble-ellipses"
+                size={22}
+                color={color}
+                focused={focused}
+              />
             ),
           };
         }}
@@ -155,8 +161,14 @@ export function GuestNavigator() {
         component={ExploreNavigator}
         options={{
           lazy: false,
-          tabBarIcon: ({ color }) => (
-            <Ionicons name="compass-outline" size={22} color={color} />
+          tabBarIcon: ({ color, focused }) => (
+            <AnimatedTabIcon
+              name="compass-outline"
+              focusedName="compass"
+              size={22}
+              color={color}
+              focused={focused}
+            />
           ),
         }}
       />
@@ -164,7 +176,15 @@ export function GuestNavigator() {
         name="Calls"
         component={CallsScreen}
         options={{
-          tabBarIcon: ({ color }) => <Ionicons name="call-outline" size={22} color={color} />,
+          tabBarIcon: ({ color, focused }) => (
+            <AnimatedTabIcon
+              name="call-outline"
+              focusedName="call"
+              size={22}
+              color={color}
+              focused={focused}
+            />
+          ),
         }}
       />
       <GuestTab.Screen
@@ -172,8 +192,14 @@ export function GuestNavigator() {
         component={GuestReelsNavigator}
         options={{
           tabBarStyle: { display: 'none' },
-          tabBarIcon: ({ color }) => (
-            <Ionicons name="play-circle-outline" size={22} color={color} />
+          tabBarIcon: ({ color, focused }) => (
+            <AnimatedTabIcon
+              name="play-circle-outline"
+              focusedName="play-circle"
+              size={22}
+              color={color}
+              focused={focused}
+            />
           ),
         }}
       />

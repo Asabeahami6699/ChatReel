@@ -20,6 +20,7 @@ import { chatTheme } from './chatTheme';
 import { useAuth } from '../../hooks/useAuth';
 import { usePeerProfileStore } from '../../stores/peerProfileStore';
 import { useChatSettings } from '../../context/ChatSettingsContext';
+import { patchChatListMeta } from '../../lib/chatListMeta';
 
 type RouteParams = {
   userId: string;
@@ -76,9 +77,11 @@ export default function ContactScreen() {
       const { preferences } = await api.chatSettings.get('individual', userId);
       const muted = preferences.muted_until as string | null;
       const isMuted = muted && new Date(muted) > new Date();
+      const nextUntil = isMuted ? null : new Date(Date.now() + 365 * 86400_000).toISOString();
       await api.chatSettings.update('individual', userId, {
-        muted_until: isMuted ? null : new Date(Date.now() + 365 * 86400_000).toISOString(),
+        muted_until: nextUntil,
       });
+      void patchChatListMeta('individual', userId, { mutedUntil: nextUntil });
       showAppToast(isMuted ? 'Notifications unmuted' : 'Notifications muted');
     } catch {
       showErrorAlert('Notifications', 'Could not update mute setting');

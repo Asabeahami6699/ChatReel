@@ -27,6 +27,7 @@ import { TabView } from 'react-native-tab-view'
 import { LinearGradient } from 'expo-linear-gradient'
 import { useIndividualChats, type IndividualChat } from '../../hooks/useIndividualChats'
 import DropdownMenu from '../../components/DropdownMenu'
+import Portal from '../../components/Portal'
 import { useNavigation, useFocusEffect, useIsFocused } from '@react-navigation/native'
 import { useGroupList, type Group } from '../../hooks/useGroupList'
 import { useIncomingFriendRequestCount } from '../../hooks/useIncomingFriendRequestCount'
@@ -57,10 +58,12 @@ import {
 } from '../../lib/chatVault'
 import { SecretSpaceSheet } from '../../components/SecretSpaceSheet'
 import { loadChatListMeta, patchChatListMeta, type ChatListMeta } from '../../lib/chatListMeta'
+import { subscribeLocalStore } from '../../lib/localMessageBus'
 import { messageStorage } from '../../utils/messageStorage'
 import { rememberChatThread, recallChatThread } from '../../lib/chatThreadCache'
 import { useAppBadge } from '../../hooks/useAppBadge'
 import { showAppToast } from '../../lib/appToast'
+import { MOBILE_BREAKPOINT } from '../../navigation/navigationUtils'
 
 type Props = { setSelectedChat?: (chat: any) => void }
 
@@ -133,19 +136,30 @@ type AllFeedItem =
   | { kind: 'group'; key: string; sortAt: string; item: Group }
   | { kind: 'request'; key: string; sortAt: string; item: IncomingRequestRow }
 
+type ListFilter = 'all' | 'unread' | 'muted'
+
+const HIDDEN_LIST_FILTERS: { key: Exclude<ListFilter, 'all'>; label: string }[] = [
+  { key: 'unread', label: 'Unread' },
+  { key: 'muted', label: 'Muted' },
+]
+
 export default function ChatListScreen({ setSelectedChat }: Props) {
   const { user, isGuest, exitGuest } = useAuth()
-  const { theme } = useChatSettings()
-  const { locked, unlock } = useChatLock()
+  const { theme, settings, updateSettings } = useChatSettings()
+  const { locked, unlock, isChatProtected, scope } = useChatLock()
   const isFocused = useIsFocused()
   const myProfileId = useCurrentProfileId()
   const navigation = useNavigation<any>()
-  const { width } = useWindowDimensions()
+  const { width, height: windowHeight } = useWindowDimensions()
   const insets = useSafeAreaInsets()
   const isNarrow = width < 400
+  const isWebDesktop = Platform.OS === 'web' && width >= MOBILE_BREAKPOINT
   const fabBottom = Math.max(16, insets.bottom + 12) + (setSelectedChat ? 4 : 20)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
+  const [searchAnchor, setSearchAnchor] = useState({ top: 56, left: 12, width: 320 })
+  const [listFilter, setListFilter] = useState<ListFilter>('all')
+  const [filtersExpanded, setFiltersExpanded] = useState(false)
   const [searchHistory, setSearchHistory] = useState<string[]>([])
   const [friends, setFriends] = useState<FriendSearchRow[]>([])
   const [hiddenChatKeys, setHiddenChatKeys] = useState<Set<string>>(new Set())
@@ -171,10 +185,11 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
   const [incomingRequests, setIncomingRequests] = useState<IncomingRequestRow[]>([])
   const [requestsLoading, setRequestsLoading] = useState(false)
   const searchInputRef = useRef<React.ComponentRef<typeof TextInput>>(null)
+  const searchToggleRef = useRef<View>(null)
   const fabMenuAnim = useRef(new Animated.Value(0)).current
   const [fabMenuOpen, setFabMenuOpen] = useState(false)
   const [index, setIndex] = useState(0)
-  
+
   // Track unread counts per tab (stored in state to persist between renders)
   const [individualUnreadCount, setIndividualUnreadCount] = useState(0)
   const [groupUnreadCount, setGroupUnreadCount] = useState(0)
@@ -313,6 +328,15 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
     }, [reloadHiddenChats])
   )
 
+  // Live-update muted/archived meta when another screen patches chat list meta.
+  useEffect(() => {
+    return subscribeLocalStore((event) => {
+      if (event.reason === 'index') {
+        void reloadHiddenChats()
+      }
+    })
+  }, [reloadHiddenChats])
+
   const visibleIndividualChats = useMemo(
     () =>
       individualChats.filter((c) => {
@@ -330,6 +354,28 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
       }),
     [groupChats, hiddenChatKeys, listMeta]
   )
+
+  const isMutedEntry = useCallback(
+    (kind: ChatListEntryKind, id: string) => {
+      const until = listMeta[chatListKey(kind, id)]?.mutedUntil
+      return Boolean(until && new Date(until) > new Date())
+    },
+    [listMeta]
+  )
+
+  const filteredIndividualChats = useMemo(() => {
+    let list = visibleIndividualChats
+    if (listFilter === 'unread') list = list.filter((c) => (c.unread_count ?? 0) > 0)
+    if (listFilter === 'muted') list = list.filter((c) => isMutedEntry('individual', c.user_id))
+    return list
+  }, [visibleIndividualChats, listFilter, isMutedEntry])
+
+  const filteredGroupChats = useMemo(() => {
+    let list = visibleGroupChats
+    if (listFilter === 'unread') list = list.filter((g) => (g.unread_count ?? 0) > 0)
+    if (listFilter === 'muted') list = list.filter((g) => isMutedEntry('group', g.id))
+    return list
+  }, [visibleGroupChats, listFilter, isMutedEntry])
 
   const fetchFriends = useCallback(async () => {
     if (!myProfileId) return
@@ -473,6 +519,20 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
     ]
     return items.sort((a, b) => b.sortAt.localeCompare(a.sortAt))
   }, [visibleIndividualChats, visibleGroupChats, filteredIncomingRequests])
+
+  const filteredAllFeedItems = useMemo(() => {
+    return allFeedItems.filter((item) => {
+      if (item.kind === 'request') return listFilter === 'all'
+      if (item.kind === 'chat') {
+        if (listFilter === 'unread') return (item.item.unread_count ?? 0) > 0
+        if (listFilter === 'muted') return isMutedEntry('individual', item.item.user_id)
+        return true
+      }
+      if (listFilter === 'unread') return (item.item.unread_count ?? 0) > 0
+      if (listFilter === 'muted') return isMutedEntry('group', item.item.id)
+      return true
+    })
+  }, [allFeedItems, listFilter, isMutedEntry])
 
   const hasSearchSuggestions = Boolean(
     searchSuggestions &&
@@ -634,11 +694,32 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
   }, [closeFabMenu, fabMenuOpen, searchOpen])
 
   const openSearch = useCallback(() => {
-    setSearchOpen(true)
-    requestAnimationFrame(() => {
-      setTimeout(() => searchInputRef.current?.focus(), 80)
+    const finishOpen = () => {
+      setSearchOpen(true)
+      requestAnimationFrame(() => {
+        setTimeout(() => searchInputRef.current?.focus(), 80)
+      })
+    }
+    if (!searchToggleRef.current) {
+      setSearchAnchor({ top: insets.top + 54, left: 12, width: Math.min(360, width - 24) })
+      finishOpen()
+      return
+    }
+    searchToggleRef.current.measureInWindow((x, y, w, h) => {
+      // Keep the panel inside the chat-list sidebar on desktop (~320px).
+      const panelWidth = isWebDesktop
+        ? Math.min(300, Math.max(220, x + w - 8))
+        : Math.min(360, width - 24)
+      const left = Math.max(8, Math.min(x + w - panelWidth, width - panelWidth - 8))
+      const top = Math.min(y + h + 6, windowHeight - 320)
+      setSearchAnchor({
+        top: Math.max(insets.top + 4, top),
+        left,
+        width: panelWidth,
+      })
+      finishOpen()
     })
-  }, [])
+  }, [insets.top, isWebDesktop, width, windowHeight])
 
   const closeSearchPopup = useCallback(() => {
     const trimmed = searchQuery.trim()
@@ -720,7 +801,8 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
 
   const handleChatPress = async (item: any, isGroup = false) => {
     if (!requireAuth('Sign in to open chats.')) return
-    if (locked) {
+    // All-chats gate: prompt unlock instead of opening.
+    if (locked && scope === 'all') {
       void unlock()
       return
     }
@@ -813,6 +895,51 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
     setListMeta(await patchChatListMeta(kind, id, { archived: true }))
     void api.chatSettings.update(kind, id, { is_archived: true }).catch(() => undefined)
   }, [])
+
+  const handleToggleChatLock = useCallback(
+    async (kind: ChatListEntryKind, id: string, name: string) => {
+      if (!settings.chatLockEnabled) {
+        showAppToast('Turn on Chat lock in Settings first', { isError: true })
+        return
+      }
+      const key = chatListKey(kind, id)
+      if (settings.chatLockScope === 'all') {
+        await updateSettings({
+          chatLockScope: 'selected',
+          chatLockedKeys: [key],
+        })
+        showAppToast(`${name} locked · other chats stay open`)
+        return
+      }
+      const has = settings.chatLockedKeys.includes(key)
+      const nextKeys = has
+        ? settings.chatLockedKeys.filter((k) => k !== key)
+        : [...settings.chatLockedKeys, key]
+      await updateSettings({ chatLockedKeys: nextKeys })
+      showAppToast(has ? `${name} unlocked` : `${name} locked`)
+    },
+    [settings.chatLockEnabled, settings.chatLockScope, settings.chatLockedKeys, updateSettings]
+  )
+
+  const handleMuteChat = useCallback(
+    async (kind: ChatListEntryKind, id: string) => {
+      const key = chatListKey(kind, id)
+      const prevUntil = listMeta[key]?.mutedUntil ?? null
+      const currentlyMuted = Boolean(prevUntil && new Date(prevUntil) > new Date())
+      const nextUntil = currentlyMuted
+        ? null
+        : new Date(Date.now() + 365 * 86400_000).toISOString()
+      try {
+        setListMeta(await patchChatListMeta(kind, id, { mutedUntil: nextUntil }))
+        await api.chatSettings.update(kind, id, { muted_until: nextUntil })
+        showAppToast(currentlyMuted ? 'Chat unmuted' : 'Chat muted')
+      } catch {
+        setListMeta(await patchChatListMeta(kind, id, { mutedUntil: prevUntil }))
+        showAppToast('Could not update mute setting', { isError: true })
+      }
+    },
+    [listMeta]
+  )
 
   const openChatMenu = useCallback(
     (e: { nativeEvent: { pageX: number; pageY: number } }, item: any, isGroup: boolean) => {
@@ -908,10 +1035,17 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
   }
 
   const renderChatItem = ({ item, isGroup = false }: { item: any; isGroup?: boolean }) => {
+    const entryId = isGroup ? String(item.id) : String(item.user_id)
     return (
       <ChatListRow
         item={item}
         isGroup={isGroup}
+        muted={isMutedEntry(isGroup ? 'group' : 'individual', entryId)}
+        chatLocked={
+          settings.chatLockEnabled &&
+          settings.chatLockScope === 'selected' &&
+          isChatProtected(isGroup ? 'group' : 'individual', entryId)
+        }
         listBg={theme.listBg}
         primaryText={theme.listPrimaryText}
         secondaryText={theme.listSecondaryText}
@@ -922,6 +1056,13 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
       />
     );
   };
+
+  const filterEmptySubtitle =
+    listFilter === 'unread'
+      ? 'No unread chats'
+      : listFilter === 'muted'
+        ? 'No muted chats — mute a chat from its menu'
+        : undefined
 
   const EmptyState = ({ title, subtitle, buttonText, onPress, isOnline }: any) => (
     <View style={styles.emptyContainer}>
@@ -1009,14 +1150,15 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
             isOnline={isOnline}
             header={offlineOrStaleHeader}
             empty={
-              allFeedItems.length === 0 &&
+              filteredAllFeedItems.length === 0 &&
               (individualLoading || groupsLoading || requestsLoading) ? null : (
                 <EmptyState
-                  title="Nothing here yet"
+                  title={listFilter === 'all' ? 'Nothing here yet' : 'Nothing matches'}
                   subtitle={
                     searchQuery.trim()
                       ? 'No chats or requests match your search'
-                      : 'Start chatting, join a group, or accept a friend request'
+                      : filterEmptySubtitle ||
+                        'Start chatting, join a group, or accept a friend request'
                   }
                   buttonText="Add Friends"
                   onPress={() => {
@@ -1028,7 +1170,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
               )
             }
           >
-            {allFeedItems.map((feedItem) => (
+            {filteredAllFeedItems.map((feedItem) => (
               <View key={feedItem.key}>{renderAllFeedItem({ item: feedItem })}</View>
             ))}
           </ChatListScrollPane>
@@ -1051,13 +1193,14 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
               ) : null
             }
             empty={
-              individualLoading && visibleIndividualChats.length === 0 ? null : (
+              individualLoading && filteredIndividualChats.length === 0 ? null : (
                 <EmptyState
-                  title="No conversations yet"
+                  title={listFilter === 'all' ? 'No conversations yet' : 'Nothing matches'}
                   subtitle={
-                    individualChats.length === 0
+                    filterEmptySubtitle ||
+                    (individualChats.length === 0
                       ? 'Add friends to start chatting'
-                      : 'No chats match your search'
+                      : 'No chats match your search')
                   }
                   buttonText="Add Friends"
                   onPress={() => {
@@ -1069,7 +1212,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
               )
             }
           >
-            {visibleIndividualChats.map((chat) => (
+            {filteredIndividualChats.map((chat) => (
               <View key={chat.user_id}>{renderChatItem({ item: chat })}</View>
             ))}
           </ChatListScrollPane>
@@ -1092,10 +1235,12 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
               ) : null
             }
             empty={
-              groupsLoading && visibleGroupChats.length === 0 ? null : (
+              groupsLoading && filteredGroupChats.length === 0 ? null : (
                 <EmptyState
-                  title="No groups yet"
-                  subtitle="Create or join a group to start chatting"
+                  title={listFilter === 'all' ? 'No groups yet' : 'Nothing matches'}
+                  subtitle={
+                    filterEmptySubtitle || 'Create or join a group to start chatting'
+                  }
                   buttonText="Create New Group"
                   onPress={() => {
                     if (!requireAuth('Sign in to create a group.')) return
@@ -1106,7 +1251,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
               )
             }
           >
-            {visibleGroupChats.map((group) => (
+            {filteredGroupChats.map((group) => (
               <View key={group.id}>{renderChatItem({ item: group, isGroup: true })}</View>
             ))}
           </ChatListScrollPane>
@@ -1126,7 +1271,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
         contentContainerStyle={styles.tabStrip}
       >
         {routes.map((route, routeIndex) => {
-          const focused = index === routeIndex
+          const focused = index === routeIndex && listFilter === 'all'
           const badge = getTabBadgeCount(route.key)
           return (
             <TouchableOpacity
@@ -1140,7 +1285,10 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
                 },
                 focused && { backgroundColor: theme.primary, borderColor: theme.primary },
               ]}
-              onPress={() => handleTabPress(routeIndex)}
+              onPress={() => {
+                setListFilter('all')
+                handleTabPress(routeIndex)
+              }}
               activeOpacity={0.85}
             >
               <Text
@@ -1162,6 +1310,67 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
             </TouchableOpacity>
           )
         })}
+
+        {index !== requestsTabIndex ? (
+          <>
+            {(filtersExpanded || listFilter !== 'all') &&
+              HIDDEN_LIST_FILTERS.map((filter) => {
+                const focused = listFilter === filter.key
+                return (
+                  <TouchableOpacity
+                    key={filter.key}
+                    style={[
+                      styles.tabStripItem,
+                      {
+                        backgroundColor: theme.isDark ? '#1a1a1a' : '#eef2f7',
+                        borderWidth: theme.isDark ? 1 : 0,
+                        borderColor: theme.listBorder,
+                      },
+                      focused && { backgroundColor: theme.primary, borderColor: theme.primary },
+                    ]}
+                    onPress={() => {
+                      setListFilter((prev) => (prev === filter.key ? 'all' : filter.key))
+                      setFiltersExpanded(true)
+                    }}
+                    activeOpacity={0.85}
+                  >
+                    <Text
+                      style={[
+                        styles.tabStripLabel,
+                        { color: theme.listSecondaryText },
+                        focused && { color: '#fff', fontWeight: '700' },
+                      ]}
+                    >
+                      {filter.label}
+                    </Text>
+                  </TouchableOpacity>
+                )
+              })}
+
+            <TouchableOpacity
+              style={[
+                styles.tabStripMore,
+                {
+                  backgroundColor: theme.isDark ? '#1a1a1a' : '#eef2f7',
+                  borderColor: theme.listBorder,
+                },
+                (filtersExpanded || listFilter !== 'all') && {
+                  borderColor: theme.primary,
+                },
+              ]}
+              onPress={() => setFiltersExpanded((v) => !v)}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityLabel={filtersExpanded ? 'Hide filters' : 'More filters'}
+              accessibilityRole="button"
+            >
+              <Ionicons
+                name={filtersExpanded ? 'chevron-back' : 'chevron-forward'}
+                size={16}
+                color={listFilter !== 'all' ? theme.primary : theme.listSecondaryText}
+              />
+            </TouchableOpacity>
+          </>
+        ) : null}
       </ScrollView>
     </View>
   )
@@ -1252,6 +1461,131 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
     </>
   )
 
+  const searchDropdownPanel = (
+    <View
+      style={[
+        styles.searchDropdown,
+        {
+          top: searchAnchor.top,
+          left: searchAnchor.left,
+          width: searchAnchor.width,
+          maxHeight: Math.min(400, windowHeight - searchAnchor.top - 16),
+          backgroundColor: theme.listCardBg,
+          borderWidth: theme.isDark || isWebDesktop ? 1 : 0,
+          borderColor: theme.listBorder,
+        },
+      ]}
+    >
+      <View style={styles.searchDropdownHeader}>
+        <Text style={[styles.searchDropdownTitle, { color: theme.listPrimaryText }]}>Search</Text>
+        <TouchableOpacity
+          onPress={closeSearchPopup}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          accessibilityLabel="Close search"
+        >
+          <Ionicons name="close" size={22} color={theme.listPrimaryText} />
+        </TouchableOpacity>
+      </View>
+      <LinearGradient colors={[theme.accent, theme.primary]} style={styles.gradientBorder}>
+        <View style={[styles.searchWrapper, { backgroundColor: theme.searchBg }]}>
+          <TextInput
+            ref={searchInputRef}
+            placeholder="Search chats, groups & friends"
+            placeholderTextColor={theme.searchPlaceholder}
+            value={searchQuery}
+            onChangeText={(text) => {
+              setSearchQuery(text)
+              void trySearchVaultUnlock(text)
+            }}
+            onSubmitEditing={() => {
+              const trimmed = searchQuery.trim()
+              if (trimmed) addToSearchHistory(trimmed)
+            }}
+            returnKeyType="search"
+            mode="flat"
+            style={[styles.searchBar, { color: theme.searchText }]}
+            underlineColor="transparent"
+            theme={{ colors: { text: theme.searchText, background: 'transparent' } }}
+            left={<TextInput.Icon icon="magnify" color={theme.searchPlaceholder} />}
+            right={
+              searchQuery.length > 0 ? (
+                <TextInput.Icon icon="close" color={theme.searchPlaceholder} onPress={clearActiveSearch} />
+              ) : (
+                <TextInput.Icon icon="close" color={theme.searchPlaceholder} onPress={closeSearchPopup} />
+              )
+            }
+          />
+        </View>
+      </LinearGradient>
+
+      <ScrollView
+        style={styles.searchDropdownList}
+        keyboardShouldPersistTaps="handled"
+        nestedScrollEnabled
+      >
+        {searchQuery.trim() ? (
+          hasSearchSuggestions && searchSuggestions ? (
+            <>
+              {renderSuggestionSection('Chats', searchSuggestions.chats)}
+              {renderSuggestionSection('Groups', searchSuggestions.groups)}
+              {renderSuggestionSection('Friends', searchSuggestions.friends)}
+            </>
+          ) : (
+            <Text style={[styles.searchHistoryEmpty, { color: theme.listSecondaryText }]}>
+              No chats or friends found
+            </Text>
+          )
+        ) : (
+          <>
+            <View style={styles.searchHistoryHeader}>
+              <Text style={[styles.searchHistoryTitle, { color: theme.listPrimaryText }]}>
+                Recent searches
+              </Text>
+              {searchHistory.length > 0 ? (
+                <TouchableOpacity
+                  onPress={clearSearchHistory}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Text style={[styles.searchHistoryClear, { color: theme.primary }]}>Clear all</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+            {visibleSearchHistory.length > 0 ? (
+              visibleSearchHistory.map((item) => (
+                <View key={item} style={styles.searchHistoryRow}>
+                  <TouchableOpacity
+                    style={styles.searchHistoryMain}
+                    onPress={() => applyHistorySearch(item)}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="time-outline" size={18} color={theme.listSecondaryText} />
+                    <Text
+                      style={[styles.searchHistoryText, { color: theme.listPrimaryText }]}
+                      numberOfLines={1}
+                    >
+                      {item}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => removeFromSearchHistory(item)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    accessibilityLabel={`Remove ${item}`}
+                  >
+                    <Ionicons name="close" size={18} color={theme.listSecondaryText} />
+                  </TouchableOpacity>
+                </View>
+              ))
+            ) : (
+              <Text style={[styles.searchHistoryEmpty, { color: theme.listSecondaryText }]}>
+                Start typing to search chats and friends
+              </Text>
+            )}
+          </>
+        )}
+      </ScrollView>
+    </View>
+  )
+
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.listBg }]} edges={['left', 'right']}>
       {isFocused ? (
@@ -1287,164 +1621,59 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
 
         <View style={styles.navbarSpacer} />
 
-        <TouchableOpacity
-          style={[
-            styles.searchToggle,
-            {
-              backgroundColor: theme.isDark ? '#1a1a1a' : '#eef2f7',
-              borderWidth: theme.isDark ? 1 : 0,
-              borderColor: theme.listBorder,
-            },
-            (searchOpen || searchQuery.length > 0) && {
-              backgroundColor: theme.isDark ? '#1a2a3a' : '#e8f2ff',
-              borderColor: theme.primary,
-            },
-          ]}
-          onPress={toggleSearch}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          accessibilityLabel="Search chats"
-        >
-          <Ionicons
-            name={searchOpen ? 'close' : 'search'}
-            size={22}
-            color={searchOpen || searchQuery.length > 0 ? theme.primary : theme.listHeaderText}
-          />
-        </TouchableOpacity>
+        <View ref={searchToggleRef} collapsable={false}>
+          <TouchableOpacity
+            style={[
+              styles.searchToggle,
+              {
+                backgroundColor: theme.isDark ? '#1a1a1a' : '#eef2f7',
+                borderWidth: theme.isDark ? 1 : 0,
+                borderColor: theme.listBorder,
+              },
+              (searchOpen || searchQuery.length > 0) && {
+                backgroundColor: theme.isDark ? '#1a2a3a' : '#e8f2ff',
+                borderColor: theme.primary,
+              },
+            ]}
+            onPress={toggleSearch}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityLabel="Search chats"
+          >
+            <Ionicons
+              name={searchOpen ? 'close' : 'search'}
+              size={22}
+              color={searchOpen || searchQuery.length > 0 ? theme.primary : theme.listHeaderText}
+            />
+          </TouchableOpacity>
+        </View>
 
         <DropdownMenu triggerIcon="ellipsis-vertical" />
       </View>
 
-      <Modal
-        visible={searchOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={closeSearchPopup}
-      >
-        <View style={styles.searchModalRoot}>
-          <Pressable style={styles.searchBackdrop} onPress={closeSearchPopup} />
-          <View
-            style={[
-              styles.searchDropdown,
-              {
-                top: insets.top + 54,
-                right: 12,
-                width: Math.min(360, width - 24),
-                backgroundColor: theme.listCardBg,
-              },
-            ]}
+      {searchOpen ? (
+        isWebDesktop ? (
+          <Portal>
+            <View style={styles.searchWebFloatRoot} pointerEvents="box-none">
+              <Pressable style={styles.searchBackdropClear} onPress={closeSearchPopup} />
+              {searchDropdownPanel}
+            </View>
+          </Portal>
+        ) : (
+          <Modal
+            visible={searchOpen}
+            transparent
+            animationType="fade"
+            onRequestClose={closeSearchPopup}
+            statusBarTranslucent
           >
-            <View style={styles.searchDropdownHeader}>
-              <Text style={[styles.searchDropdownTitle, { color: theme.listPrimaryText }]}>
-                Search
-              </Text>
-              <TouchableOpacity
-                onPress={closeSearchPopup}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                accessibilityLabel="Close search"
-              >
-                <Ionicons name="close" size={22} color={theme.listPrimaryText} />
-              </TouchableOpacity>
+            <View style={styles.searchModalRoot} pointerEvents="box-none">
+              <Pressable style={[styles.searchBackdrop, styles.searchBackdropDim]} onPress={closeSearchPopup} />
+              {searchDropdownPanel}
             </View>
-          <LinearGradient colors={[theme.accent, theme.primary]} style={styles.gradientBorder}>
-            <View style={[styles.searchWrapper, { backgroundColor: theme.searchBg }]}>
-              <TextInput
-                ref={searchInputRef}
-                placeholder="Search chats, groups & friends"
-                placeholderTextColor={theme.searchPlaceholder}
-                value={searchQuery}
-                onChangeText={(text) => {
-                  setSearchQuery(text)
-                  void trySearchVaultUnlock(text)
-                }}
-                onSubmitEditing={() => {
-                  const trimmed = searchQuery.trim()
-                  if (trimmed) addToSearchHistory(trimmed)
-                }}
-                returnKeyType="search"
-                mode="flat"
-                style={[styles.searchBar, { color: theme.searchText }]}
-                underlineColor="transparent"
-                theme={{ colors: { text: theme.searchText, background: 'transparent' } }}
-                left={<TextInput.Icon icon="magnify" color={theme.searchPlaceholder} />}
-                right={
-                  searchQuery.length > 0 ? (
-                    <TextInput.Icon icon="close" color={theme.searchPlaceholder} onPress={clearActiveSearch} />
-                  ) : (
-                    <TextInput.Icon icon="close" color={theme.searchPlaceholder} onPress={closeSearchPopup} />
-                  )
-                }
-              />
-            </View>
-          </LinearGradient>
+          </Modal>
+        )
+      ) : null}
 
-          <ScrollView
-            style={styles.searchDropdownList}
-            keyboardShouldPersistTaps="handled"
-            nestedScrollEnabled
-          >
-            {searchQuery.trim() ? (
-              hasSearchSuggestions && searchSuggestions ? (
-                <>
-                  {renderSuggestionSection('Chats', searchSuggestions.chats)}
-                  {renderSuggestionSection('Groups', searchSuggestions.groups)}
-                  {renderSuggestionSection('Friends', searchSuggestions.friends)}
-                </>
-              ) : (
-                <Text style={[styles.searchHistoryEmpty, { color: theme.listSecondaryText }]}>
-                  No chats or friends found
-                </Text>
-              )
-            ) : (
-              <>
-                <View style={styles.searchHistoryHeader}>
-                  <Text style={[styles.searchHistoryTitle, { color: theme.listPrimaryText }]}>
-                    Recent searches
-                  </Text>
-                  {searchHistory.length > 0 ? (
-                    <TouchableOpacity
-                      onPress={clearSearchHistory}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    >
-                      <Text style={[styles.searchHistoryClear, { color: theme.primary }]}>Clear all</Text>
-                    </TouchableOpacity>
-                  ) : null}
-                </View>
-                {visibleSearchHistory.length > 0 ? (
-                  visibleSearchHistory.map((item) => (
-                    <View key={item} style={styles.searchHistoryRow}>
-                      <TouchableOpacity
-                        style={styles.searchHistoryMain}
-                        onPress={() => applyHistorySearch(item)}
-                        activeOpacity={0.7}
-                      >
-                        <Ionicons name="time-outline" size={18} color={theme.listSecondaryText} />
-                        <Text
-                          style={[styles.searchHistoryText, { color: theme.listPrimaryText }]}
-                          numberOfLines={1}
-                        >
-                          {item}
-                        </Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        onPress={() => removeFromSearchHistory(item)}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        accessibilityLabel={`Remove ${item}`}
-                      >
-                        <Ionicons name="close" size={18} color={theme.listSecondaryText} />
-                      </TouchableOpacity>
-                    </View>
-                  ))
-                ) : (
-                  <Text style={[styles.searchHistoryEmpty, { color: theme.listSecondaryText }]}>
-                    Start typing to search chats and friends
-                  </Text>
-                )}
-              </>
-            )}
-          </ScrollView>
-          </View>
-        </View>
-      </Modal>
 
       <TabView
         navigationState={{ index, routes }}
@@ -1489,6 +1718,30 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
         actions={
           chatMenu
             ? [
+                {
+                  key: 'mute',
+                  label: isMutedEntry(chatMenu.kind, chatMenu.id) ? 'Unmute' : 'Mute',
+                  onPress: () => void handleMuteChat(chatMenu.kind, chatMenu.id),
+                },
+                ...(settings.chatLockEnabled
+                  ? [
+                      {
+                        key: 'chat-lock',
+                        label:
+                          settings.chatLockScope === 'all'
+                            ? 'Lock only this chat'
+                            : isChatProtected(chatMenu.kind, chatMenu.id)
+                              ? 'Remove chat lock'
+                              : 'Lock this chat',
+                        onPress: () =>
+                          void handleToggleChatLock(
+                            chatMenu.kind,
+                            chatMenu.id,
+                            chatMenu.name
+                          ),
+                      },
+                    ]
+                  : []),
                 {
                   key: 'archive',
                   label: 'Archive',
@@ -1603,9 +1856,32 @@ const styles = StyleSheet.create({
   searchModalRoot: {
     flex: 1,
   },
+  searchWebFloatRoot: {
+    ...Platform.select({
+      web: {
+        position: 'fixed' as any,
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 10040,
+      },
+      default: {
+        ...StyleSheet.absoluteFillObject,
+        zIndex: 10040,
+        elevation: 10040,
+      },
+    }),
+  },
   searchBackdrop: {
     ...StyleSheet.absoluteFillObject,
+  },
+  searchBackdropDim: {
     backgroundColor: 'rgba(0,0,0,0.25)',
+  },
+  searchBackdropClear: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'transparent',
   },
   searchDropdownHeader: {
     flexDirection: 'row',
@@ -1629,7 +1905,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.15,
     shadowRadius: 16,
     elevation: 12,
-    ...(Platform.OS === 'web' ? { zIndex: 100 } : {}),
+    zIndex: 10041,
   },
   searchDropdownList: {
     maxHeight: 300,
@@ -1867,6 +2143,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 12,
     gap: 8,
+  },
+  tabStripMore: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   tabStripItem: {
     flexDirection: 'row',

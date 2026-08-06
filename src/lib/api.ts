@@ -626,6 +626,25 @@ export const api = {
       }),
   },
 
+  privacyLock: {
+    get: () =>
+      apiRequest<{
+        app_lock_enabled: boolean;
+        chat_lock_enabled: boolean;
+        updated_at: string;
+      }>('/api/account/privacy-lock'),
+    update: (body: { app_lock_enabled?: boolean; chat_lock_enabled?: boolean }) =>
+      apiRequest<{
+        type?: string;
+        app_lock_enabled: boolean;
+        chat_lock_enabled: boolean;
+        updated_at: string;
+      }>('/api/account/privacy-lock', {
+        method: 'PATCH',
+        body,
+      }),
+  },
+
   profiles: {
     me: () => apiRequest<{ profile: Record<string, unknown> }>('/api/profiles/me'),
     updateMe: (data: Record<string, unknown>) =>

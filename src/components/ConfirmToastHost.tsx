@@ -1,17 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import {
   Modal,
-  Platform,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   answerConfirmToast,
   subscribeConfirmToast,
 } from '../lib/confirmToast';
+import { useToastLayout } from '../lib/toastLayout';
 
 type Pending = {
   message: string;
@@ -22,7 +21,7 @@ type Pending = {
 
 /** Global confirm toast (Cancel / Delete). Uses Modal so it sits above other modals. */
 export function ConfirmToastHost() {
-  const insets = useSafeAreaInsets();
+  const { isDesktop, maxWidth, wrapperStyle, textStyle } = useToastLayout();
   const [pending, setPending] = useState<Pending | null>(null);
 
   useEffect(() => {
@@ -37,7 +36,7 @@ export function ConfirmToastHost() {
       statusBarTranslucent
       onRequestClose={() => answerConfirmToast(false)}
     >
-      <View style={styles.root}>
+      <View style={styles.root} pointerEvents="box-none">
         <TouchableOpacity
           style={styles.backdrop}
           activeOpacity={1}
@@ -46,23 +45,34 @@ export function ConfirmToastHost() {
         <View
           style={[
             styles.toast,
-            { bottom: Platform.OS === 'web' ? 24 : Math.max(insets.bottom, 12) + 16 },
+            {
+              top: wrapperStyle.top,
+              right: wrapperStyle.right,
+              left: undefined,
+              maxWidth,
+              paddingHorizontal: isDesktop ? 12 : 16,
+              paddingVertical: isDesktop ? 10 : 14,
+              borderRadius: isDesktop ? 12 : 16,
+            },
           ]}
         >
-          <Text style={styles.message} numberOfLines={4}>
+          <Text style={[styles.message, textStyle]} numberOfLines={4}>
             {pending?.message}
           </Text>
           <View style={styles.actions}>
             <TouchableOpacity
-              style={styles.cancelBtn}
+              style={[styles.cancelBtn, isDesktop && styles.actionBtnCompact]}
               onPress={() => answerConfirmToast(false)}
               activeOpacity={0.85}
             >
-              <Text style={styles.cancelText}>{pending?.cancelLabel ?? 'Cancel'}</Text>
+              <Text style={[styles.cancelText, isDesktop && styles.actionTextCompact]}>
+                {pending?.cancelLabel ?? 'Cancel'}
+              </Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[
                 styles.confirmBtn,
+                isDesktop && styles.actionBtnCompact,
                 pending?.destructive === false
                   ? styles.confirmBtnNeutral
                   : styles.confirmBtnDanger,
@@ -70,7 +80,9 @@ export function ConfirmToastHost() {
               onPress={() => answerConfirmToast(true)}
               activeOpacity={0.85}
             >
-              <Text style={styles.confirmText}>{pending?.confirmLabel ?? 'Delete'}</Text>
+              <Text style={[styles.confirmText, isDesktop && styles.actionTextCompact]}>
+                {pending?.confirmLabel ?? 'Delete'}
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -82,29 +94,20 @@ export function ConfirmToastHost() {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    justifyContent: 'flex-end',
   },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.35)',
+    backgroundColor: 'rgba(0,0,0,0.28)',
   },
   toast: {
     position: 'absolute',
-    left: 16,
-    right: 16,
     backgroundColor: '#1c1c1e',
-    borderRadius: 16,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: '#333',
   },
   message: {
     color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-    lineHeight: 20,
-    marginBottom: 12,
+    marginBottom: 10,
   },
   actions: {
     flexDirection: 'row',
@@ -126,4 +129,12 @@ const styles = StyleSheet.create({
   confirmBtnDanger: { backgroundColor: '#dc2626' },
   confirmBtnNeutral: { backgroundColor: '#007AFF' },
   confirmText: { color: '#fff', fontWeight: '800', fontSize: 13 },
+  actionBtnCompact: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  actionTextCompact: {
+    fontSize: 12,
+  },
 });

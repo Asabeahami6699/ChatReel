@@ -28,6 +28,7 @@ import { useFriendshipsRealtime } from '../../hooks/useFriendshipsRealtime';
 import { notifyRealtimeTopic } from '../../lib/realtimeHub';
 import { buildGroupInviteLink, INVITE_SCHEME } from '../../lib/groupInviteLinks';
 import { useChatSettings } from '../../context/ChatSettingsContext';
+import { useToastLayout } from '../../lib/toastLayout';
 
 export type Friend = {
   id: string;
@@ -89,6 +90,7 @@ const NewGroupScreen = ({ navigation }: Props) => {
   const { user } = useAuth();
   const { theme } = useChatSettings();
   const insets = useSafeAreaInsets();
+  const { wrapperStyle, snackbarStyle, textStyle } = useToastLayout();
 
   const [groupName, setGroupName] = useState('');
   const [avatarUri, setAvatarUri] = useState<string>('');
@@ -410,8 +412,10 @@ const NewGroupScreen = ({ navigation }: Props) => {
           visible={Boolean(successToast)}
           onDismiss={() => setSuccessToast(null)}
           duration={3500}
+          wrapperStyle={wrapperStyle}
+          style={[snackbarStyle, { backgroundColor: '#111827' }]}
         >
-          {successToast}
+          <Text style={[{ color: '#fff' }, textStyle]}>{successToast}</Text>
         </Snackbar>
       </Portal>
     </SafeAreaView>

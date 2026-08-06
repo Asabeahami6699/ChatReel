@@ -9,6 +9,7 @@ import {
   type RingtoneSaveEvent,
 } from '../lib/ringtoneSaveNotify';
 import type { UserRingtoneDTO } from '../lib/api';
+import { useToastLayout } from '../lib/toastLayout';
 
 type SnackState = {
   visible: boolean;
@@ -19,6 +20,7 @@ type SnackState = {
 
 /** Global toast for background ringtone trim/upload (same pattern as AudioExtractToast). */
 export function RingtoneSaveToast() {
+  const { wrapperStyle, snackbarStyle, textStyle } = useToastLayout();
   const [snackbar, setSnackbar] = useState<SnackState>({ visible: false, message: '' });
 
   useEffect(() => {
@@ -58,11 +60,18 @@ export function RingtoneSaveToast() {
           visible={snackbar.visible}
           onDismiss={() => setSnackbar((s) => ({ ...s, visible: false, pending: false }))}
           duration={snackbar.pending ? Snackbar.DURATION_INDEFINITE : 4500}
-          style={snackbar.isError ? styles.error : styles.ok}
+          style={[snackbarStyle, snackbar.isError ? styles.error : styles.ok]}
           theme={{ colors: { onSurface: snackbar.isError ? '#fff' : '#111' } }}
-          wrapperStyle={styles.wrapper}
+          wrapperStyle={[styles.wrapper, wrapperStyle]}
         >
-          <Text style={snackbar.isError ? styles.textError : styles.textOk}>{snackbar.message}</Text>
+          <Text
+            style={[
+              snackbar.isError ? styles.textError : styles.textOk,
+              textStyle,
+            ]}
+          >
+            {snackbar.message}
+          </Text>
         </Snackbar>
       </View>
     </Portal>
@@ -111,7 +120,6 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     zIndex: 99999,
     elevation: 99999,
-    justifyContent: 'flex-end',
   },
   wrapper: {
     zIndex: 99999,

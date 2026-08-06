@@ -2,11 +2,13 @@ import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -19,6 +21,7 @@ import {
 } from '../lib/account2faCache';
 import { useChatSettings } from '../context/ChatSettingsContext';
 import { showAppToast } from '../lib/appToast';
+import { MOBILE_BREAKPOINT } from '../navigation/navigationUtils';
 
 type Props = {
   visible: boolean;
@@ -34,6 +37,9 @@ const SUGGESTED_QUESTIONS = [
 
 export function Account2FASetupSheet({ visible, onClose }: Props) {
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const isDesktop = Platform.OS === 'web' && width >= MOBILE_BREAKPOINT;
+  const sheetMaxWidth = isDesktop ? 360 : undefined;
   const { theme } = useChatSettings();
   const cached = getCached2faStatus();
   const [loading, setLoading] = useState(!cached);
@@ -97,12 +103,28 @@ export function Account2FASetupSheet({ visible, onClose }: Props) {
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={[styles.backdrop, { paddingBottom: insets.bottom + 12, paddingTop: insets.top + 12 }]}>
+      <View
+        style={[
+          styles.backdrop,
+          {
+            paddingBottom: insets.bottom + 12,
+            paddingTop: insets.top + 12,
+            justifyContent: isDesktop ? 'center' : 'flex-end',
+            alignItems: isDesktop ? 'center' : 'stretch',
+          },
+        ]}
+      >
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <View
           style={[
             styles.sheet,
-            { backgroundColor: theme.listCardBg, borderColor: theme.listBorder },
+            {
+              backgroundColor: theme.listCardBg,
+              borderColor: theme.listBorder,
+              width: isDesktop ? sheetMaxWidth : '100%',
+              maxWidth: isDesktop ? sheetMaxWidth : undefined,
+              alignSelf: isDesktop ? 'center' : 'stretch',
+            },
           ]}
         >
           <View style={styles.handle} />

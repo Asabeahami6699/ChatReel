@@ -18,8 +18,8 @@ type AppLockContextValue = {
   locked: boolean;
   /** Biometric / passcode prompt in progress. */
   unlocking: boolean;
-  /** Attempt unlock (shows system prompt). */
-  unlock: () => Promise<boolean>;
+  /** Attempt unlock (native biometrics, or web PIN via `pin`). */
+  unlock: (pin?: string) => Promise<boolean>;
   /** Force lock immediately. */
   lockNow: () => void;
 };
@@ -28,12 +28,12 @@ const AppLockContext = createContext<AppLockContextValue | null>(null);
 
 /**
  * Locks the authenticated app when returning from background if App Lock is on.
- * Web is a no-op (setting stays local but does not gate).
+ * Native uses biometrics/device passcode; web uses a ChatReel PIN.
  */
 export function AppLockProvider({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, loading: authLoading } = useAuth();
   const { settings, ready: settingsReady } = useChatSettings();
-  const enabled = settings.appLockBiometric && Platform.OS !== 'web';
+  const enabled = settings.appLockBiometric;
 
   const [locked, setLocked] = useState(false);
   const [unlocking, setUnlocking] = useState(false);
@@ -42,7 +42,7 @@ export function AppLockProvider({ children }: { children: React.ReactNode }) {
   const autoPromptedRef = useRef(false);
 
   // Bootstrap once: if lock was already on, require unlock at launch.
-  // Enabling mid-session stays unlocked until the next background.
+  // When enabled later (including synced from another device), lock immediately.
   useEffect(() => {
     if (!settingsReady || authLoading) return;
 
@@ -57,10 +57,15 @@ export function AppLockProvider({ children }: { children: React.ReactNode }) {
 
     if (!enabled || !isAuthenticated) {
       setLocked(false);
+      return;
     }
+
+    // Remote/local enable mid-session → engage the gate.
+    setLocked(true);
+    autoPromptedRef.current = false;
   }, [settingsReady, authLoading, enabled, isAuthenticated]);
 
-  // Relock when the app goes to background.
+  // Relock when the app goes to background (or the browser tab is hidden).
   useEffect(() => {
     if (!enabled || !isAuthenticated) return;
 
@@ -75,6 +80,8 @@ export function AppLockProvider({ children }: { children: React.ReactNode }) {
 
       if (next === 'background' || next === 'inactive') {
         // Prefer locking on true background; ignore brief inactive blips.
+        if (next === 'inactive' && Platform.OS !== 'web') return;
+        // On web, "inactive" is uncommon; "background" maps to tab hide.
         if (next === 'inactive') return;
         setLocked(true);
         autoPromptedRef.current = false;
@@ -94,22 +101,25 @@ export function AppLockProvider({ children }: { children: React.ReactNode }) {
     return () => sub.remove();
   }, [enabled, isAuthenticated]);
 
-  const unlock = useCallback(async () => {
-    if (!enabled) return true;
-    if (!locked) return true;
-    if (unlocking) return false;
-    setUnlocking(true);
-    try {
-      const result = await authenticateAppUnlock('Unlock ChatReel');
-      if (result.success) {
-        setLocked(false);
-        return true;
+  const unlock = useCallback(
+    async (pin?: string) => {
+      if (!enabled) return true;
+      if (!locked) return true;
+      if (unlocking) return false;
+      setUnlocking(true);
+      try {
+        const result = await authenticateAppUnlock('Unlock ChatReel', pin);
+        if (result.success) {
+          setLocked(false);
+          return true;
+        }
+        return false;
+      } finally {
+        setUnlocking(false);
       }
-      return false;
-    } finally {
-      setUnlocking(false);
-    }
-  }, [enabled, locked, unlocking]);
+    },
+    [enabled, locked, unlocking]
+  );
 
   const lockNow = useCallback(() => {
     if (!enabled || !isAuthenticated) return;
@@ -117,8 +127,9 @@ export function AppLockProvider({ children }: { children: React.ReactNode }) {
     autoPromptedRef.current = false;
   }, [enabled, isAuthenticated]);
 
-  // Auto-prompt once when the lock screen appears while app is active.
+  // Auto-prompt once when the lock screen appears while app is active (native only).
   useEffect(() => {
+    if (Platform.OS === 'web') return;
     if (!locked || !enabled || !isAuthenticated) return;
     if (autoPromptedRef.current) return;
     if (AppState.currentState !== 'active') return;

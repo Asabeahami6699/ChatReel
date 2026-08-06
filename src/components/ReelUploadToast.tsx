@@ -8,6 +8,7 @@ import {
   subscribeFailedUploadMovedToDraft,
   type ReelUploadTask,
 } from '../lib/reelUploadQueue';
+import { useToastLayout } from '../lib/toastLayout';
 
 function aggregateProgress(tasks: ReelUploadTask[]): number {
   const active = tasks.filter(
@@ -44,6 +45,7 @@ function CircularProgress({ progress, size = 44 }: { progress: number; size?: nu
 
 export function ReelUploadToast() {
   const insets = useSafeAreaInsets();
+  const { wrapperStyle, snackbarStyle, textStyle } = useToastLayout();
   const [tasks, setTasks] = useState<ReelUploadTask[]>([]);
   const [visible, setVisible] = useState(false);
   const fade = useRef(new Animated.Value(0)).current;
@@ -144,10 +146,16 @@ export function ReelUploadToast() {
         visible={snackbar.visible}
         onDismiss={() => setSnackbar((s) => ({ ...s, visible: false }))}
         duration={3000}
-        style={snackbar.isError ? styles.snackbarError : styles.snackbarOk}
+        wrapperStyle={wrapperStyle}
+        style={[snackbarStyle, snackbar.isError ? styles.snackbarError : styles.snackbarOk]}
         theme={{ colors: { onSurface: snackbar.isError ? '#fff' : '#111' } }}
       >
-        <Text style={snackbar.isError ? styles.snackbarTextError : styles.snackbarTextOk}>
+        <Text
+          style={[
+            snackbar.isError ? styles.snackbarTextError : styles.snackbarTextOk,
+            textStyle,
+          ]}
+        >
           {snackbar.message}
         </Text>
       </Snackbar>

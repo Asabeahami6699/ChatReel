@@ -3,7 +3,9 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Modal,
   Platform,
+  Pressable,
   Share,
   ScrollView,
   StyleSheet,
@@ -40,9 +42,16 @@ import { messageStorage } from '../../utils/messageStorage';
 import { getCachedProfile, prefetchMyProfile, hydrateProfileCache, subscribeCachedProfile } from '../../lib/profileCache';
 import { formatBytes, getLocalCacheBreakdown, type LocalCacheBreakdown } from '../../lib/localCacheSize';
 import { clearOfflineFeedKeys, OFFLINE_FEED_KEYS } from '../../lib/offlineFeedStore';
-import { authenticateAppUnlock, getAppLockAvailability } from '../../lib/appLock';
+import {
+  authenticateAppUnlock,
+  getAppLockAvailability,
+  hasAppLockPin,
+  setAppLockPin,
+} from '../../lib/appLock';
 import { Account2FASetupSheet } from '../../components/Account2FASetupSheet';
 import { AccountDevicesSheet } from '../../components/AccountDevicesSheet';
+import { AppLockPinPad } from '../../components/AppLockPinPad';
+import { ChatLockChatsPicker } from '../../components/ChatLockChatsPicker';
 import { prefetch2faStatus } from '../../lib/account2faCache';
 
 type SettingsPage =
@@ -204,6 +213,14 @@ export default function ChatSettingsScreen() {
   const [clearing, setClearing] = useState(false);
   const [cacheBreakdown, setCacheBreakdown] = useState<LocalCacheBreakdown | null>(null);
   const [cacheLoading, setCacheLoading] = useState(false);
+  const [webLockPinModal, setWebLockPinModal] = useState<{
+    purpose: 'app' | 'chat';
+    mode: 'setup' | 'confirm' | 'verify';
+    intent?: 'enable' | 'disable';
+    draft?: string;
+  } | null>(null);
+  const [webLockPinError, setWebLockPinError] = useState<string | null>(null);
+  const [chatLockPickerOpen, setChatLockPickerOpen] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -416,7 +433,13 @@ export default function ChatSettingsScreen() {
     }
 
     if (Platform.OS === 'web') {
-      Alert.alert('App lock', 'App lock is available on the iOS and Android apps.');
+      setWebLockPinError(null);
+      const hasPin = await hasAppLockPin();
+      setWebLockPinModal({
+        purpose: 'app',
+        mode: hasPin ? 'verify' : 'setup',
+        intent: 'enable',
+      });
       return;
     }
 
@@ -442,13 +465,42 @@ export default function ChatSettingsScreen() {
 
   const toggleChatLock = async (next: boolean) => {
     if (!next) {
+      if (Platform.OS === 'web') {
+        setWebLockPinError(null);
+        const hasPin = await hasAppLockPin();
+        if (!hasPin) {
+          await updateSettings({ chatLockEnabled: false });
+          showAppToast('Chat lock turned off');
+          return;
+        }
+        setWebLockPinModal({
+          purpose: 'chat',
+          mode: 'verify',
+          intent: 'disable',
+        });
+        return;
+      }
+
+      const verified = await authenticateAppUnlock('Turn off chat lock');
+      if (!verified.success) {
+        if (verified.error) {
+          Alert.alert('Chat lock', verified.error);
+        }
+        return;
+      }
       await updateSettings({ chatLockEnabled: false });
       showAppToast('Chat lock turned off');
       return;
     }
 
     if (Platform.OS === 'web') {
-      Alert.alert('Chat lock', 'Chat lock is available on the iOS and Android apps.');
+      setWebLockPinError(null);
+      const hasPin = await hasAppLockPin();
+      setWebLockPinModal({
+        purpose: 'chat',
+        mode: hasPin ? 'verify' : 'setup',
+        intent: 'enable',
+      });
       return;
     }
 
@@ -469,7 +521,73 @@ export default function ChatSettingsScreen() {
     }
 
     await updateSettings({ chatLockEnabled: true });
-    showAppToast(`Chat lock on · only Chats require unlock`);
+    showAppToast(`Chat lock on · conversations only`);
+  };
+
+  const finishWebLockChange = async (
+    purpose: 'app' | 'chat',
+    intent: 'enable' | 'disable' = 'enable'
+  ) => {
+    if (intent === 'disable') {
+      if (purpose === 'chat') {
+        await updateSettings({ chatLockEnabled: false });
+        showAppToast('Chat lock turned off');
+      } else {
+        await updateSettings({ appLockBiometric: false });
+        showAppToast('App lock turned off');
+      }
+      setWebLockPinModal(null);
+      setWebLockPinError(null);
+      return;
+    }
+
+    if (purpose === 'app') {
+      await updateSettings({ appLockBiometric: true });
+      showAppToast('App lock on · PIN code');
+    } else {
+      await updateSettings({ chatLockEnabled: true });
+      showAppToast('Chat lock on · PIN code');
+    }
+    setWebLockPinModal(null);
+    setWebLockPinError(null);
+  };
+
+  const onWebLockPinSubmit = async (pin: string) => {
+    if (!webLockPinModal) return;
+    const { purpose, mode, draft, intent = 'enable' } = webLockPinModal;
+    setWebLockPinError(null);
+
+    if (mode === 'setup') {
+      if (pin.length < 4) {
+        setWebLockPinError('Use a 4–6 digit code.');
+        return;
+      }
+      setWebLockPinModal({ purpose, mode: 'confirm', intent, draft: pin });
+      return;
+    }
+
+    if (mode === 'confirm') {
+      if (pin !== draft) {
+        setWebLockPinError('Codes do not match. Try again.');
+        setWebLockPinModal({ purpose, mode: 'setup', intent });
+        return;
+      }
+      const result = await setAppLockPin(pin);
+      if (!result.ok) {
+        setWebLockPinError(result.error);
+        setWebLockPinModal({ purpose, mode: 'setup', intent });
+        return;
+      }
+      await finishWebLockChange(purpose, intent);
+      return;
+    }
+
+    const verified = await authenticateAppUnlock(undefined, pin);
+    if (!verified.success) {
+      setWebLockPinError(verified.error || 'Wrong code');
+      return;
+    }
+    await finishWebLockChange(purpose, intent);
   };
 
   const tc = theme.listPrimaryText;
@@ -1023,7 +1141,7 @@ export default function ChatSettingsScreen() {
           label="App lock"
           subtitle={
             Platform.OS === 'web'
-              ? 'Available on the mobile app'
+              ? 'Locks ChatReel when you leave this tab — unlock with PIN'
               : 'Locks the whole app when you leave ChatReel'
           }
           value={settings.appLockBiometric}
@@ -1037,9 +1155,11 @@ export default function ChatSettingsScreen() {
           icon="chatbubbles-outline"
           label="Chat lock"
           subtitle={
-            Platform.OS === 'web'
-              ? 'Available on the mobile app'
-              : 'Locks only Chats — Reels and other tabs stay open'
+            settings.chatLockEnabled
+              ? settings.chatLockScope === 'selected'
+                ? `Specific chats · ${settings.chatLockedKeys.length} locked`
+                : 'All chats · unlock when you open Chats'
+              : 'PIN-gate conversations — does not lock the whole app'
           }
           value={settings.chatLockEnabled}
           onValueChange={(v) => void toggleChatLock(v)}
@@ -1047,7 +1167,75 @@ export default function ChatSettingsScreen() {
           subColor={sc}
           iconBg="#e8eaf6"
           iconColor="#5c6bc0"
+          last={!settings.chatLockEnabled}
         />
+        {settings.chatLockEnabled ? (
+          <>
+            <TouchableOpacity
+              style={[styles.linkRow, styles.linkRowBorder]}
+              onPress={() => void updateSettings({ chatLockScope: 'all' })}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.linkIcon, { backgroundColor: '#e8eaf6' }]}>
+                <Ionicons
+                  name={settings.chatLockScope === 'all' ? 'radio-button-on' : 'radio-button-off'}
+                  size={18}
+                  color="#5c6bc0"
+                />
+              </View>
+              <View style={styles.linkTextWrap}>
+                <Text style={[styles.linkLabel, { color: tc }]}>Lock all chats</Text>
+                <Text style={[styles.linkSub, { color: sc }]} numberOfLines={2}>
+                  Require unlock to open the Chats tab
+                </Text>
+              </View>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.linkRow, styles.linkRowBorder]}
+              onPress={() => {
+                void updateSettings({ chatLockScope: 'selected' });
+                if (settings.chatLockedKeys.length === 0) {
+                  setChatLockPickerOpen(true);
+                }
+              }}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.linkIcon, { backgroundColor: '#e8eaf6' }]}>
+                <Ionicons
+                  name={
+                    settings.chatLockScope === 'selected'
+                      ? 'radio-button-on'
+                      : 'radio-button-off'
+                  }
+                  size={18}
+                  color="#5c6bc0"
+                />
+              </View>
+              <View style={styles.linkTextWrap}>
+                <Text style={[styles.linkLabel, { color: tc }]}>Lock specific chats</Text>
+                <Text style={[styles.linkSub, { color: sc }]} numberOfLines={2}>
+                  Only chosen conversations need unlock
+                </Text>
+              </View>
+            </TouchableOpacity>
+            {settings.chatLockScope === 'selected' ? (
+              <LinkRow
+                icon="list-outline"
+                label="Choose chats"
+                subtitle={
+                  settings.chatLockedKeys.length
+                    ? `${settings.chatLockedKeys.length} selected`
+                    : 'Pick which chats to lock'
+                }
+                onPress={() => setChatLockPickerOpen(true)}
+                textColor={tc}
+                subColor={sc}
+                iconBg="#e8eaf6"
+                iconColor="#5c6bc0"
+              />
+            ) : null}
+          </>
+        ) : null}
         <ToggleRow
           icon="videocam-off-outline"
           label="Call privacy"
@@ -1454,6 +1642,83 @@ export default function ChatSettingsScreen() {
 
       <Account2FASetupSheet visible={twoFaOpen} onClose={() => setTwoFaOpen(false)} />
       <AccountDevicesSheet visible={devicesOpen} onClose={() => setDevicesOpen(false)} />
+
+      <Modal
+        visible={Boolean(webLockPinModal)}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          setWebLockPinModal(null);
+          setWebLockPinError(null);
+        }}
+      >
+        <View style={styles.webLockRoot}>
+          <Pressable
+            style={styles.webLockBackdrop}
+            onPress={() => {
+              setWebLockPinModal(null);
+              setWebLockPinError(null);
+            }}
+          />
+          <View
+            style={[
+              styles.webLockCard,
+              { backgroundColor: theme.listCardBg, borderColor: theme.listBorder },
+            ]}
+          >
+            <AppLockPinPad
+              light
+              title={
+                webLockPinModal?.mode === 'setup'
+                  ? 'Create app lock PIN'
+                  : webLockPinModal?.mode === 'confirm'
+                    ? 'Confirm PIN'
+                    : 'Enter unlock PIN'
+              }
+              subtitle={
+                webLockPinModal?.mode === 'setup'
+                  ? 'Choose a 4–6 digit code to unlock ChatReel on this browser.'
+                  : webLockPinModal?.mode === 'confirm'
+                    ? 'Enter the same code again.'
+                    : webLockPinModal?.intent === 'disable'
+                      ? 'Enter your PIN to turn this lock off.'
+                      : 'Verify your PIN to turn this lock on.'
+              }
+              error={webLockPinError}
+              onSubmit={(pin) => void onWebLockPinSubmit(pin)}
+            />
+            <TouchableOpacity
+              style={styles.webLockCancel}
+              onPress={() => {
+                setWebLockPinModal(null);
+                setWebLockPinError(null);
+              }}
+            >
+              <Text style={{ color: theme.listSecondaryText, fontWeight: '600' }}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {chatLockPickerOpen ? (
+        <ChatLockChatsPicker
+          visible={chatLockPickerOpen}
+          selectedKeys={settings.chatLockedKeys}
+          onClose={() => setChatLockPickerOpen(false)}
+          onSave={(keys) => {
+            void updateSettings({
+              chatLockScope: 'selected',
+              chatLockedKeys: keys,
+            });
+            setChatLockPickerOpen(false);
+            showAppToast(
+              keys.length
+                ? `${keys.length} chat${keys.length === 1 ? '' : 's'} locked`
+                : 'No chats locked'
+            );
+          }}
+        />
+      ) : null}
     </View>
   );
 }
@@ -1578,5 +1843,29 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 12,
     gap: 12,
+  },
+  webLockRoot: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  webLockBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  webLockCard: {
+    width: '100%',
+    maxWidth: 340,
+    borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 16,
+    paddingTop: 18,
+    paddingBottom: 12,
+    alignItems: 'center',
+  },
+  webLockCancel: {
+    marginTop: 4,
+    paddingVertical: 12,
   },
 });
