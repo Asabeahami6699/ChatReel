@@ -17,6 +17,7 @@ import { api, ApiError, type ReelDTO, type ReelSoundDTO } from '../../lib/api';
 import type { ReelsStackParamList } from '../../navigation/reelsNavigation';
 import { fetchSoundFromReel } from '../../lib/reelSoundFromReelClient';
 import { openPostReelWithSound } from '../../lib/reelPlaybackBridge';
+import { navigateToPostReel } from '../../navigation/rootNavigation';
 import { REEL_ACCENT } from './reelTheme';
 import { soundLabel } from './ReelSoundPicker';
 
@@ -74,8 +75,8 @@ export default function ReelSoundScreen() {
   const useSound = useCallback(() => {
     if (!sound) return;
     openPostReelWithSound(sound);
-    navigation.navigate('PostReel');
-  }, [navigation, sound]);
+    navigateToPostReel();
+  }, [sound]);
 
   return (
     <View style={styles.root}>

@@ -4,7 +4,7 @@ import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { ReelsTabParamList } from '../../navigation/reelsNavigation';
-import { rootNavigationRef } from '../../navigation/rootNavigation';
+import { navigateMainTab, navigateToPostReel } from '../../navigation/rootNavigation';
 import { openPostReelCompose } from '../../lib/reelPlaybackBridge';
 import {
   getReelInboxUnreadCount,
@@ -83,7 +83,7 @@ export default function ReelsTabBar({
 
   const openUpload = () => {
     openPostReelCompose();
-    if (rootNavigationRef.isReady()) rootNavigationRef.navigate('PostReel');
+    navigateToPostReel();
   };
 
   const order = guestMode ? GUEST_TAB_ORDER : TAB_ORDER;
@@ -169,6 +169,25 @@ export default function ReelsTabBar({
   if (isDesktop) {
     return (
       <View style={[dk.sidebar, { width: sidebarW, paddingTop: insets.top + 12 }]}>
+        {collapsed ? (
+          <TouchableOpacity
+            style={[dk.toggleBtn, { width: sidebarW }]}
+            onPress={() => {
+              if (guestMode) {
+                const parent = navigation.getParent?.()?.getParent?.();
+                if (parent?.navigate) parent.navigate('Chats');
+                else exitGuest();
+              } else {
+                navigateMainTab('Chats');
+              }
+            }}
+            activeOpacity={0.7}
+            accessibilityLabel="Back to chats"
+          >
+            <Ionicons name="arrow-back" size={20} color="rgba(255,255,255,0.85)" />
+          </TouchableOpacity>
+        ) : null}
+
         {/* Toggle button */}
         <TouchableOpacity style={[dk.toggleBtn, { width: sidebarW }]} onPress={onToggleCollapse} activeOpacity={0.7}>
           <Ionicons

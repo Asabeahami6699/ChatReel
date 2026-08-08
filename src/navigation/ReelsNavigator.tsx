@@ -8,6 +8,7 @@ import ReelInboxScreen from '../screens/Reel/ReelInboxScreen';
 import ReelAccountScreen from '../screens/Reel/ReelAccountScreen';
 import ReelCreatorProfileScreen from '../screens/Reel/ReelCreatorProfileScreen';
 import ReelCreatorWalletScreen from '../screens/Reel/ReelCreatorWalletScreen';
+import ReelCreatorAnalyticsScreen from '../screens/Reel/ReelCreatorAnalyticsScreen';
 import ReelDetailScreen from '../screens/Reel/ReelDetailScreen';
 import ReelSoundScreen from '../screens/Reel/ReelSoundScreen';
 import ReelsTabBar from '../screens/Reel/ReelsTabBar';
@@ -71,6 +72,7 @@ export default function ReelsNavigator() {
           <Stack.Screen name="ReelTabs" component={ReelTabs} />
           <Stack.Screen name="ReelCreatorProfile" component={ReelCreatorProfileScreen} />
           <Stack.Screen name="ReelCreatorWallet" component={ReelCreatorWalletScreen} />
+          <Stack.Screen name="ReelCreatorAnalytics" component={ReelCreatorAnalyticsScreen} />
           <Stack.Screen
             name="ReelDetail"
             component={ReelDetailScreen}

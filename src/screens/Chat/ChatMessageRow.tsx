@@ -20,6 +20,7 @@ import { getMessageDisplayText } from '../../lib/messageCrypto';
 import { LinkText } from './LinkText';
 import { LinkPreviewCard } from '../../components/LinkPreviewCard';
 import { openFileUrl, formatGroupReadLabel } from './chatMessageUtils';
+import { PollMessageBubble } from '../../components/PollMessageBubble';
 
 const MessageStatus = ({
   status,
@@ -379,6 +380,19 @@ export function ChatMessageRow({
           </View>
           {reactionsBar}
         </Pressable>
+      );
+    }
+
+    if (msg.message_type === 'poll') {
+      return wrapPressable(
+        <View>
+          <PollMessageBubble
+            messageId={msg.id}
+            initialPoll={msg.poll ?? null}
+            isOutgoing={isOutgoing}
+          />
+          <View style={styles.mediaMeta}>{meta}</View>
+        </View>
       );
     }
 

@@ -67,6 +67,8 @@ type ChatInputProps = {
   /** Disables the composer (e.g. while user.id isn't ready). */
   disabled?: boolean;
   onAttachmentPress?: () => void;
+  /** Group chats: open poll composer. */
+  onCreatePoll?: () => void;
   /** When the parent owns attachment preview (e.g. ChatRoomScreen). */
   pendingAttachmentCount?: number;
   onPendingAttachmentsPress?: () => void;
@@ -123,6 +125,7 @@ const ChatInput = forwardRef<TextInput, ChatInputProps>(({
   placeholder = 'Send a message...',
   style,
   onAttachmentPress,
+  onCreatePoll,
   pendingAttachmentCount = 0,
   onPendingAttachmentsPress,
   disabled = false,
@@ -647,6 +650,20 @@ const ChatInput = forwardRef<TextInput, ChatInputProps>(({
         onPress: handleSelectDocuments,
         color: '#795548',
       },
+      ...(onCreatePoll
+        ? [
+            {
+              title: 'Poll',
+              subtitle: 'Ask the group',
+              icon: 'bar-chart-outline' as const,
+              onPress: () => {
+                setShowAttachmentMenu(false);
+                onCreatePoll();
+              },
+              color: '#5c6bc0',
+            },
+          ]
+        : []),
     ];
 
     return (

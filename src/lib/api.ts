@@ -1470,6 +1470,30 @@ export const api = {
 
   wallet: {
     balance: () => apiRequest<WalletBalanceDTO>('/api/wallet/balance'),
+    creatorAnalytics: () =>
+      apiRequest<{
+        analytics: {
+          total_reels: number;
+          total_views: number;
+          total_likes: number;
+          total_comments: number;
+          gift_count: number;
+          gift_coins_earned: number;
+          lifetime_earned_coins: number;
+          cashable_coins: number;
+          balance_coins: number;
+          top_reels: Array<{
+            id: string;
+            caption: string | null;
+            thumbnail_url: string | null;
+            view_count: number;
+            like_count: number;
+            gift_count: number;
+            gift_coin_total: number;
+            created_at: string;
+          }>;
+        };
+      }>('/api/wallet/creator-analytics'),
     ledger: (params?: { cursor?: string; limit?: number }) => {
       const search = new URLSearchParams();
       if (params?.cursor) search.set('cursor', params.cursor);
@@ -1565,4 +1589,46 @@ export const api = {
         body,
       }),
   },
+
+  polls: {
+    create: (data: {
+      group_id: string;
+      question: string;
+      options: string[];
+      allows_multiple?: boolean;
+    }) =>
+      apiRequest<{
+        message_id: string;
+        created_at: string;
+        poll: GroupPollDTO;
+      }>('/api/polls', { method: 'POST', body: data }),
+    byMessage: (messageId: string) =>
+      apiRequest<{ poll: GroupPollDTO }>(`/api/polls/by-message/${messageId}`),
+    vote: (pollId: string, option_id: string) =>
+      apiRequest<{ poll: GroupPollDTO }>(`/api/polls/${pollId}/vote`, {
+        method: 'POST',
+        body: { option_id },
+      }),
+  },
+};
+
+export type GroupPollOptionDTO = {
+  id: string;
+  label: string;
+  sort_order: number;
+  vote_count: number;
+  voted_by_me: boolean;
+};
+
+export type GroupPollDTO = {
+  id: string;
+  message_id: string;
+  group_id: string;
+  question: string;
+  allows_multiple: boolean;
+  created_by: string;
+  created_at: string;
+  closes_at: string | null;
+  total_votes: number;
+  options: GroupPollOptionDTO[];
 };

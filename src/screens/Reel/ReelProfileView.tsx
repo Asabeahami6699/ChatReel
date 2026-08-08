@@ -18,7 +18,7 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { ReelImmersiveViewer } from './ReelImmersiveViewer';
 import { api, ApiError, type ReelDTO } from '../../lib/api';
-import { navigateToOutgoingCall, rootNavigationRef } from '../../navigation/rootNavigation';
+import { navigateToOutgoingCall, navigateToPostReel } from '../../navigation/rootNavigation';
 import { openPostReelCompose } from '../../lib/reelPlaybackBridge';
 import type { SavedReelComposeDraft } from '../../lib/reelComposeDraftStore';
 import {
@@ -217,7 +217,7 @@ export default function ReelProfileView({ profileId, isSelf = false, showBack = 
 
   const openPostReel = (draft?: SavedReelComposeDraft) => {
     openPostReelCompose(draft);
-    if (rootNavigationRef.isReady()) rootNavigationRef.navigate('PostReel');
+    navigateToPostReel();
   };
 
   return (

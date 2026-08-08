@@ -33,7 +33,8 @@ import { ReelSoundStrip } from './ReelSoundStrip';
 import { ReelBrandBadge } from './ReelBrandBadge';
 import { ReelEndScreen } from './ReelEndScreen';
 import { REEL_ACCENT, REEL_END_SCREEN_MS, reelBottomLayout } from './reelTheme';
-import { registerReelFeedPauseHandler, useReelPlaybackGateActive } from '../../lib/reelPlaybackBridge';
+import { openPostReelWithSound, registerReelFeedPauseHandler, useReelPlaybackGateActive } from '../../lib/reelPlaybackBridge';
+import { navigateToPostReel } from '../../navigation/rootNavigation';
 import { useRealtimeTopic } from '../../hooks/useRealtimeTopic';
 import { ReelActionIcon } from './ReelActionIcon';
 import { useAuth } from '../../hooks/useAuth';
@@ -586,6 +587,19 @@ export function ReelImmersiveViewer({
     [navigation, requireAuth]
   );
 
+  const onUseThisSound = useCallback(
+    (reel: ReelDTO) => {
+      if (!requireAuth('Sign in to use this sound.')) return;
+      if (!reel.sound) {
+        onUseReelAudio(reel);
+        return;
+      }
+      openPostReelWithSound(reel.sound);
+      navigateToPostReel();
+    },
+    [requireAuth, onUseReelAudio]
+  );
+
   const renderReel = useCallback(
     ({ item, index }: { item: ReelDTO; index: number }) => {
       const isCurrent = index === currentIndex;
@@ -690,6 +704,7 @@ export function ReelImmersiveViewer({
                   if (!requireAuth('Sign in to browse sounds.')) return;
                   navigation.navigate('ReelSound', { soundId });
                 }}
+                onUseThisSound={onUseThisSound}
                 onPressOriginalAudio={onUseReelAudio}
               />
             </View>
@@ -769,6 +784,7 @@ export function ReelImmersiveViewer({
       disableProfileNavigation,
       navigation,
       onUseReelAudio,
+      onUseThisSound,
       openSheet,
       requireAuth,
     ]

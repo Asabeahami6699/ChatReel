@@ -22,6 +22,7 @@ import { ReelProfileGrid } from './ReelProfileGrid';
 import { useReelGridDeleteHandlers } from './useReelGridDelete';
 import { useReelProfilePosts } from './useReelProfilePosts';
 import { openPostReelCompose } from '../../lib/reelPlaybackBridge';
+import { navigateToPostReel } from '../../navigation/rootNavigation';
 import type { SavedReelComposeDraft } from '../../lib/reelComposeDraftStore';
 import {
   deleteReelComposeDraft,
@@ -256,7 +257,7 @@ export default function ReelProfileSheet({ reel, onClose, onFollowStateChange }:
             onOpenDraft={(draft: SavedReelComposeDraft) => {
               onClose();
               openPostReelCompose(draft);
-              navigation.navigate('PostReel');
+              navigateToPostReel();
             }}
             onDeleteDraft={async (draft) => {
               await deleteReelComposeDraft(draft.id);
@@ -278,7 +279,7 @@ export default function ReelProfileSheet({ reel, onClose, onFollowStateChange }:
             onNewReel={() => {
               onClose();
               openPostReelCompose();
-              navigation.navigate('PostReel');
+              navigateToPostReel();
             }}
           />
         ) : null}

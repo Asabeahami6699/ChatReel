@@ -33,6 +33,7 @@ type Props = {
   onOpenProfile: () => void;
   onNavigateSound: (soundId: string) => void;
   onUseReelAudio: () => void;
+  onUseThisSound?: () => void;
   onSponsoredCta?: () => void;
 };
 
@@ -57,6 +58,7 @@ function ReelFloatingChromeComponent({
   onOpenProfile,
   onNavigateSound,
   onUseReelAudio,
+  onUseThisSound,
   onSponsoredCta,
 }: Props) {
   const avatar = reelAvatarUrl(reel);
@@ -136,6 +138,7 @@ function ReelFloatingChromeComponent({
               reel={reel}
               authorHandle={author}
               onPressSound={onNavigateSound}
+              onUseThisSound={onUseThisSound ? () => onUseThisSound() : undefined}
               onPressOriginalAudio={onUseReelAudio}
             />
           )}

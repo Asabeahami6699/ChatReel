@@ -7,15 +7,29 @@ import {
   Image, 
   TouchableOpacity,
   TextInput,
-  FlatList,
   Modal,
-  Alert
+  Alert,
+  Platform,
+  useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useChatSettings } from '../../context/ChatSettingsContext';
+import { MOBILE_BREAKPOINT } from '../../navigation/navigationUtils';
+
+const GRID_PAD = 12;
+const CARD_GAP = 10;
 
 export default function MarketScreen({ navigation }) {
   const { theme } = useChatSettings();
+  const { width: windowWidth } = useWindowDimensions();
+  const isDesktop = Platform.OS === 'web' && windowWidth >= MOBILE_BREAKPOINT;
+  const numColumns = isDesktop ? 4 : 2;
+  /** Real Market panel width (Explore main column — not the window). */
+  const [panelWidth, setPanelWidth] = useState(0);
+  const cardWidth =
+    panelWidth > 0
+      ? Math.floor((panelWidth - GRID_PAD * 2 - CARD_GAP * (numColumns - 1)) / numColumns)
+      : 0;
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [showFilters, setShowFilters] = useState(false);
@@ -176,6 +190,7 @@ export default function MarketScreen({ navigation }) {
     <TouchableOpacity 
       style={[
         styles.productCard,
+        cardWidth > 0 ? { width: cardWidth } : null,
         {
           backgroundColor: theme.listCardBg,
           borderColor: theme.listBorder,
@@ -275,11 +290,15 @@ export default function MarketScreen({ navigation }) {
   );
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.listBg }]}>
-      {/* Header with search and cart */}
+    <View
+      style={[styles.container, { backgroundColor: theme.listBg }]}
+      onLayout={(e) => {
+        const w = Math.round(e.nativeEvent.layout.width);
+        if (w > 0 && w !== panelWidth) setPanelWidth(w);
+      }}
+    >
       <View style={[styles.header, { backgroundColor: theme.listHeaderBg, borderBottomColor: theme.listBorder }]}>
         <View style={styles.headerTop}>
-          {/* Search Bar */}
           <View style={[styles.searchContainer, { backgroundColor: theme.searchBg }]}>
             <Ionicons name="search" size={20} color={theme.searchPlaceholder} style={styles.searchIcon} />
             <TextInput
@@ -297,20 +316,16 @@ export default function MarketScreen({ navigation }) {
             </TouchableOpacity>
           </View>
 
-          {/* Cart Icon */}
-          <View style={styles.headerIcons}>
-            <TouchableOpacity style={styles.iconButton}>
-              <Ionicons name="cart-outline" size={24} color={theme.listPrimaryText} />
-              {cartItems.length > 0 && (
-                <View style={styles.cartBadge}>
-                  <Text style={styles.cartBadgeText}>{cartItems.length}</Text>
-                </View>
-              )}
-            </TouchableOpacity>
-          </View>
+          <TouchableOpacity style={styles.cartButton} accessibilityLabel="Cart">
+            <Ionicons name="cart-outline" size={24} color={theme.listPrimaryText} />
+            {cartItems.length > 0 && (
+              <View style={styles.cartBadge}>
+                <Text style={styles.cartBadgeText}>{cartItems.length}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
         </View>
 
-        {/* Categories */}
         <ScrollView 
           horizontal 
           showsHorizontalScrollIndicator={false}
@@ -342,15 +357,23 @@ export default function MarketScreen({ navigation }) {
         </ScrollView>
       </View>
 
-      {/* Products grid */}
-      <FlatList
-        data={sortedProducts}
-        renderItem={({ item }) => <ProductCard product={item} />}
-        keyExtractor={item => item.id.toString()}
-        numColumns={2}
+      <ScrollView
+        style={styles.productsList}
         contentContainerStyle={styles.productsGrid}
         showsVerticalScrollIndicator={false}
-      />
+      >
+        {Array.from({ length: Math.ceil(sortedProducts.length / numColumns) }, (_, rowIndex) => {
+          const start = rowIndex * numColumns;
+          const row = sortedProducts.slice(start, start + numColumns);
+          return (
+            <View key={`row-${rowIndex}`} style={styles.productsRow}>
+              {row.map((product) => (
+                <ProductCard key={product.id} product={product} />
+              ))}
+            </View>
+          );
+        })}
+      </ScrollView>
 
       {/* Filter Modal */}
       <Modal
@@ -399,7 +422,9 @@ export default function MarketScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: { 
     flex: 1, 
-    backgroundColor: '#f8f8f8', 
+    backgroundColor: '#f8f8f8',
+    minWidth: 0,
+    overflow: 'hidden',
   },
   header: {
     backgroundColor: '#fff',
@@ -410,32 +435,9 @@ const styles = StyleSheet.create({
   },
   headerTop: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 12,
-  },
-  headerIcons: {
-    flexDirection: 'row',
-  },
-  iconButton: {
-    marginLeft: 16,
-    position: 'relative',
-  },
-  cartBadge: {
-    position: 'absolute',
-    top: -5,
-    right: -5,
-    backgroundColor: '#FF4444',
-    borderRadius: 10,
-    width: 18,
-    height: 18,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  cartBadgeText: {
-    color: '#fff',
-    fontSize: 10,
-    fontWeight: 'bold',
+    gap: 12,
   },
   searchContainer: {
     flexDirection: 'row',
@@ -444,7 +446,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingHorizontal: 12,
     flex: 1,
-    marginRight: 16,
+    minWidth: 0,
   },
   searchIcon: {
     marginRight: 8,
@@ -453,9 +455,32 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 10,
     fontSize: 16,
+    minWidth: 0,
   },
   filterButton: {
     padding: 4,
+  },
+  cartButton: {
+    position: 'relative',
+    padding: 4,
+    flexShrink: 0,
+  },
+  cartBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    backgroundColor: '#FF4444',
+    borderRadius: 10,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cartBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: 'bold',
   },
   categoriesContainer: {
     marginBottom: 8,
@@ -478,14 +503,24 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '600',
   },
+  productsList: {
+    flex: 1,
+    minWidth: 0,
+  },
   productsGrid: {
-    padding: 8,
+    paddingHorizontal: GRID_PAD,
+    paddingVertical: GRID_PAD,
+  },
+  productsRow: {
+    flexDirection: 'row',
+    flexWrap: 'nowrap',
+    gap: CARD_GAP,
+    marginBottom: CARD_GAP,
   },
   productCard: {
     backgroundColor: '#fff',
     borderRadius: 12,
-    margin: 8,
-    width: '46%',
+    overflow: 'hidden',
     shadowColor: '#000',
     shadowOffset: {
       width: 0,
@@ -494,7 +529,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 3.84,
     elevation: 5,
-    overflow: 'hidden',
   },
   discountContainer: {
     position: 'absolute',

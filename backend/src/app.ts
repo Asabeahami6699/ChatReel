@@ -21,6 +21,7 @@ import linkPreviewRoutes from './routes/linkpreview.routes';
 import translateRoutes from './routes/translate.routes';
 import ringtonesRoutes from './routes/ringtones.routes';
 import adsRoutes from './routes/ads.routes';
+import pollsRoutes from './routes/polls.routes';
 import chatRouter from './routers/chat.router';
 import callsRouter from './routers/calls.router';
 import realtimeRoutes from './routes/realtime.routes';
@@ -79,6 +80,7 @@ export function createApp() {
   app.use('/api/link-preview', linkPreviewRoutes);
   app.use('/api/translate', translateRoutes);
   app.use('/api/ads', adsRoutes);
+  app.use('/api/polls', pollsRoutes);
 
   app.use(errorHandler);
 

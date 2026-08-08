@@ -169,6 +169,18 @@ router.post(
 );
 
 router.get(
+  '/creator-analytics',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const profileId = await getProfileIdByUserId(req.userId!);
+    if (!profileId) return res.status(404).json({ error: 'Profile not found' });
+    const { getCreatorAnalytics } = await import('../services/creatorAnalytics.service');
+    const analytics = await getCreatorAnalytics(profileId);
+    return res.json({ analytics });
+  })
+);
+
+router.get(
   '/ledger',
   requireAuth,
   asyncHandler(async (req: AuthedRequest, res) => {

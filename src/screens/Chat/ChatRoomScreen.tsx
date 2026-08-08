@@ -56,6 +56,7 @@ import { buildChatRows, type ChatRow } from './chatListModel';
 import { ChatMessageRow } from './ChatMessageRow';
 import { ChatMediaAlbum } from './ChatMediaAlbum';
 import { ChatRoomLockCover } from '../../components/ChatRoomLockCover';
+import { PollComposerSheet } from '../../components/PollMessageBubble';
 import { navigateToReelPreview } from '../../navigation/navigateToChat';
 import { ensureSupabaseSession } from '../../lib/ensureSupabaseSession';
 import { useChatTyping } from '../../hooks/useChatTyping';
@@ -161,6 +162,8 @@ export default function ChatRoomScreen() {
   const [hasAudioPermission, setHasAudioPermission] = useState<boolean>(false);
   const [pendingAttachments, setPendingAttachments] = useState<AttachmentFile[]>([]);
   const [showAttachmentPreview, setShowAttachmentPreview] = useState(false);
+  const [pollComposerOpen, setPollComposerOpen] = useState(false);
+  const [pollPosting, setPollPosting] = useState(false);
   const [mediaViewer, setMediaViewer] = useState<{
     visible: boolean;
     index: number;
@@ -3546,10 +3549,56 @@ export default function ChatRoomScreen() {
           pendingAttachmentCount={pendingAttachments.length}
           onPendingAttachmentsPress={() => setShowAttachmentPreview(true)}
           mentionMembers={chatType === 'group' ? groupMembers : undefined}
+          onCreatePoll={
+            chatType === 'group' ? () => setPollComposerOpen(true) : undefined
+          }
           style={{ paddingBottom: isKeyboardVisible ? 6 : insets.bottom }}
           disabled={!user?.id}
         />
       </KeyboardAvoidingView>
+
+      <PollComposerSheet
+        visible={pollComposerOpen}
+        busy={pollPosting}
+        onClose={() => setPollComposerOpen(false)}
+        onSubmit={(data) => {
+          void (async () => {
+            if (chatType !== 'group' || !chatId) return;
+            setPollPosting(true);
+            try {
+              const res = await api.polls.create({
+                group_id: chatId,
+                question: data.question,
+                options: data.options,
+                allows_multiple: data.allowsMultiple,
+              });
+              const pollMsg = {
+                id: res.message_id,
+                sender_id: user?.id ?? '',
+                group_id: chatId,
+                content: data.question,
+                message_type: 'poll' as const,
+                created_at: res.created_at,
+                poll: res.poll,
+                status: 'sent' as const,
+              };
+              setMessages((prev) => {
+                if (prev.some((m) => m.id === pollMsg.id)) return prev;
+                return [...prev, pollMsg as Message];
+              });
+              setPollComposerOpen(false);
+              showAppToast('Poll posted');
+            } catch (err) {
+              showAppToast(
+                err instanceof ApiError ? err.message : 'Could not create poll',
+                { isError: true }
+              );
+            } finally {
+              setPollPosting(false);
+            }
+          })();
+        }}
+      />
 
       <DisappearTimerSheet
         visible={disappearSheetOpen}

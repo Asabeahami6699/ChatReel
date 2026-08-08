@@ -1,12 +1,15 @@
 import React, { useMemo } from 'react';
-import { View, StyleSheet } from 'react-native';
-import { NavigationContainer, NavigationIndependentTree } from '@react-navigation/native';
+import { View, StyleSheet, TouchableOpacity } from 'react-native';
+import { NavigationContainer, NavigationIndependentTree, useNavigation } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ChatRoomScreen from '../screens/Chat/ChatRoomScreen';
 import ContactScreen from '../screens/Chat/ContactScreen';
 import EmptyChatScreen from '../screens/Chat/EmptyChatScreen';
 import ChatSettingsScreen from '../screens/Chat/ChatSettingsScreen';
 import GroupInfoScreen from '../screens/Group/GroupInfoScreen';
+import ExploreNavigator from './ExploreNavigator';
 import { useChatSettings } from '../context/ChatSettingsContext';
 import { buildNavigationTheme } from '../theme/buildAppTheme';
 
@@ -64,14 +67,53 @@ export function WebMainPanel({ selectedChat }: Props) {
   return <WebChatRoomPanel params={selectedChat} />;
 }
 
+/**
+ * Desktop Explore main panel — own NavigationContainer so it does not clash
+ * with the sidebar tab navigator (same pattern as Reels / WebChatPanel).
+ */
+export function WebExploreMainPanel() {
+  const { theme } = useChatSettings();
+  const navigationTheme = useMemo(() => buildNavigationTheme(theme), [theme]);
+
+  return (
+    <NavigationIndependentTree>
+      <NavigationContainer theme={navigationTheme}>
+        <ExploreNavigator />
+      </NavigationContainer>
+    </NavigationIndependentTree>
+  );
+}
+
 /** Placeholder in the narrow sidebar when Reels tab is selected. */
 export function WebReelsSidebarPlaceholder() {
-  return <View style={styles.reelsSidebarHint} />;
+  const navigation = useNavigation<any>();
+  const insets = useSafeAreaInsets();
+
+  return (
+    <View style={styles.reelsSidebarHint}>
+      <TouchableOpacity
+        style={[styles.reelsBackBtn, { marginTop: Math.max(insets.top, 8) }]}
+        onPress={() => navigation.navigate('Chats')}
+        accessibilityLabel="Back to chats"
+        hitSlop={10}
+      >
+        <Ionicons name="arrow-back" size={22} color="#fff" />
+      </TouchableOpacity>
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
   reelsSidebarHint: {
     flex: 1,
     backgroundColor: '#000',
+    alignItems: 'center',
+  },
+  reelsBackBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

@@ -70,6 +70,8 @@ export function reelFilterToVf(filterId?: string | null): string | null {
       return 'eq=saturation=0.72:brightness=0.04';
     case 'mono':
       return 'hue=s=0';
+    case 'bw':
+      return 'hue=s=0';
     case 'noir':
       return 'hue=s=0,eq=contrast=1.25:brightness=-0.04';
     case 'cinema':
@@ -88,6 +90,38 @@ export function reelFilterToVf(filterId?: string | null): string | null {
       return 'eq=contrast=1.18:saturation=1.05:brightness=0.02';
     case 'dream':
       return 'eq=saturation=1.08:brightness=0.03,colorbalance=rs=0.04:bs=0.08';
+    case 'glow':
+      return 'eq=brightness=0.06:saturation=1.08:gamma=0.95';
+    case 'bloom':
+      return 'eq=saturation=1.12:brightness=0.05,colorbalance=rs=0.06:bs=0.05';
+    case 'sky':
+      return 'eq=saturation=1.1,colorbalance=bs=0.12:rs=-0.04';
+    case 'golden':
+      return 'eq=saturation=1.18:gamma_r=1.1,colorbalance=rs=0.1:gs=0.04:bs=-0.08';
+    case 'vintage':
+      return 'eq=saturation=0.75:contrast=1.08:gamma=1.1,colorbalance=rs=0.06:bs=-0.04';
+    case 'pop':
+      return 'eq=contrast=1.2:saturation=1.45';
+    case 'frost':
+      return 'eq=brightness=0.08:saturation=0.85,colorbalance=bs=0.08';
+    case 'neon':
+      return 'eq=contrast=1.15:saturation=1.4,colorbalance=gs=0.1:bs=0.06';
+    case 'sepia':
+      return 'colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131';
+    case 'softbw':
+      return 'hue=s=0,eq=contrast=0.95:brightness=0.05';
+    case 'drama':
+      return 'eq=contrast=1.3:saturation=0.85:brightness=-0.03,colorbalance=bs=0.04';
+    case 'peach':
+      return 'eq=saturation=1.08,colorbalance=rs=0.1:gs=0.03:bs=-0.05';
+    case 'ocean':
+      return 'eq=saturation=1.05:contrast=1.08,colorbalance=bs=0.12:rs=-0.06';
+    case 'lavender':
+      return 'eq=saturation=1.1,colorbalance=rs=0.05:bs=0.1';
+    case 'honey':
+      return 'eq=saturation=1.15:gamma_r=1.08:gamma_g=1.04,colorbalance=rs=0.08:gs=0.04';
+    case 'ink':
+      return 'hue=s=0,eq=contrast=1.4:brightness=-0.08';
     default:
       return null;
   }

@@ -18,6 +18,7 @@ import {
 import { createMaterialTopTabNavigator } from '@react-navigation/material-top-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { AnimatedTabIcon } from './AnimatedTabIcon';
+import { DesktopVerticalTabBar } from './DesktopCollapsedVerticalTabBar';
 import { USE_NATIVE_DRIVER } from '../lib/animation';
 
 // === SCREENS ===
@@ -32,7 +33,8 @@ import CallsScreen from '../screens/Call/CallsScreen';
 import ActiveCallScreen from '../screens/Call/ActiveCallScreen';
 import OutgoingCallScreen from '../screens/Call/OutgoingCallScreen';
 import ReelsNavigator from './ReelsNavigator';
-import { WebMainPanel, WebReelsSidebarPlaceholder } from './WebMainPanel';
+import { WebMainPanel, WebExploreMainPanel } from './WebMainPanel';
+import { CallsDesktopMain } from './CallsDesktopMain';
 import PostReelScreen from '../screens/Reel/PostReelScreen';
 import ReelPreviewScreen from '../screens/Reel/ReelPreviewScreen';
 import NewGroupScreen from '../screens/Group/NewGroupScreen';
@@ -346,23 +348,18 @@ const MainTabNavigator = () => {
  *  Web desktop: sidebar + chat panel (no call screens here — those live
  *  on the root stack so navigation works from nested chat trees).
  * ------------------------------------------------------------------ */
-const SIDEBAR_FULL = 320;
-const SIDEBAR_COLLAPSED = 64;
+const SIDEBAR_LIST = 320;
+const SIDEBAR_NAV = 72;
 
 const WebDesktopMain = () => {
   const [selectedChat, setSelectedChat] = useState<any>(null);
   const [activeTab, setActiveTab] = useState('Chats');
   const { theme } = useChatSettings();
   const isReels = activeTab === 'Reels';
-  const sidebarWidth = isReels ? SIDEBAR_COLLAPSED : SIDEBAR_FULL;
-
-  // Reels is always its own black surface; every other tab follows the theme.
-  const sidebarSurface = isReels
-    ? styles.sidebarReels
-    : { backgroundColor: theme.listCardBg, borderColor: theme.listBorder };
-  const webTabBarSurface = isReels
-    ? styles.webTabBarCollapsed
-    : [styles.webTabBar, { backgroundColor: theme.listCardBg, borderColor: theme.listBorder }];
+  const isExplore = activeTab === 'Explore';
+  const isCalls = activeTab === 'Calls';
+  const showListSidebar = activeTab === 'Chats' || isCalls;
+  const sidebarWidth = showListSidebar ? SIDEBAR_NAV + SIDEBAR_LIST : SIDEBAR_NAV;
 
   const openDesktopChat = useCallback((params: OpenChatParams) => {
     setActiveTab('Chats');
@@ -376,10 +373,33 @@ const WebDesktopMain = () => {
 
   return (
     <View style={styles.webContainer}>
-      <View style={[styles.sidebar, { width: sidebarWidth }, sidebarSurface]}>
+      <View
+        style={[
+          styles.sidebarShell,
+          {
+            width: sidebarWidth,
+            backgroundColor: isReels ? '#000' : theme.listCardBg,
+            borderColor: isReels ? '#222' : theme.listBorder,
+          },
+        ]}
+      >
         <Tab.Navigator
           initialRouteName="Chats"
           tabBarPosition="bottom"
+          tabBar={(props) => (
+            <View style={styles.navRailHost} pointerEvents="box-none">
+              <DesktopVerticalTabBar
+                {...props}
+                variant={isReels ? 'reels' : 'default'}
+                activeColor={isReels ? '#fff' : theme.tabActive}
+                inactiveColor={
+                  isReels ? 'rgba(255,255,255,0.45)' : theme.tabInactive
+                }
+                backgroundColor={isReels ? '#000' : theme.listCardBg}
+                borderColor={isReels ? '#222' : theme.listBorder}
+              />
+            </View>
+          )}
           screenListeners={{
             state: (e) => {
               blurActiveElementOnWeb();
@@ -391,13 +411,13 @@ const WebDesktopMain = () => {
           }}
           screenOptions={{
             tabBarShowIcon: true,
-            tabBarShowLabel: !isReels,
+            tabBarShowLabel: false,
             tabBarActiveTintColor: isReels ? '#fff' : theme.tabActive,
-            tabBarInactiveTintColor: isReels ? 'rgba(255,255,255,0.45)' : theme.tabInactive,
-            tabBarStyle: webTabBarSurface,
-            tabBarLabelStyle: TAB_LABEL_STYLE,
-            tabBarItemStyle: isReels ? styles.webTabBarItemCollapsed : undefined,
-            tabBarIndicatorStyle: isReels ? { display: 'none' } : undefined,
+            tabBarInactiveTintColor: isReels
+              ? 'rgba(255,255,255,0.45)'
+              : theme.tabInactive,
+            tabBarStyle: { display: 'none' },
+            tabBarIndicatorStyle: { display: 'none' },
             tabBarPressColor: 'transparent',
             lazy: true,
             lazyPreloadDistance: 0,
@@ -408,82 +428,52 @@ const WebDesktopMain = () => {
             listeners={{ focus: () => setSelectedChat(null) }}
             options={{
               lazy: false,
-              tabBarLabel: ({ color, focused }) => (
-                <TabBarLabel label="Chats" color={color} focused={focused} />
-              ),
-              tabBarIcon: ({ color, focused }) => (
-                <AnimatedTabIcon
-                  name="chatbubble-ellipses-outline"
-                  focusedName="chatbubble-ellipses"
-                  size={22}
-                  color={color}
-                  focused={focused}
-                />
-              ),
+              sceneStyle: styles.listSceneHost,
             }}
           >
-            {() => <ChatStack setSelectedChat={setSelectedChat} />}
+            {() => (
+              <View style={[styles.listSceneInner, { borderColor: theme.listBorder }]}>
+                <ChatStack setSelectedChat={setSelectedChat} />
+              </View>
+            )}
           </Tab.Screen>
           <Tab.Screen
             name="Explore"
-            component={ExploreNavigator}
             options={{
               lazy: false,
-              tabBarLabel: ({ color, focused }) => (
-                <TabBarLabel label="Explore" color={color} focused={focused} />
-              ),
-              tabBarIcon: ({ color, focused }) => (
-                <AnimatedTabIcon
-                  name="compass-outline"
-                  focusedName="compass"
-                  size={22}
-                  color={color}
-                  focused={focused}
-                />
-              ),
+              sceneStyle: styles.collapsedScene,
             }}
-          />
+          >
+            {() => <View />}
+          </Tab.Screen>
           <Tab.Screen
             name="Calls"
-            component={CallsScreen}
             options={{
-              tabBarLabel: ({ color, focused }) => (
-                <TabBarLabel label="Calls" color={color} focused={focused} />
-              ),
-              tabBarIcon: ({ color, focused }) => (
-                <AnimatedTabIcon
-                  name="call-outline"
-                  focusedName="call"
-                  size={22}
-                  color={color}
-                  focused={focused}
-                />
-              ),
+              sceneStyle: styles.listSceneHost,
             }}
-          />
+          >
+            {() => (
+              <View style={[styles.listSceneInner, { borderColor: theme.listBorder }]}>
+                <CallsScreen />
+              </View>
+            )}
+          </Tab.Screen>
           <Tab.Screen
             name="Reels"
-            component={WebReelsSidebarPlaceholder}
-            options={{
-              tabBarLabel: ({ color, focused }) => (
-                <TabBarLabel label="Reels" color={color} focused={focused} />
-              ),
-              tabBarIcon: ({ color, focused }) => (
-                <AnimatedTabIcon
-                  name="play-circle-outline"
-                  focusedName="play-circle"
-                  size={22}
-                  color={color}
-                  focused={focused}
-                />
-              ),
-            }}
-          />
+            options={{ sceneStyle: styles.collapsedScene }}
+          >
+            {() => <View />}
+          </Tab.Screen>
         </Tab.Navigator>
       </View>
+
       <View style={[styles.mainPanel, { backgroundColor: theme.listBg }]}>
         {isReels ? (
           <ReelsNavigator key="web-desktop-reels" />
+        ) : isExplore ? (
+          <WebExploreMainPanel key="web-desktop-explore" />
+        ) : isCalls ? (
+          <CallsDesktopMain key="web-desktop-calls" />
         ) : (
           <WebChatPanel selectedChat={selectedChat} />
         )}
@@ -623,6 +613,34 @@ const styles = StyleSheet.create({
     flex: 1, 
     flexDirection: 'row' 
   },
+  sidebarShell: {
+    borderRightWidth: 1,
+    overflow: 'hidden',
+    position: 'relative',
+    flexShrink: 0,
+  },
+  navRailHost: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: SIDEBAR_NAV,
+    zIndex: 20,
+  },
+  listSceneHost: {
+    flex: 1,
+    width: '100%',
+    overflow: 'hidden',
+  },
+  listSceneInner: {
+    position: 'absolute',
+    left: SIDEBAR_NAV,
+    top: 0,
+    bottom: 0,
+    width: SIDEBAR_LIST,
+    overflow: 'hidden',
+    borderLeftWidth: StyleSheet.hairlineWidth,
+  },
   sidebar: {
     width: 320,
     borderRightWidth: 1,
@@ -649,8 +667,16 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     minWidth: 0,
   },
+  collapsedScene: {
+    flex: 0,
+    width: 0,
+    height: 0,
+    overflow: 'hidden',
+    opacity: 0,
+  },
   mainPanel: {
     flex: 1,
+    minWidth: 0,
   },
 
   // Mobile styles — backgroundColor overridden by theme in AppNavigator

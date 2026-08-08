@@ -5,7 +5,7 @@ import { getMediaPlaybackUrl, isImageReelUrl } from '../../lib/reelPlayback';
 import { ReelPlayer, type ReelPlaybackStatus, type ReelPlayerHandle } from '../../components/ReelPlayer';
 import { WebHlsVideo } from './WebHlsVideo';
 import { WebVideoPoster } from './WebVideoPoster';
-import { getReelFilterOverlay } from './reelFilters';
+import { getReelFilterOverlay, getReelFilterCssFilter } from './reelFilters';
 
 type Props = {
   reel: ReelDTO;
@@ -53,9 +53,11 @@ export function ReelMediaSlide({
   const imageReadyRef = useRef(false);
   const filterId = media.filter_id ?? reel.filter_id;
   const filterOverlay = getReelFilterOverlay(filterId);
+  const filterCss = getReelFilterCssFilter(filterId);
   const showFilter =
-    Boolean(filterOverlay) &&
+    (Boolean(filterOverlay) || Boolean(filterCss)) &&
     (isImage || (media.transcode_status ?? reel.transcode_status) !== 'ready');
+  const mediaFilterStyle = showFilter && filterCss ? ({ filter: filterCss } as object) : null;
 
   useEffect(() => {
     if (isImage && isActiveSlide && !imageReadyRef.current) {
@@ -80,13 +82,13 @@ export function ReelMediaSlide({
       <View style={[styles.shell, shellStyle]}>
         <Image
           source={{ uri: playbackUri }}
-          style={styles.media}
+          style={[styles.media, mediaFilterStyle]}
           resizeMode="cover"
           onLoad={() => onReady(slideKey)}
         />
-        {showFilter ? (
+        {showFilter && filterOverlay ? (
           <View
-            style={[StyleSheet.absoluteFill, { backgroundColor: filterOverlay! }]}
+            style={[StyleSheet.absoluteFill, { backgroundColor: filterOverlay }]}
             pointerEvents="none"
           />
         ) : null}
@@ -97,46 +99,54 @@ export function ReelMediaSlide({
   return (
     <View style={[styles.shell, shellStyle]}>
       {showPoster && posterUri && (
-        <Image source={{ uri: posterUri }} style={styles.media} resizeMode="cover" />
+        <Image
+          source={{ uri: posterUri }}
+          style={[styles.media, mediaFilterStyle]}
+          resizeMode="cover"
+        />
       )}
       {!isReady && !showPoster && useWebStream && (
         <WebVideoPoster uri={playbackUri} posterUri={posterUri} style={styles.media} />
       )}
       {useWebStream ? (
-        <WebHlsVideo
-          ref={(playerRef) => onRef(slideKey, playerRef)}
-          uri={playbackUri}
-          style={styles.media}
-          muted={isMuted}
-          volume={volume}
-          shouldPlay={isActiveSlide && isPlaying && isFocused}
-          contentFit="cover"
-          onReady={() => onReady(slideKey)}
-          onPlaybackStatusUpdate={(status) => onPlaybackStatus(slideKey, status, isActiveSlide)}
-        />
+        <View style={[styles.media, mediaFilterStyle]}>
+          <WebHlsVideo
+            ref={(playerRef) => onRef(slideKey, playerRef)}
+            uri={playbackUri}
+            style={styles.media}
+            muted={isMuted}
+            volume={volume}
+            shouldPlay={isActiveSlide && isPlaying && isFocused}
+            contentFit="cover"
+            onReady={() => onReady(slideKey)}
+            onPlaybackStatusUpdate={(status) => onPlaybackStatus(slideKey, status, isActiveSlide)}
+          />
+        </View>
       ) : (
-        <ReelPlayer
-          ref={(ref) => onRef(slideKey, ref)}
-          source={playbackUri}
-          style={styles.media}
-          contentFit="cover"
-          shouldPlay={isActiveSlide && isPlaying && isFocused}
-          isMuted={isMuted}
-          volume={volume}
-          isLooping={false}
-          progressUpdateIntervalMillis={isActiveSlide ? 250 : 1000}
-          onReadyForDisplay={() => onReady(slideKey)}
-          onPlaybackStatusUpdate={(status) => onPlaybackStatus(slideKey, status, isActiveSlide)}
-        />
+        <View style={[styles.media, mediaFilterStyle]}>
+          <ReelPlayer
+            ref={(ref) => onRef(slideKey, ref)}
+            source={playbackUri}
+            style={styles.media}
+            contentFit="cover"
+            shouldPlay={isActiveSlide && isPlaying && isFocused}
+            isMuted={isMuted}
+            volume={volume}
+            isLooping={false}
+            progressUpdateIntervalMillis={isActiveSlide ? 250 : 1000}
+            onReadyForDisplay={() => onReady(slideKey)}
+            onPlaybackStatusUpdate={(status) => onPlaybackStatus(slideKey, status, isActiveSlide)}
+          />
+        </View>
       )}
       {!isReady && !showPoster && !useWebStream && (
         <View style={styles.loadingOverlay}>
           <ActivityIndicator color="#fff" size="large" />
         </View>
       )}
-      {showFilter ? (
+      {showFilter && filterOverlay ? (
         <View
-          style={[StyleSheet.absoluteFill, { backgroundColor: filterOverlay! }]}
+          style={[StyleSheet.absoluteFill, { backgroundColor: filterOverlay }]}
           pointerEvents="none"
         />
       ) : null}

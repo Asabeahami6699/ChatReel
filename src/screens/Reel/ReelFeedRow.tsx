@@ -45,6 +45,7 @@ export type ReelFeedRowProps = {
   onOpenProfile: (reel: ReelDTO) => void;
   onNavigateSound: (soundId: string) => void;
   onUseReelAudio: (reel: ReelDTO) => void;
+  onUseThisSound?: (reel: ReelDTO) => void;
   onSponsoredCta?: (reel: ReelDTO) => void;
   onReady: (reelId: string) => void;
   onPlaybackStatus: (reelId: string, status: ReelPlaybackStatus, isCurrent: boolean) => void;
@@ -80,6 +81,7 @@ function ReelFeedRowComponent({
   onOpenProfile,
   onNavigateSound,
   onUseReelAudio,
+  onUseThisSound,
   onSponsoredCta,
   onReady,
   onPlaybackStatus,
@@ -211,6 +213,7 @@ function ReelFeedRowComponent({
                 reel={item}
                 authorHandle={author}
                 onPressSound={onNavigateSound}
+                onUseThisSound={onUseThisSound}
                 onPressOriginalAudio={onUseReelAudio}
               />
             </View>

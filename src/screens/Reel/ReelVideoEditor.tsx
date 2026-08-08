@@ -21,6 +21,8 @@ import { fitMediaInBounds } from './reelVideoLayout';
 import { ReelTrimTimeline } from './ReelTrimTimeline';
 import {
   getReelFilterOverlay,
+  getReelFilterCssFilter,
+  getReelFilterSwatch,
   REEL_FILTER_PRESETS,
   type ReelFilterId,
 } from './reelFilters';
@@ -94,6 +96,7 @@ export function ReelVideoEditor({
 
   const filterId = video.filterId ?? 'none';
   const filterOverlay = getReelFilterOverlay(filterId);
+  const filterCss = getReelFilterCssFilter(filterId);
 
   useEffect(() => {
     durationSyncedRef.current = false;
@@ -231,7 +234,12 @@ export function ReelVideoEditor({
   const previewMaxHeight = previewMode
     ? Math.max(320, windowWidth * 1.55)
     : immersive
-      ? Math.min(COMPOSE_PREVIEW_HEIGHT, Math.round(previewMaxWidth * 1.55))
+      ? // Leave room for trim/filter docks so controls aren't below the fold.
+        Math.min(
+          Math.round(windowHeight * 0.48),
+          COMPOSE_PREVIEW_HEIGHT,
+          Math.round(previewMaxWidth * 1.55)
+        )
       : Math.min(480, Math.round(previewMaxWidth * 1.35));
   const mediaLayout =
     video.width && video.height && video.width > 0 && video.height > 0
@@ -251,17 +259,19 @@ export function ReelVideoEditor({
       ]}
     >
       <TouchableOpacity activeOpacity={1} onPress={() => void togglePlay()} style={styles.videoTap}>
-        <ReelPlayer
-          ref={playerRef}
-          source={video.uri}
-          style={styles.preview}
-          contentFit="contain"
-          isLooping={false}
-          shouldPlay={isPlaying && !forcePaused}
-          isMuted={overlaySound ? true : isMuted}
-          progressUpdateIntervalMillis={200}
-          onPlaybackStatusUpdate={onPlaybackStatus}
-        />
+        <View style={filterCss ? ({ filter: filterCss } as object) : undefined}>
+          <ReelPlayer
+            ref={playerRef}
+            source={video.uri}
+            style={styles.preview}
+            contentFit="contain"
+            isLooping={false}
+            shouldPlay={isPlaying && !forcePaused}
+            isMuted={overlaySound ? true : isMuted}
+            progressUpdateIntervalMillis={200}
+            onPlaybackStatusUpdate={onPlaybackStatus}
+          />
+        </View>
         {filterOverlay ? (
           <View style={[styles.filterOverlay, { backgroundColor: filterOverlay }]} pointerEvents="none" />
         ) : null}
@@ -320,21 +330,35 @@ export function ReelVideoEditor({
             return (
               <TouchableOpacity
                 key={preset.id}
-                style={[styles.filterChip, active && styles.filterChipActive]}
+                style={styles.filterChip}
                 onPress={() => onChange({ filterId: preset.id })}
+                activeOpacity={0.85}
               >
                 <View
                   style={[
-                    styles.filterSwatch,
-                    active && { borderColor: '#1e90ff' },
+                    styles.filterLens,
+                    active && styles.filterLensActive,
+                    { borderColor: active ? '#fff' : 'rgba(255,255,255,0.25)' },
                   ]}
                 >
-                  <View style={[StyleSheet.absoluteFill, { backgroundColor: '#444' }]} />
+                  <View
+                    style={[
+                      StyleSheet.absoluteFill,
+                      { backgroundColor: getReelFilterSwatch(preset.id), borderRadius: 28 },
+                    ]}
+                  />
                   {preset.overlay ? (
-                    <View style={[StyleSheet.absoluteFill, { backgroundColor: preset.overlay }]} />
+                    <View
+                      style={[
+                        StyleSheet.absoluteFill,
+                        { backgroundColor: preset.overlay, borderRadius: 28 },
+                      ]}
+                    />
                   ) : null}
                 </View>
-                <Text style={[styles.filterLabel, active && styles.filterLabelActive]}>{preset.label}</Text>
+                <Text style={[styles.filterLabel, active && styles.filterLabelActive]}>
+                  {preset.label}
+                </Text>
               </TouchableOpacity>
             );
           })}
@@ -427,10 +451,21 @@ const styles = StyleSheet.create({
   toolBtnText: { color: '#fff', fontSize: 12, fontWeight: '600' },
   hint: { color: '#888', fontSize: 12, marginTop: 8, marginBottom: 4 },
   loadingHint: { color: '#9eb4c7', fontSize: 12, marginTop: 10, marginBottom: 4 },
-  filterScroll: { marginTop: 10, maxHeight: 88 },
-  filterRow: { gap: 10, paddingHorizontal: 4, paddingBottom: 4 },
-  filterChip: { alignItems: 'center', width: 64 },
+  filterScroll: { marginTop: 10, maxHeight: 100 },
+  filterRow: { gap: 12, paddingHorizontal: 8, paddingBottom: 6, paddingTop: 4 },
+  filterChip: { alignItems: 'center', width: 62 },
   filterChipActive: {},
+  filterLens: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    overflow: 'hidden',
+    borderWidth: 2.5,
+    marginBottom: 6,
+  },
+  filterLensActive: {
+    transform: [{ scale: 1.06 }],
+  },
   filterSwatch: {
     width: 52,
     height: 52,
@@ -440,7 +475,7 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
     marginBottom: 4,
   },
-  filterLabel: { color: '#888', fontSize: 11, fontWeight: '600' },
+  filterLabel: { color: 'rgba(255,255,255,0.55)', fontSize: 10, fontWeight: '700' },
   filterLabelActive: { color: '#fff' },
   previewHint: {
     color: '#aaa',

@@ -50,6 +50,19 @@ export function navigateMainTab(
   }
 }
 
+/** PostReel lives on the root stack — never navigate from nested/independent Reels trees. */
+export function navigateToPostReel(attempt = 0) {
+  if (rootNavigationRef.isReady()) {
+    rootNavigationRef.navigate('PostReel');
+    return;
+  }
+  if (attempt < 40) {
+    setTimeout(() => navigateToPostReel(attempt + 1), 50);
+  } else {
+    console.warn('[navigation] root not ready for PostReel');
+  }
+}
+
 /**
  * Start an outgoing call — opens ActiveCallLayer over Main (LiveKit connects
  * while ringing so both sides meet as soon as accept lands).

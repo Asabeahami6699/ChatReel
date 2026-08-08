@@ -26,6 +26,7 @@ import {
 } from '../../lib/appAudio';
 import {
   getReelFilterOverlay,
+  getReelFilterCssFilter,
   REEL_FILTER_PRESETS,
   type ReelFilterId,
 } from './reelFilters';
@@ -108,6 +109,7 @@ export function PostReelImageComposer({
   const soundClipLen = Math.min(clipLenSec, soundDuration);
   const filterId = image.filterId ?? 'none';
   const filterOverlay = getReelFilterOverlay(filterId);
+  const filterCss = getReelFilterCssFilter(filterId);
   const previewHeight = Math.max(220, windowHeight * 0.48);
 
   const overlaySound = useMemo(
@@ -292,7 +294,11 @@ export function PostReelImageComposer({
         showsVerticalScrollIndicator={false}
       >
         <View style={[styles.previewWrap, { height: previewHeight }]}>
-          <Image source={{ uri: image.uri }} style={styles.previewImage} resizeMode="contain" />
+          <Image
+            source={{ uri: image.uri }}
+            style={[styles.previewImage, filterCss ? ({ filter: filterCss } as object) : null]}
+            resizeMode="contain"
+          />
           {filterOverlay ? (
             <View style={[styles.filterOverlay, { backgroundColor: filterOverlay }]} pointerEvents="none" />
           ) : null}
@@ -314,7 +320,13 @@ export function PostReelImageComposer({
                   onPress={() => onImageChange({ filterId: preset.id })}
                 >
                   <View style={[styles.filterSwatch, active && { borderColor: REEL_ACCENT }]}>
-                    <View style={[StyleSheet.absoluteFill, { backgroundColor: '#444' }]} />
+                    <View
+                      style={[
+                        StyleSheet.absoluteFill,
+                        { backgroundColor: preset.swatch ?? '#444' },
+                        preset.cssFilter ? ({ filter: preset.cssFilter } as object) : null,
+                      ]}
+                    />
                     {preset.overlay ? (
                       <View style={[StyleSheet.absoluteFill, { backgroundColor: preset.overlay }]} />
                     ) : null}
@@ -511,7 +523,11 @@ export function PostReelImageComposer({
             </TouchableOpacity>
           </View>
           <View style={[styles.previewWrap, { flex: 1 }]}>
-            <Image source={{ uri: image.uri }} style={styles.previewImage} resizeMode="contain" />
+            <Image
+              source={{ uri: image.uri }}
+              style={[styles.previewImage, filterCss ? ({ filter: filterCss } as object) : null]}
+              resizeMode="contain"
+            />
             {filterOverlay ? (
               <View style={[styles.filterOverlay, { backgroundColor: filterOverlay }]} pointerEvents="none" />
             ) : null}

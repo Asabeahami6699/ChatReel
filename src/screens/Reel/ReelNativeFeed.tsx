@@ -77,18 +77,32 @@ export const ReelNativeFeed = forwardRef<ReelNativeFeedHandle, Props>(function R
   heightRef.current = reelHeight;
   const indexRef = useRef(currentIndex);
   indexRef.current = currentIndex;
+  const layoutLockUntilRef = useRef(0);
   const canPullRefresh = Boolean(onRefresh) && (reels.length === 0 || currentIndex === 0);
 
   // Page height changes (measure-after-layout, rotation, split screen) leave the
   // scroller parked between two pages — re-anchor on the reel the user is on.
   useEffect(() => {
     if (reelHeight <= 0) return;
+    layoutLockUntilRef.current = Date.now() + 700;
     scrollRef.current?.scrollTo({ y: Math.max(0, indexRef.current) * reelHeight, animated: false });
   }, [reelHeight]);
+
+  // First populate: pin to index 0 and ignore settle callbacks briefly.
+  const prevLenRef = useRef(0);
+  useEffect(() => {
+    const prev = prevLenRef.current;
+    prevLenRef.current = reels.length;
+    if (prev === 0 && reels.length > 0 && reelHeight > 0) {
+      layoutLockUntilRef.current = Date.now() + 900;
+      scrollRef.current?.scrollTo({ y: Math.max(0, indexRef.current) * reelHeight, animated: false });
+    }
+  }, [reels.length, reelHeight]);
 
   useImperativeHandle(ref, () => ({
     scrollToIndex: (index: number, animated = true) => {
       const h = heightRef.current;
+      layoutLockUntilRef.current = Date.now() + 320;
       scrollRef.current?.scrollTo({ y: Math.max(0, index) * h, animated });
     },
   }));
@@ -97,6 +111,7 @@ export const ReelNativeFeed = forwardRef<ReelNativeFeedHandle, Props>(function R
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
       const h = heightRef.current;
       if (h <= 0) return;
+      if (Date.now() < layoutLockUntilRef.current) return;
       const y = e.nativeEvent.contentOffset.y;
       const next = Math.max(0, Math.min(reels.length - 1, Math.round(y / h)));
       if (next !== indexRef.current) onIndexChange(next);
@@ -110,6 +125,7 @@ export const ReelNativeFeed = forwardRef<ReelNativeFeedHandle, Props>(function R
       // Let paging + momentum finish the page change; only nudge when almost settled.
       const h = heightRef.current;
       if (h <= 0) return;
+      if (Date.now() < layoutLockUntilRef.current) return;
       const y = e.nativeEvent.contentOffset.y;
       const velocity = e.nativeEvent.velocity?.y ?? 0;
       if (Math.abs(velocity) > 0.6) return;

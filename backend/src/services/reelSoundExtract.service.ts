@@ -7,6 +7,7 @@ import path from 'path';
 import { supabaseAdmin } from '../lib/supabaseAdmin';
 import { videoHasAudioFromFfmpegStderr } from '../lib/videoProbe';
 import { createReelSound, type ReelSoundRow } from './reelSounds.service';
+import { identifyMusicFromUrl } from './musicIdentify.service';
 
 let ffmpegReady = false;
 
@@ -163,9 +164,17 @@ export async function extractSoundFromVideoUrl(input: {
         ? extractMaxDurationSec(input.durationSec)
         : null;
 
+    // Best-effort song ID (AudD). Falls back to caller title / "Original sound".
+    const identified = await identifyMusicFromUrl(data.publicUrl);
+    const title =
+      identified?.title?.trim() ||
+      input.title.trim() ||
+      'Original sound';
+    const artist = identified?.artist ?? input.artist ?? null;
+
     const sound = await createReelSound({
-      title: input.title.trim() || 'Extracted audio',
-      artist: input.artist ?? null,
+      title,
+      artist,
       audio_url: data.publicUrl,
       preview_url: data.publicUrl,
       duration_sec: durationSec,

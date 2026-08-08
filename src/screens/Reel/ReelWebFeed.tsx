@@ -61,40 +61,140 @@ export const ReelWebFeed = forwardRef<ReelWebFeedHandle, Props>(function ReelWeb
   onRefreshRef.current = onRefresh;
   const refreshingRef = useRef(refreshing);
   refreshingRef.current = refreshing;
+  /** Suppress index jumps while re-anchoring after layout/height changes. */
+  const layoutLockUntilRef = useRef(0);
+  /** Only true after a real user gesture (touch/wheel) — never from programmatic scroll. */
+  const userArmedRef = useRef(false);
+  const programmaticScrollRef = useRef(false);
+  const prevLenRef = useRef(0);
   const [pullPx, setPullPx] = useState(0);
   const pageWidth = Math.max(reelWidth, feedWidth);
 
   const getEl = () => scrollerRef.current as unknown as HTMLElement | null;
+
+  const lockLayout = (ms = 700) => {
+    layoutLockUntilRef.current = Date.now() + ms;
+    const el = getEl();
+    if (el) el.style.scrollSnapType = 'none';
+  };
+
+  const maybeEnableSnap = () => {
+    const el = getEl();
+    if (!el) return;
+    if (Date.now() < layoutLockUntilRef.current) return;
+    // Snap only after the user has interacted — otherwise first paint can skip reel 0.
+    if (!userArmedRef.current) {
+      el.style.scrollSnapType = 'none';
+      return;
+    }
+    el.style.scrollSnapType = 'y mandatory';
+  };
 
   useImperativeHandle(ref, () => ({
     scrollToIndex: (index: number, animated = true) => {
       const el = getEl();
       if (!el) return;
       const top = Math.max(0, index) * heightRef.current;
+      programmaticScrollRef.current = true;
+      lockLayout(320);
       el.scrollTo({ top, behavior: animated ? 'smooth' : 'auto' });
+      window.setTimeout(() => {
+        programmaticScrollRef.current = false;
+        maybeEnableSnap();
+      }, 340);
     },
   }));
+
+  // Keep scroll offset aligned with page height (mirrors ReelNativeFeed).
+  useEffect(() => {
+    if (reelHeight <= 0) return;
+    const el = getEl();
+    if (!el) return;
+    programmaticScrollRef.current = true;
+    lockLayout(800);
+    el.scrollTo({ top: Math.max(0, indexRef.current) * reelHeight, behavior: 'auto' });
+    const t = window.setTimeout(() => {
+      programmaticScrollRef.current = false;
+      maybeEnableSnap();
+    }, 820);
+    return () => clearTimeout(t);
+  }, [reelHeight]);
+
+  // When the feed first populates, pin to the active index.
+  useEffect(() => {
+    const prev = prevLenRef.current;
+    prevLenRef.current = reels.length;
+    if (prev === 0 && reels.length > 0) {
+      userArmedRef.current = false;
+      const el = getEl();
+      if (!el || reelHeight <= 0) return;
+      programmaticScrollRef.current = true;
+      lockLayout(1200);
+      el.scrollTo({ top: Math.max(0, indexRef.current) * reelHeight, behavior: 'auto' });
+      const t = window.setTimeout(() => {
+        programmaticScrollRef.current = false;
+        maybeEnableSnap();
+      }, 1220);
+      return () => clearTimeout(t);
+    }
+  }, [reels.length, reelHeight]);
 
   useEffect(() => {
     const el = getEl();
     if (!el) return;
 
-    // Force real CSS scroll — RN-web style flattening can drop overflowY/snap.
     el.style.overflowY = 'scroll';
     el.style.overflowX = 'hidden';
-    el.style.scrollSnapType = 'y mandatory';
+    el.style.scrollSnapType = 'none';
     el.style.setProperty('-webkit-overflow-scrolling', 'touch');
     el.style.touchAction = 'pan-y';
     el.style.overscrollBehavior = 'contain';
     (el.style as CSSStyleDeclaration & { scrollbarWidth?: string }).scrollbarWidth = 'none';
+    programmaticScrollRef.current = true;
+    lockLayout(1200);
+    const unlockTimer = window.setTimeout(() => {
+      programmaticScrollRef.current = false;
+      maybeEnableSnap();
+    }, 1220);
 
     let settleTimer: ReturnType<typeof setTimeout> | null = null;
 
     const applyIndexFromScroll = () => {
       const h = heightRef.current;
       if (h <= 0) return;
-      const raw = Math.round(el.scrollTop / h);
-      const next = Math.max(0, Math.min(reels.length - 1, raw));
+      if (programmaticScrollRef.current || Date.now() < layoutLockUntilRef.current) {
+        const lockedTop = Math.max(0, indexRef.current) * h;
+        if (Math.abs(el.scrollTop - lockedTop) > 2) {
+          el.scrollTo({ top: lockedTop, behavior: 'auto' });
+        }
+        return;
+      }
+
+      // Ignore browser snap / layout churn unless the user started a gesture.
+      if (!userArmedRef.current) {
+        const lockedTop = Math.max(0, indexRef.current) * h;
+        if (Math.abs(el.scrollTop - lockedTop) > 2) {
+          el.scrollTo({ top: lockedTop, behavior: 'auto' });
+        }
+        return;
+      }
+
+      maybeEnableSnap();
+      const progress = el.scrollTop / h;
+      const raw = Math.round(progress);
+      const anchor = indexRef.current;
+      let next = Math.max(0, Math.min(reels.length - 1, raw));
+      if (next !== anchor) {
+        const crossed =
+          next > anchor ? progress >= anchor + 0.45 : progress <= anchor - 0.45;
+        if (!crossed) {
+          el.scrollTo({ top: anchor * h, behavior: 'auto' });
+          return;
+        }
+        if (Math.abs(next - anchor) > 1) {
+          next = next > anchor ? anchor + 1 : Math.max(0, anchor - 1);
+        }
+      }
       if (next !== indexRef.current) {
         indexRef.current = next;
         onIndexChange(next);
@@ -103,10 +203,19 @@ export const ReelWebFeed = forwardRef<ReelWebFeedHandle, Props>(function ReelWeb
     };
 
     const onScroll = () => {
-      markReelWebSwipe();
+      if (userArmedRef.current && !programmaticScrollRef.current) {
+        markReelWebSwipe();
+      }
       if (settleTimer) clearTimeout(settleTimer);
       settleTimer = setTimeout(() => {
         applyIndexFromScroll();
+        if (
+          programmaticScrollRef.current ||
+          Date.now() < layoutLockUntilRef.current ||
+          !userArmedRef.current
+        ) {
+          return;
+        }
         const h = heightRef.current;
         if (h <= 0) return;
         const target = Math.round(el.scrollTop / h) * h;
@@ -116,10 +225,22 @@ export const ReelWebFeed = forwardRef<ReelWebFeedHandle, Props>(function ReelWeb
       }, 80);
     };
 
+    const armUser = () => {
+      userArmedRef.current = true;
+      maybeEnableSnap();
+    };
+
     el.addEventListener('scroll', onScroll, { passive: true });
+    el.addEventListener('wheel', armUser, { passive: true });
+    el.addEventListener('touchstart', armUser, { passive: true });
+    el.addEventListener('pointerdown', armUser, { passive: true });
     return () => {
       el.removeEventListener('scroll', onScroll);
+      el.removeEventListener('wheel', armUser);
+      el.removeEventListener('touchstart', armUser);
+      el.removeEventListener('pointerdown', armUser);
       if (settleTimer) clearTimeout(settleTimer);
+      clearTimeout(unlockTimer);
     };
   }, [onEndReached, onIndexChange, reels.length]);
 
@@ -252,8 +373,9 @@ const styles = StyleSheet.create({
   scroller: {
     overflowY: 'scroll',
     overflowX: 'hidden',
+    // Snap is enabled in JS after the boot lock so first paint can't skip reel 0.
     // @ts-expect-error web-only CSS
-    scrollSnapType: 'y mandatory',
+    scrollSnapType: 'none',
     // @ts-expect-error web-only CSS
     WebkitOverflowScrolling: 'touch',
     // @ts-expect-error web-only CSS

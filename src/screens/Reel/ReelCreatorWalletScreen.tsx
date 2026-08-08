@@ -164,6 +164,13 @@ export default function ReelCreatorWalletScreen() {
             <Ionicons name="add-circle-outline" size={18} color="#fff" />
             <Text style={styles.secondaryBtnText}>Buy coins</Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.secondaryBtn}
+            onPress={() => navigation.navigate('ReelCreatorAnalytics')}
+          >
+            <Ionicons name="stats-chart-outline" size={18} color="#fff" />
+            <Text style={styles.secondaryBtnText}>Analytics</Text>
+          </TouchableOpacity>
         </View>
 
         <Text style={styles.sectionTitle}>Cash-out history</Text>

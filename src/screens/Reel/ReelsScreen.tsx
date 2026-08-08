@@ -33,8 +33,8 @@ import {
   registerBeforeChatNavigate,
   unregisterBeforeChatNavigate,
 } from '../../navigation/chatNavigationBridge';
-import { navigateMainTab } from '../../navigation/rootNavigation';
-import { openPostReelCompose, registerReelFeedPauseHandler, useReelPlaybackGateActive } from '../../lib/reelPlaybackBridge';
+import { navigateMainTab, navigateToPostReel } from '../../navigation/rootNavigation';
+import { openPostReelCompose, openPostReelWithSound, registerReelFeedPauseHandler, useReelPlaybackGateActive } from '../../lib/reelPlaybackBridge';
 import { stopAllReelOverlaySounds } from '../../hooks/useReelSoundPlayback';
 import ReelCommentSheet from './ReelCommentSheet';
 import ReelShareSheet from './ReelShareSheet';
@@ -91,12 +91,17 @@ export default function ReelsScreen() {
   const bottomNavOffset = reelTabBarOffset(insets.bottom, usePhoneFrame);
   // Tab bar is position:absolute, so onLayout is full screen — subtract bar
   // so each page matches the visible area above the nav.
-  const reelHeight = Math.max(
-    320,
-    usePhoneFrame
-      ? Math.max(0, (viewportHeight || windowHeight) - REEL_DESKTOP_VERTICAL_INSET * 2)
-      : (viewportHeight || windowHeight) - bottomNavOffset
-  );
+  // Wait for onLayout before using a height so the feed doesn't mount at
+  // windowHeight then shrink (that mis-snaps past reel 0 on first visit).
+  const layoutReady = viewportHeight > 0;
+  const reelHeight = layoutReady
+    ? Math.max(
+        320,
+        usePhoneFrame
+          ? Math.max(0, viewportHeight - REEL_DESKTOP_VERTICAL_INSET * 2)
+          : viewportHeight - bottomNavOffset
+      )
+    : 0;
 
   const feedSource = isGuest ? 'public' : feedMode === 'forYou' ? 'feed' : 'following';
   const feedInsertAfterRef = useRef(0);
@@ -140,6 +145,10 @@ export default function ReelsScreen() {
   const nativeFeedRef = useRef<ReelNativeFeedHandle>(null);
   const feedClipRef = useRef<View>(null);
   const wheelLockRef = useRef(false);
+  /** Blocks accidental index advances while the first reel settles on first visit. */
+  const feedBootUntilRef = useRef(0);
+  /** Desktop wheel paging only after the user has pointed at the feed. */
+  const wheelArmedRef = useRef(false);
   const videos = useRef<Record<string, ReelPlayerHandle | null>>({});
   const activeReelIdRef = useRef<string | null>(null);
 
@@ -713,6 +722,19 @@ export default function ReelsScreen() {
     [navigation, requireAuth]
   );
 
+  const onUseThisSound = useCallback(
+    (reel: ReelDTO) => {
+      if (!requireAuth('Sign in to use this sound.')) return;
+      if (!reel.sound) {
+        onUseReelAudio(reel);
+        return;
+      }
+      openPostReelWithSound(reel.sound);
+      navigateToPostReel();
+    },
+    [requireAuth, onUseReelAudio]
+  );
+
   const goToChats = useCallback(() => {
     if (isGuest) {
       const guestMainTabs = navigation.getParent?.()?.getParent?.();
@@ -869,6 +891,30 @@ export default function ReelsScreen() {
     }
   }, [isFocused, isGuest, currentAuthorId, nextAuthorId, ensureProfileLoaded]);
 
+  const hasReels = reels.length > 0;
+  useEffect(() => {
+    if (!isFocused || !layoutReady || !hasReels) return;
+    // Keep reel 0 locked until the user interacts — layout/scroll-snap must not auto-advance.
+    feedBootUntilRef.current = Date.now() + 1500;
+    wheelArmedRef.current = false;
+  }, [isFocused, layoutReady, hasReels]);
+
+  const handleFeedIndexChange = useCallback((index: number) => {
+    if (
+      Date.now() < feedBootUntilRef.current &&
+      currentIndexRef.current === 0 &&
+      index > 0
+    ) {
+      if (Platform.OS === 'web') {
+        webFeedRef.current?.scrollToIndex(0, false);
+      } else {
+        nativeFeedRef.current?.scrollToIndex(0, false);
+      }
+      return;
+    }
+    activateReelAtIndexRef.current(index);
+  }, []);
+
   const activateReelAtIndexRef = useRef<(index: number) => void>(() => {});
   const goToReelIndexRef = useRef<(index: number, animated?: boolean) => void>(() => {});
 
@@ -943,6 +989,10 @@ export default function ReelsScreen() {
     const node = feedClipRef.current as unknown as HTMLElement | null;
     if (!node) return;
 
+    const armWheel = () => {
+      wheelArmedRef.current = true;
+    };
+
     const onWheel = (e: WheelEvent) => {
       if (Math.abs(e.deltaY) < 10) return;
       const rect = node.getBoundingClientRect();
@@ -956,6 +1006,9 @@ export default function ReelsScreen() {
       }
       e.preventDefault();
       e.stopPropagation();
+      // Ignore trackpad noise until the user has clicked/touched the feed and boot ends.
+      if (!wheelArmedRef.current) return;
+      if (Date.now() < feedBootUntilRef.current) return;
       if (wheelLockRef.current || isSnappingRef.current) return;
       const dir = e.deltaY > 0 ? 1 : -1;
       const from = currentIndexRef.current;
@@ -971,9 +1024,15 @@ export default function ReelsScreen() {
       }, 420);
     };
 
+    node.addEventListener('pointerdown', armWheel, { passive: true });
+    node.addEventListener('touchstart', armWheel, { passive: true });
     node.addEventListener('wheel', onWheel, { passive: false });
-    return () => node.removeEventListener('wheel', onWheel);
-  }, [reelHeight, reels.length]);
+    return () => {
+      node.removeEventListener('pointerdown', armWheel);
+      node.removeEventListener('touchstart', armWheel);
+      node.removeEventListener('wheel', onWheel);
+    };
+  }, [reelHeight, reels.length, layoutReady]);
 
   const seekToProgress = useCallback((ratio: number) => {
     const player = getActivePlayer(activeReelIdRef.current);
@@ -1099,6 +1158,7 @@ export default function ReelsScreen() {
         onOpenProfile={onOpenProfile}
         onNavigateSound={onNavigateSound}
         onUseReelAudio={onUseReelAudio}
+        onUseThisSound={onUseThisSound}
         onSponsoredCta={openSponsoredCta}
         onReady={handleVideoReady}
         onPlaybackStatus={handlePlaybackStatus}
@@ -1132,6 +1192,7 @@ export default function ReelsScreen() {
       onOpenProfile,
       onNavigateSound,
       onUseReelAudio,
+      onUseThisSound,
       openSponsoredCta,
       handleVideoReady,
       handlePlaybackStatus,
@@ -1200,7 +1261,9 @@ export default function ReelsScreen() {
           usePhoneFrame && styles.feedColumnPhone,
           {
             width: usePhoneFrame ? reelWidth + desktopActionOffset : reelWidth,
-            height: reelHeight,
+            ...(layoutReady
+              ? { height: reelHeight }
+              : { flex: 1 }),
             overflow: 'hidden',
           },
         ]}
@@ -1301,8 +1364,16 @@ export default function ReelsScreen() {
         </TouchableOpacity>
       )}
 
-      <View ref={feedClipRef} style={{ height: reelHeight, width: '100%', overflow: 'hidden' }}>
-      {Platform.OS === 'web' ? (
+      <View
+        ref={feedClipRef}
+        style={{
+          height: layoutReady ? reelHeight : '100%',
+          width: '100%',
+          overflow: 'hidden',
+        }}
+      >
+      {layoutReady && reelHeight > 0 ? (
+      Platform.OS === 'web' ? (
       <ReelWebFeed
         ref={webFeedRef}
         reels={reels}
@@ -1311,7 +1382,7 @@ export default function ReelsScreen() {
         feedWidth={reelWidth + desktopActionOffset}
         reelHeight={reelHeight}
         renderItem={renderReel}
-        onIndexChange={(index) => activateReelAtIndexRef.current(index)}
+        onIndexChange={handleFeedIndexChange}
         onEndReached={() => {
           if (hasMore && !loadingMore) loadMore();
         }}
@@ -1342,7 +1413,7 @@ export default function ReelsScreen() {
                 onPress={() => {
                   if (!requireAuth('Sign in to post your first reel.')) return;
                   openPostReelCompose();
-                  navigation.navigate('PostReel' as never);
+                  navigateToPostReel();
                 }}
               >
                 <Text style={styles.retryButtonText}>Post the first reel</Text>
@@ -1365,7 +1436,7 @@ export default function ReelsScreen() {
           readyReelIds={readyReelIds}
           endScreenReelId={endScreenReelId}
           resolveUri={resolveUri}
-          onIndexChange={(index) => activateReelAtIndexRef.current(index)}
+          onIndexChange={handleFeedIndexChange}
           onReady={handleVideoReady}
           onPlaybackStatus={handlePlaybackStatus}
           onRef={registerVideoRef}
@@ -1394,7 +1465,8 @@ export default function ReelsScreen() {
             </View>
           }
         />
-      )}
+      )
+      ) : null}
       </View>
       {Platform.OS !== 'web' && currentReel ? (
         <View
@@ -1422,6 +1494,7 @@ export default function ReelsScreen() {
             onOpenProfile={() => onOpenProfile(currentReel)}
             onNavigateSound={onNavigateSound}
             onUseReelAudio={() => onUseReelAudio(currentReel)}
+            onUseThisSound={() => onUseThisSound(currentReel)}
             onSponsoredCta={() => void openSponsoredCta(currentReel)}
           />
         </View>
