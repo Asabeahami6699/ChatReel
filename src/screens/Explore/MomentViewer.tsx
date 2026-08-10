@@ -23,6 +23,9 @@ import { isHlsUrl, isImageReelUrl } from '../../lib/reelPlayback';
 import { ReelPlayer, type ReelPlayerHandle } from '../../components/ReelPlayer';
 import { WebHlsVideo } from '../Reel/WebHlsVideo';
 import { getReelFrameDimensions } from '../Reel/reelVideoLayout';
+import { MediaFilterFrame } from '../../components/MediaFilterFrame';
+import { WebGlFilterPreview } from '../../components/WebGlFilterPreview';
+import { isIdentityPipelineFilter } from '../../lib/reelFilterPipelineMap';
 import {
   momentToSoundPlayback,
   reelNeedsOverlaySound,
@@ -461,6 +464,7 @@ export function MomentViewer({
   const reelLinkLabel = reelRef?.author_name
     ? `View reel · @${reelRef.author_name}`
     : 'View original reel';
+  const slideFilterId = currentSlide.filter_id;
 
   return (
     <Modal visible={visible} animationType="fade" statusBarTranslucent onRequestClose={onClose}>
@@ -601,36 +605,73 @@ export function MomentViewer({
                 </Text>
               </LinearGradient>
             ) : isSlideVideo(currentSlide) && currentSlide.media_url && visible ? (
-              Platform.OS === 'web' && isHlsUrl(currentSlide.media_url) ? (
-                <WebHlsVideo
-                  key={currentSlide.id}
+              Platform.OS === 'web' &&
+              slideFilterId &&
+              !isIdentityPipelineFilter(slideFilterId) &&
+              !isHlsUrl(currentSlide.media_url) ? (
+                <WebGlFilterPreview
+                  key={`${currentSlide.id}-${slideFilterId}`}
                   uri={currentSlide.media_url}
-                  style={styles.viewerMedia}
-                  muted={overlaySoundActive}
-                  shouldPlay={videoShouldPlay}
-                  contentFit="contain"
-                />
-              ) : (
-                <ReelPlayer
-                  key={currentSlide.id}
-                  ref={videoRef}
-                  source={currentSlide.media_url}
+                  mediaType="video"
+                  filterId={slideFilterId}
                   style={styles.viewerMedia}
                   contentFit="contain"
                   shouldPlay={videoShouldPlay}
                   isLooping={false}
-                  isMuted={overlaySoundActive}
+                  muted={overlaySoundActive}
                   volume={overlaySoundActive ? videoVoiceVolume : 1}
-                  progressUpdateIntervalMillis={100}
                   onPlaybackStatusUpdate={handleVideoStatus}
                 />
+              ) : (
+                <MediaFilterFrame filterId={slideFilterId} style={styles.viewerMedia}>
+                  {Platform.OS === 'web' && isHlsUrl(currentSlide.media_url) ? (
+                    <WebHlsVideo
+                      key={currentSlide.id}
+                      uri={currentSlide.media_url}
+                      style={StyleSheet.absoluteFill}
+                      muted={overlaySoundActive}
+                      shouldPlay={videoShouldPlay}
+                      contentFit="contain"
+                    />
+                  ) : (
+                    <ReelPlayer
+                      key={currentSlide.id}
+                      ref={videoRef}
+                      source={currentSlide.media_url}
+                      style={StyleSheet.absoluteFill}
+                      contentFit="contain"
+                      shouldPlay={videoShouldPlay}
+                      isLooping={false}
+                      isMuted={overlaySoundActive}
+                      volume={overlaySoundActive ? videoVoiceVolume : 1}
+                      progressUpdateIntervalMillis={100}
+                      onPlaybackStatusUpdate={handleVideoStatus}
+                    />
+                  )}
+                </MediaFilterFrame>
               )
             ) : currentSlide.media_url ? (
-              <Image
-                source={{ uri: currentSlide.media_url }}
-                style={styles.viewerMedia}
-                resizeMode="contain"
-              />
+              Platform.OS === 'web' &&
+              slideFilterId &&
+              !isIdentityPipelineFilter(slideFilterId) ? (
+                <WebGlFilterPreview
+                  key={`${currentSlide.id}-${slideFilterId}`}
+                  uri={currentSlide.media_url}
+                  mediaType="image"
+                  filterId={slideFilterId}
+                  style={styles.viewerMedia}
+                  contentFit="contain"
+                />
+              ) : (
+                <MediaFilterFrame filterId={slideFilterId} style={styles.viewerMedia}>
+                  <Image
+                    key={`${currentSlide.id}-${slideFilterId ?? 'none'}`}
+                    source={{ uri: currentSlide.media_url }}
+                    style={StyleSheet.absoluteFill}
+                    resizeMode="contain"
+                  />
+                </MediaFilterFrame>
+              )
             ) : null}
 
             {isPaused && !frozen && (

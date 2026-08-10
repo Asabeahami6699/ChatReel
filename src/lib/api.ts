@@ -275,6 +275,7 @@ export type MomentSlideDTO = {
   original_audio_volume?: number | null;
   sound_volume?: number | null;
   sound?: ReelSoundDTO | null;
+  filter_id?: string | null;
 };
 
 export type MomentViewerDTO = {
@@ -1202,6 +1203,7 @@ export const api = {
         sound_start_sec?: number;
         original_audio_volume?: number;
         sound_volume?: number;
+        filter_id?: string;
       }>;
       caption?: string;
       text_background?: string;
@@ -1437,10 +1439,16 @@ export const api = {
       apiRequest<{ cursor: Record<string, unknown> | null }>(
         `/api/realtime/sync/cursor?device_id=${encodeURIComponent(device_id)}&stream=${encodeURIComponent(stream)}`
       ),
-    syncMessages: (since: string, limit = 50) =>
-      apiRequest<{ messages: Record<string, unknown>[] }>(
-        `/api/realtime/sync/messages?since=${encodeURIComponent(since)}&limit=${limit}`
-      ),
+    syncMessages: (since: string, limit = 50) => {
+      // Production Zod `.datetime()` rejects `+00:00` offsets → 500. Always send `…Z`.
+      const sinceIso = (() => {
+        const t = Date.parse(since);
+        return Number.isFinite(t) ? new Date(t).toISOString() : since;
+      })();
+      return apiRequest<{ messages: Record<string, unknown>[] }>(
+        `/api/realtime/sync/messages?since=${encodeURIComponent(sinceIso)}&limit=${limit}`
+      );
+    },
   },
 
   gifts: {

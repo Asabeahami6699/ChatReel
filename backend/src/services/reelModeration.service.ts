@@ -82,7 +82,7 @@ function weaponScore(payload?: VisualPayload): number {
 
 function evaluateVisualPayload(
   payload: VisualPayload,
-  opts?: { educationalContext?: boolean }
+  opts?: { educationalContext?: boolean; mediaKind?: 'image' | 'video' }
 ): ModerationDecision {
   const explicit = explicitScore(payload.nudity);
   const suggestive = suggestiveScore(payload.nudity);
@@ -93,14 +93,17 @@ function evaluateVisualPayload(
 
   const score = Math.max(explicit, suggestive, gore, offensive, drugs, weapon);
   const educational = opts?.educationalContext ?? false;
+  const isImage = opts?.mediaKind === 'image';
+  // Still photos get a higher reject bar — Sightengine often over-scores skin/selfies.
+  const rejectAt = isImage
+    ? Math.max(env.reelModeration.rejectThreshold, 0.72)
+    : env.reelModeration.rejectThreshold;
+  const flagAt = isImage
+    ? Math.max(env.reelModeration.flagThreshold, 0.5)
+    : env.reelModeration.flagThreshold;
 
   // Hard reject: explicit sexual content, gore, weapons, drugs
-  if (
-    explicit >= env.reelModeration.rejectThreshold ||
-    gore >= 0.65 ||
-    weapon >= 0.7 ||
-    drugs >= 0.75
-  ) {
+  if (explicit >= rejectAt || gore >= 0.65 || weapon >= 0.7 || drugs >= 0.75) {
     return {
       status: 'rejected',
       score,
@@ -113,13 +116,13 @@ function evaluateVisualPayload(
     return { status: 'approved', score, reason: null };
   }
 
-  // Fashion / swimwear without explicit nudity — approve (common false-positive case)
-  if (explicit < 0.3 && offensive < 0.75) {
+  // Normal photos / fashion — approve unless clearly explicit
+  if (explicit < (isImage ? 0.45 : 0.3) && offensive < 0.75) {
     return { status: 'approved', score, reason: null };
   }
 
   // Very suggestive with low explicit — flag for review, don't reject
-  if (explicit < 0.25 && suggestive >= 0.88) {
+  if (explicit < 0.35 && suggestive >= 0.9) {
     return {
       status: 'flagged',
       score,
@@ -128,9 +131,9 @@ function evaluateVisualPayload(
   }
 
   if (
-    explicit >= env.reelModeration.flagThreshold ||
-    (suggestive >= 0.92 && explicit >= 0.15) ||
-    offensive >= 0.8
+    explicit >= flagAt ||
+    (suggestive >= 0.94 && explicit >= 0.2) ||
+    offensive >= 0.85
   ) {
     return {
       status: 'flagged',
@@ -169,13 +172,14 @@ function evaluateVideoSyncPayload(
   opts?: { educationalContext?: boolean }
 ): ModerationDecision {
   let decision: ModerationDecision = { status: 'approved', score: 0, reason: null };
+  const frameOpts = { ...opts, mediaKind: 'video' as const };
 
   for (const frame of payload.data?.frames ?? []) {
-    decision = mergeDecisions(decision, evaluateVisualPayload(frame, opts));
+    decision = mergeDecisions(decision, evaluateVisualPayload(frame, frameOpts));
     if (decision.status === 'rejected') break;
   }
 
-  return mergeDecisions(decision, evaluateVisualPayload(payload, opts));
+  return mergeDecisions(decision, evaluateVisualPayload(payload, frameOpts));
 }
 
 function mergeDecisions(current: ModerationDecision, next: ModerationDecision): ModerationDecision {
@@ -219,14 +223,17 @@ async function sightengineFormRequest(
 async function checkImageBuffer(
   buffer: Buffer,
   filename: string,
-  opts?: { educationalContext?: boolean }
+  opts?: { educationalContext?: boolean; mediaKind?: 'image' | 'video' }
 ): Promise<ModerationDecision> {
   const payload = (await sightengineFormRequest(
     'check.json',
     { models: IMAGE_MODELS },
     { buffer, filename, mime: 'image/jpeg' }
   )) as VisualPayload;
-  return evaluateVisualPayload(payload, opts);
+  return evaluateVisualPayload(payload, {
+    educationalContext: opts?.educationalContext,
+    mediaKind: opts?.mediaKind ?? 'image',
+  });
 }
 
 async function checkImageUrl(
@@ -327,7 +334,10 @@ async function checkVideoFile(
   const frames = await extractVideoFrames(videoPath, 12);
   for (const framePath of frames) {
     const frameBuffer = await fs.readFile(framePath);
-    const next = await checkImageBuffer(frameBuffer, path.basename(framePath), opts);
+    const next = await checkImageBuffer(frameBuffer, path.basename(framePath), {
+      ...opts,
+      mediaKind: 'video',
+    });
     decision = mergeDecisions(decision, next);
     if (decision.status === 'rejected') break;
   }
@@ -443,10 +453,13 @@ export async function moderateReelById(
         await checkVideoFile(localVideoPath, reel.duration as number | null, visualOpts)
       );
     } else if (isImageReel) {
-      decision = mergeDecisions(
-        decision,
-        await checkImageUrl(reel.video_url as string, visualOpts)
-      );
+      // Avoid scanning the same photo twice when thumbnail_url === video_url.
+      const imageUrl = reel.video_url as string;
+      if (imageUrl && imageUrl !== reel.thumbnail_url) {
+        decision = mergeDecisions(decision, await checkImageUrl(imageUrl, visualOpts));
+      } else if (!reel.thumbnail_url && imageUrl) {
+        decision = mergeDecisions(decision, await checkImageUrl(imageUrl, visualOpts));
+      }
     } else {
       const res = await fetch(reel.video_url as string);
       if (!res.ok) throw new Error(`Video fetch failed (${res.status})`);

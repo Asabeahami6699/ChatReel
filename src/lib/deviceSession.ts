@@ -18,31 +18,47 @@ function deviceName(): string {
 
 /** When the deployed API is older than this client, stop hammering /sessions/*. */
 let sessionsApiUnavailableUntil = 0;
+let sessionsCallInFlight: Promise<void> | null = null;
 
-function markSessionsUnavailable(ms = 15 * 60 * 1000) {
+function markSessionsUnavailable(ms = 6 * 60 * 60 * 1000) {
   sessionsApiUnavailableUntil = Date.now() + ms;
 }
 
-function sessionsApiReady(): boolean {
+export function sessionsApiReady(): boolean {
   return Date.now() >= sessionsApiUnavailableUntil;
+}
+
+function noteSessionsError(err: unknown) {
+  if (err instanceof ApiError && (err.status === 404 || err.status === 501 || err.status >= 500)) {
+    markSessionsUnavailable();
+  }
 }
 
 /** Register/refresh this install as an active login device. */
 export async function registerCurrentDevice(): Promise<void> {
   if (!sessionsApiReady()) return;
-  try {
-    const installationId = await getInstallationId();
-    await api.accountSessions.register({
-      installation_id: installationId,
-      label: deviceLabel(),
-      platform: Platform.OS,
-      device_name: deviceName(),
-    });
-  } catch (err) {
-    if (err instanceof ApiError && (err.status === 404 || err.status === 501)) {
-      markSessionsUnavailable();
+  if (sessionsCallInFlight) {
+    await sessionsCallInFlight.catch(() => undefined);
+    return;
+  }
+  sessionsCallInFlight = (async () => {
+    try {
+      const installationId = await getInstallationId();
+      await api.accountSessions.register({
+        installation_id: installationId,
+        label: deviceLabel(),
+        platform: Platform.OS,
+        device_name: deviceName(),
+      });
+    } catch (err) {
+      noteSessionsError(err);
+      /* offline / not signed in / old API */
     }
-    /* offline / not signed in / old API */
+  })();
+  try {
+    await sessionsCallInFlight;
+  } finally {
+    sessionsCallInFlight = null;
   }
 }
 
@@ -62,9 +78,7 @@ export async function heartbeatCurrentDevice(): Promise<{ revoked: boolean; mess
     }
     return { revoked: false };
   } catch (err) {
-    if (err instanceof ApiError && (err.status === 404 || err.status === 501)) {
-      markSessionsUnavailable();
-    }
+    noteSessionsError(err);
     return { revoked: false };
   }
 }

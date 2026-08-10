@@ -357,7 +357,7 @@ export function PostReelVideoComposer({
                     <Image
                       source={{ uri: previewUri }}
                       style={styles.albumThumb}
-                      resizeMode="contain"
+                      resizeMode="cover"
                     />
                     <View style={styles.albumBadge}>
                       <Ionicons

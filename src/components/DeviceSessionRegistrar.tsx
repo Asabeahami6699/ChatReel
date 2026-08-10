@@ -1,12 +1,17 @@
 import { useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
 import { useAuth } from '../hooks/useAuth';
-import { heartbeatCurrentDevice, registerCurrentDevice } from '../lib/deviceSession';
+import {
+  heartbeatCurrentDevice,
+  registerCurrentDevice,
+  sessionsApiReady,
+} from '../lib/deviceSession';
 import { clearUserLocalCaches } from '../lib/clearUserLocalCaches';
 import { showAppToast } from '../lib/appToast';
 
 /**
  * Keeps the current install registered and signs out if it was revoked remotely.
+ * Skips entirely when the deployed API has no /account/sessions routes (404).
  */
 export function DeviceSessionRegistrar() {
   const { isAuthenticated, user, signOut } = useAuth();
@@ -18,14 +23,15 @@ export function DeviceSessionRegistrar() {
 
     const run = async () => {
       if (busyRef.current) return;
+      if (!sessionsApiReady()) return;
       const now = Date.now();
-      // Don't compete with message sends — skip if we just ran.
       if (now - lastRunAtRef.current < 45_000) return;
       busyRef.current = true;
       lastRunAtRef.current = now;
       try {
-        // Fire-and-forget register; only await heartbeat for revoke check.
-        void registerCurrentDevice();
+        // Sequential: register first so a 404 trips the circuit before heartbeat.
+        await registerCurrentDevice();
+        if (!sessionsApiReady()) return;
         const hb = await heartbeatCurrentDevice();
         if (hb.revoked) {
           showAppToast(hb.message || 'Signed out on this device', { isError: true });
@@ -37,7 +43,6 @@ export function DeviceSessionRegistrar() {
       }
     };
 
-    // Delay first tick so login / send path aren't blocked by sessions API.
     const boot = setTimeout(() => void run(), 8_000);
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active') void run();

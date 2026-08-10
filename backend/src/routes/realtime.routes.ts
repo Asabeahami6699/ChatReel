@@ -105,7 +105,7 @@ router.post(
       .object({
         device_id: z.string().min(4).max(128),
         stream: z.string().min(1).max(40).default('messages'),
-        cursor_at: z.string().datetime(),
+        cursor_at: z.string().min(1),
       })
       .parse(req.body);
 
@@ -162,33 +162,66 @@ router.get(
   requireAuth,
   asyncHandler(async (req: AuthedRequest, res) => {
     const userId = req.userId!;
-    const since = z.string().datetime().parse(req.query.since);
+    // Accept ISO timestamps with offsets / fractional seconds (Zod default datetime is too strict).
+    const sinceRaw = String(req.query.since ?? '');
+    const sinceDate = new Date(sinceRaw);
+    if (!sinceRaw || Number.isNaN(sinceDate.getTime())) {
+      return res.status(400).json({ error: 'Invalid since timestamp' });
+    }
+    const since = sinceDate.toISOString();
     const limit = Math.min(100, Math.max(1, Number(req.query.limit ?? 50)));
 
-    const { data: memberships } = await supabaseAdmin
+    const { data: memberships, error: memErr } = await supabaseAdmin
       .from('group_members')
       .select('group_id')
       .eq('user_id', userId);
-    const groupIds = (memberships ?? []).map((m) => m.group_id as string);
+    if (memErr) {
+      console.warn('[realtime/sync/messages] group_members:', memErr.message);
+    }
+    const groupIds = (memberships ?? [])
+      .map((m) => m.group_id as string)
+      .filter(Boolean);
 
-    let q = supabaseAdmin
-      .from('messages')
-      .select('*')
-      .gt('created_at', since)
-      .order('created_at', { ascending: true })
-      .limit(limit);
+    // Split DM + group queries — a single .or() with a large in.() often 500s on PostgREST.
+    const [dmRes, groupRes] = await Promise.all([
+      supabaseAdmin
+        .from('messages')
+        .select('*')
+        .gt('created_at', since)
+        .or(`receiver_id.eq.${userId},sender_id.eq.${userId}`)
+        .is('group_id', null)
+        .order('created_at', { ascending: true })
+        .limit(limit),
+      groupIds.length
+        ? supabaseAdmin
+            .from('messages')
+            .select('*')
+            .gt('created_at', since)
+            .in('group_id', groupIds)
+            .order('created_at', { ascending: true })
+            .limit(limit)
+        : Promise.resolve({ data: [] as unknown[], error: null }),
+    ]);
 
-    if (groupIds.length) {
-      q = q.or(
-        `receiver_id.eq.${userId},sender_id.eq.${userId},group_id.in.(${groupIds.join(',')})`
-      );
-    } else {
-      q = q.or(`receiver_id.eq.${userId},sender_id.eq.${userId}`);
+    if (dmRes.error) {
+      console.warn('[realtime/sync/messages] dm query:', dmRes.error.message);
+      // Prefer empty catch-up over a hard 500 — client can rely on WS / open-chat fetch.
+      return res.json({ messages: [], since, limit, degraded: true });
+    }
+    if (groupRes.error) {
+      console.warn('[realtime/sync/messages] group query:', groupRes.error.message);
+      // Still return DMs rather than failing the whole catch-up.
     }
 
-    const { data, error } = await q;
-    if (error) return res.status(500).json({ error: error.message });
-    return res.json({ messages: data ?? [], since, limit });
+    const merged = [...(dmRes.data ?? []), ...((groupRes.data as unknown[]) ?? [])].sort(
+      (a, b) =>
+        String((a as { created_at?: string }).created_at ?? '').localeCompare(
+          String((b as { created_at?: string }).created_at ?? '')
+        )
+    );
+    const messages = merged.slice(0, limit);
+
+    return res.json({ messages, since, limit });
   })
 );
 

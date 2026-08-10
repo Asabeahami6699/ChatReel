@@ -28,11 +28,20 @@ config.resolver = {
   assetExts: config.resolver.assetExts.filter((ext) => ext !== 'svg'),
   sourceExts: [...config.resolver.sourceExts, 'svg'],
   blockList: [
-    ...(config.resolver.blockList ?? []),
+    ...(Array.isArray(config.resolver.blockList)
+      ? config.resolver.blockList
+      : config.resolver.blockList
+        ? [config.resolver.blockList]
+        : []),
     /\.expo-tmp-bundle[^/]*$/,
     /[/\\]test\.hbc$/,
+    // MediaPipe uses dynamic import() Metro cannot transform — load from CDN instead
+    /node_modules[/\\]@mediapipe[/\\]tasks-vision[/\\].*/,
   ],
   resolveRequest: (context, moduleName, platform) => {
+    if (moduleName === '@mediapipe/tasks-vision') {
+      return { type: 'empty' };
+    }
     if (moduleName === 'hls.js' || moduleName === 'hls.js/dist/hls.js') {
       return {
         filePath: path.resolve(projectRoot, 'node_modules/hls.js/dist/hls.js'),

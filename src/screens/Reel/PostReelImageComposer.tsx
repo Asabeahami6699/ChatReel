@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Image,
   Modal,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -25,13 +25,13 @@ import {
   type AudioPlayer,
 } from '../../lib/appAudio';
 import {
-  getReelFilterOverlay,
-  getReelFilterCssFilter,
   REEL_FILTER_PRESETS,
   type ReelFilterId,
 } from './reelFilters';
 import { REEL_ACCENT } from './reelTheme';
 import { pauseReelFeedPlayback } from '../../lib/reelPlaybackBridge';
+import { fitMediaInBounds, REEL_PHONE_MAX_WIDTH } from './reelVideoLayout';
+import { WebGlFilterPreview } from '../../components/WebGlFilterPreview';
 
 /** Photo reels display ~15s in feed — default music clip length. */
 export const IMAGE_REEL_CLIP_SEC = IMAGE_SOUND_CLIP_SEC;
@@ -91,7 +91,20 @@ export function PostReelImageComposer({
   onClose,
 }: Props) {
   const insets = useSafeAreaInsets();
-  const { height: windowHeight } = useWindowDimensions();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const composeColumnWidth =
+    Platform.OS === 'web' && windowWidth > REEL_PHONE_MAX_WIDTH + 64
+      ? REEL_PHONE_MAX_WIDTH
+      : windowWidth;
+  const previewMaxWidth = Math.max(240, composeColumnWidth - 28);
+  const previewMaxHeight = Math.min(
+    Math.round(windowHeight * 0.48),
+    Math.round(previewMaxWidth * (16 / 9))
+  );
+  const previewLayout =
+    image.width && image.height && image.width > 0 && image.height > 0
+      ? fitMediaInBounds(image.width, image.height, previewMaxWidth, previewMaxHeight)
+      : { width: previewMaxWidth, height: Math.max(220, previewMaxHeight) };
   const [dock, setDock] = useState<DockTab>('filter');
   const [soundOpen, setSoundOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -108,9 +121,6 @@ export function PostReelImageComposer({
     : clipLenSec;
   const soundClipLen = Math.min(clipLenSec, soundDuration);
   const filterId = image.filterId ?? 'none';
-  const filterOverlay = getReelFilterOverlay(filterId);
-  const filterCss = getReelFilterCssFilter(filterId);
-  const previewHeight = Math.max(220, windowHeight * 0.48);
 
   const overlaySound = useMemo(
     () =>
@@ -293,16 +303,17 @@ export function PostReelImageComposer({
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <View style={[styles.previewWrap, { height: previewHeight }]}>
-          <Image
-            source={{ uri: image.uri }}
-            style={[styles.previewImage, filterCss ? ({ filter: filterCss } as object) : null]}
-            resizeMode="contain"
+          <WebGlFilterPreview
+            key={image.uri}
+            uri={image.uri}
+            mediaType="image"
+            filterId={filterId}
+            style={[
+              styles.previewWrap,
+              { width: previewLayout.width, height: previewLayout.height },
+            ]}
+            contentFit="contain"
           />
-          {filterOverlay ? (
-            <View style={[styles.filterOverlay, { backgroundColor: filterOverlay }]} pointerEvents="none" />
-          ) : null}
-        </View>
 
         {dock === 'filter' ? (
           <ScrollView
@@ -522,16 +533,18 @@ export function PostReelImageComposer({
               <Text style={styles.postPillText}>Post</Text>
             </TouchableOpacity>
           </View>
-          <View style={[styles.previewWrap, { flex: 1 }]}>
-            <Image
-              source={{ uri: image.uri }}
-              style={[styles.previewImage, filterCss ? ({ filter: filterCss } as object) : null]}
-              resizeMode="contain"
-            />
-            {filterOverlay ? (
-              <View style={[styles.filterOverlay, { backgroundColor: filterOverlay }]} pointerEvents="none" />
-            ) : null}
-          </View>
+          <WebGlFilterPreview
+            key={image.uri}
+            uri={image.uri}
+            mediaType="image"
+            filterId={filterId}
+            style={[
+              styles.previewWrap,
+              styles.previewWrapModal,
+              { maxWidth: previewMaxWidth, alignSelf: 'center' },
+            ]}
+            contentFit="contain"
+          />
           {selectedSound ? (
             <Text style={styles.previewSoundHint}>Sound: {soundLabel(selectedSound)}</Text>
           ) : null}
@@ -580,9 +593,14 @@ const styles = StyleSheet.create({
   editorScroll: { flex: 1 },
   editorScrollContent: { paddingBottom: 8 },
   previewWrap: {
-    width: '100%',
     backgroundColor: '#000',
     overflow: 'hidden',
+    alignSelf: 'center',
+  },
+  previewWrapModal: {
+    flex: 1,
+    width: '100%',
+    marginVertical: 12,
   },
   previewImage: { width: '100%', height: '100%' },
   filterOverlay: { ...StyleSheet.absoluteFillObject },

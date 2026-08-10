@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -17,15 +18,15 @@ import {
   type AudioPlayer,
 } from '../../lib/appAudio';
 import { COMPOSE_PREVIEW_HEIGHT, ComposeVideoPreview } from '../../components/ComposeVideoPreview';
-import { fitMediaInBounds } from './reelVideoLayout';
+import { WebGlFilterPreview } from '../../components/WebGlFilterPreview';
+import { fitMediaInBounds, REEL_PHONE_MAX_WIDTH } from './reelVideoLayout';
 import { ReelTrimTimeline } from './ReelTrimTimeline';
 import {
-  getReelFilterOverlay,
-  getReelFilterCssFilter,
   getReelFilterSwatch,
   REEL_FILTER_PRESETS,
   type ReelFilterId,
 } from './reelFilters';
+import { isIdentityPipelineFilter } from '../../lib/reelFilterPipelineMap';
 
 export type ReelVideoEditState = {
   uri: string;
@@ -84,6 +85,11 @@ export function ReelVideoEditor({
   forcePaused = false,
 }: Props) {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  /** Desktop web: size preview like the phone reel column — never the full monitor width. */
+  const composeColumnWidth =
+    Platform.OS === 'web' && windowWidth > REEL_PHONE_MAX_WIDTH + 64
+      ? REEL_PHONE_MAX_WIDTH
+      : windowWidth;
   const playerRef = useRef<ReelPlayerHandle>(null);
   const soundPlayerRef = useRef<AudioPlayer | null>(null);
   const durationSyncedRef = useRef(false);
@@ -95,8 +101,8 @@ export function ReelVideoEditor({
   );
 
   const filterId = video.filterId ?? 'none';
-  const filterOverlay = getReelFilterOverlay(filterId);
-  const filterCss = getReelFilterCssFilter(filterId);
+  const useWebGlFilter =
+    Platform.OS === 'web' && !isIdentityPipelineFilter(filterId);
 
   useEffect(() => {
     durationSyncedRef.current = false;
@@ -164,17 +170,14 @@ export function ReelVideoEditor({
 
   const togglePlay = useCallback(async () => {
     if (forcePaused) return;
+    const next = !isPlaying;
+    setIsPlaying(next);
     const ref = playerRef.current;
-    if (!ref) return;
-    if (isPlaying) {
-      await ref.pauseAsync();
-      setIsPlaying(false);
-      await syncOverlaySound(false, positionSec);
-    } else {
-      await ref.playAsync();
-      setIsPlaying(true);
-      await syncOverlaySound(true, positionSec);
+    if (ref) {
+      if (next) await ref.playAsync();
+      else await ref.pauseAsync();
     }
+    await syncOverlaySound(next, positionSec);
   }, [forcePaused, isPlaying, positionSec, syncOverlaySound]);
 
   const onPlaybackStatus = useCallback(
@@ -230,15 +233,15 @@ export function ReelVideoEditor({
     [trimStart, trimEnd, trimReady, isPlaying, seekTo, syncOverlaySound, onChange, video.width, video.height, video.trimStartSec, video.trimEndSec]
   );
 
-  const previewMaxWidth = Math.max(280, windowWidth - (immersive || previewMode ? 28 : 32));
+  const previewMaxWidth = Math.max(240, composeColumnWidth - (immersive || previewMode ? 28 : 32));
   const previewMaxHeight = previewMode
-    ? Math.max(320, windowWidth * 1.55)
+    ? Math.max(320, Math.min(windowHeight - 140, Math.round(previewMaxWidth * (16 / 9))))
     : immersive
       ? // Leave room for trim/filter docks so controls aren't below the fold.
         Math.min(
           Math.round(windowHeight * 0.48),
           COMPOSE_PREVIEW_HEIGHT,
-          Math.round(previewMaxWidth * 1.55)
+          Math.round(previewMaxWidth * (16 / 9))
         )
       : Math.min(480, Math.round(previewMaxWidth * 1.35));
   const mediaLayout =
@@ -259,7 +262,20 @@ export function ReelVideoEditor({
       ]}
     >
       <TouchableOpacity activeOpacity={1} onPress={() => void togglePlay()} style={styles.videoTap}>
-        <View style={filterCss ? ({ filter: filterCss } as object) : undefined}>
+        {useWebGlFilter ? (
+          <WebGlFilterPreview
+            key={video.uri}
+            uri={video.uri}
+            mediaType="video"
+            filterId={filterId}
+            style={styles.filterHost}
+            contentFit="contain"
+            shouldPlay={isPlaying && !forcePaused}
+            isLooping={false}
+            muted={overlaySound ? true : isMuted}
+            onPlaybackStatusUpdate={onPlaybackStatus}
+          />
+        ) : (
           <ReelPlayer
             ref={playerRef}
             source={video.uri}
@@ -271,10 +287,7 @@ export function ReelVideoEditor({
             progressUpdateIntervalMillis={200}
             onPlaybackStatusUpdate={onPlaybackStatus}
           />
-        </View>
-        {filterOverlay ? (
-          <View style={[styles.filterOverlay, { backgroundColor: filterOverlay }]} pointerEvents="none" />
-        ) : null}
+        )}
         {!isPlaying && (
           <View style={styles.playOverlay}>
             <Ionicons name="play" size={48} color="rgba(255,255,255,0.9)" />
@@ -406,24 +419,22 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     alignSelf: 'center',
-    width: '100%',
-    flex: 1,
   },
   previewWrapImmersive: {
     borderRadius: 0,
-    alignSelf: 'stretch',
-    marginHorizontal: 0,
     borderWidth: 0,
   },
   previewWrapFull: {
-    flex: 1,
     minHeight: 280,
   },
   previewModeShell: {
     flex: 1,
     width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   videoTap: { width: '100%', height: '100%' },
+  filterHost: { width: '100%', height: '100%' },
   preview: { width: '100%', height: '100%' },
   filterOverlay: { ...StyleSheet.absoluteFillObject },
   playOverlay: {

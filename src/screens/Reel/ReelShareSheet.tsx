@@ -14,7 +14,6 @@ import { setStringAsync as copyToClipboard } from '../../lib/clipboard';
 import { Ionicons } from '@expo/vector-icons';
 import { api, ApiError, type ReelDTO } from '../../lib/api';
 import { downloadReelVideo } from '../../lib/downloadReel';
-import { config } from '../../lib/config';
 import { getReelGridThumbnail } from '../../lib/reelThumbnails';
 import ShareReelToChatSheet from './ShareReelToChatSheet';
 import {
@@ -27,20 +26,11 @@ import { showErrorAlert } from '../../lib/confirmAction';
 import { startCallGuarded } from '../../lib/startCallGuarded';
 import { navigateToOutgoingCall } from '../../navigation/rootNavigation';
 import { useAuth } from '../../hooks/useAuth';
+import { buildReelShareLink, buildReelShareMessage } from '../../lib/reelShareLinks';
 
 interface Props {
   reel: ReelDTO;
   onClose: () => void;
-}
-
-function buildShareUrl(reelId: string): string {
-  // Deep link first; fall back to public web link if defined.
-  const base =
-    (config as unknown as { webBaseUrl?: string; deepLinkPrefix?: string }).webBaseUrl ||
-    (config as unknown as { deepLinkPrefix?: string }).deepLinkPrefix ||
-    'chatapp://';
-  const sep = base.endsWith('/') ? '' : '/';
-  return `${base}${sep}reel/${reelId}`;
 }
 
 export default function ReelShareSheet({ reel, onClose }: Props) {
@@ -51,11 +41,9 @@ export default function ReelShareSheet({ reel, onClose }: Props) {
   const [postingMoment, setPostingMoment] = useState(false);
   const [captionModalOpen, setCaptionModalOpen] = useState(false);
   const [calling, setCalling] = useState(false);
-  const link = buildShareUrl(reel.id);
+  const link = buildReelShareLink(reel.id);
+  const { message: shareMessage } = buildReelShareMessage(reel.id, reel.caption);
   const thumb = getReelGridThumbnail(reel);
-  const shareMessage = reel.caption
-    ? `${reel.caption}\n${link}`
-    : `Check out this reel ${link}`;
   const authorAuthId = (reel.author as { user_id?: string } | null)?.user_id ?? null;
   const canCallAbout =
     !!authorAuthId && !!user?.id && authorAuthId !== user.id;

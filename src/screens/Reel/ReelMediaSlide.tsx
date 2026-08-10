@@ -1,11 +1,13 @@
 import React, { useEffect, useRef } from 'react';
 import { ActivityIndicator, Image, Platform, StyleSheet, View } from 'react-native';
 import type { ReelDTO, ReelMediaDTO } from '../../lib/api';
-import { getMediaPlaybackUrl, isImageReelUrl } from '../../lib/reelPlayback';
+import { getMediaPlaybackUrl, isHlsUrl, isImageReelUrl } from '../../lib/reelPlayback';
 import { ReelPlayer, type ReelPlaybackStatus, type ReelPlayerHandle } from '../../components/ReelPlayer';
 import { WebHlsVideo } from './WebHlsVideo';
 import { WebVideoPoster } from './WebVideoPoster';
-import { getReelFilterOverlay, getReelFilterCssFilter } from './reelFilters';
+import { MediaFilterFrame } from '../../components/MediaFilterFrame';
+import { WebGlFilterPreview } from '../../components/WebGlFilterPreview';
+import { isIdentityPipelineFilter } from '../../lib/reelFilterPipelineMap';
 
 type Props = {
   reel: ReelDTO;
@@ -52,12 +54,11 @@ export function ReelMediaSlide({
   const showPoster = Boolean(posterUri) && !isReady;
   const imageReadyRef = useRef(false);
   const filterId = media.filter_id ?? reel.filter_id;
-  const filterOverlay = getReelFilterOverlay(filterId);
-  const filterCss = getReelFilterCssFilter(filterId);
-  const showFilter =
-    (Boolean(filterOverlay) || Boolean(filterCss)) &&
-    (isImage || (media.transcode_status ?? reel.transcode_status) !== 'ready');
-  const mediaFilterStyle = showFilter && filterCss ? ({ filter: filterCss } as object) : null;
+  const useWebGl =
+    Platform.OS === 'web' &&
+    Boolean(filterId) &&
+    !isIdentityPipelineFilter(filterId) &&
+    !(useWebStream && isHlsUrl(playbackUri));
 
   useEffect(() => {
     if (isImage && isActiveSlide && !imageReadyRef.current) {
@@ -73,43 +74,70 @@ export function ReelMediaSlide({
         isActiveSlide
       );
     }
-  }, [isImage, isActiveSlide, slideKey, onReady, onPlaybackStatus]);
+  }, [isImage, isActiveSlide, slideKey, onReady, onPlaybackStatus, reel.duration]);
 
   const shellStyle = { width: frameWidth, height: frameHeight };
 
   if (isImage) {
     return (
       <View style={[styles.shell, shellStyle]}>
-        <Image
-          source={{ uri: playbackUri }}
-          style={[styles.media, mediaFilterStyle]}
-          resizeMode="cover"
-          onLoad={() => onReady(slideKey)}
-        />
-        {showFilter && filterOverlay ? (
-          <View
-            style={[StyleSheet.absoluteFill, { backgroundColor: filterOverlay }]}
-            pointerEvents="none"
+        {useWebGl ? (
+          <WebGlFilterPreview
+            key={`${slideKey}-${filterId}`}
+            uri={playbackUri}
+            mediaType="image"
+            filterId={filterId}
+            style={styles.media}
+            contentFit="cover"
           />
-        ) : null}
+        ) : (
+          <MediaFilterFrame filterId={filterId} style={styles.media}>
+            <Image
+              source={{ uri: playbackUri }}
+              style={styles.media}
+              resizeMode="cover"
+              onLoad={() => onReady(slideKey)}
+            />
+          </MediaFilterFrame>
+        )}
+      </View>
+    );
+  }
+
+  if (useWebGl) {
+    return (
+      <View style={[styles.shell, shellStyle]}>
+        <WebGlFilterPreview
+          key={`${slideKey}-${filterId}`}
+          uri={playbackUri}
+          mediaType="video"
+          filterId={filterId}
+          style={styles.media}
+          contentFit="cover"
+          shouldPlay={isActiveSlide && isPlaying && isFocused}
+          isLooping={false}
+          muted={isMuted}
+          volume={volume}
+          onPlaybackStatusUpdate={(status) =>
+            onPlaybackStatus(slideKey, status as ReelPlaybackStatus, isActiveSlide)
+          }
+        />
       </View>
     );
   }
 
   return (
     <View style={[styles.shell, shellStyle]}>
-      {showPoster && posterUri && (
-        <Image
-          source={{ uri: posterUri }}
-          style={[styles.media, mediaFilterStyle]}
-          resizeMode="cover"
-        />
-      )}
-      {!isReady && !showPoster && useWebStream && (
+      {showPoster && posterUri ? (
+        <MediaFilterFrame filterId={filterId} style={styles.media}>
+          <Image source={{ uri: posterUri }} style={styles.media} resizeMode="cover" />
+        </MediaFilterFrame>
+      ) : null}
+      {!isReady && !showPoster && useWebStream ? (
         <WebVideoPoster uri={playbackUri} posterUri={posterUri} style={styles.media} />
-      )}
+      ) : null}
       {useWebStream ? (
-        <View style={[styles.media, mediaFilterStyle]}>
+        <MediaFilterFrame filterId={filterId} style={styles.media}>
           <WebHlsVideo
             ref={(playerRef) => onRef(slideKey, playerRef)}
             uri={playbackUri}
@@ -121,9 +149,9 @@ export function ReelMediaSlide({
             onReady={() => onReady(slideKey)}
             onPlaybackStatusUpdate={(status) => onPlaybackStatus(slideKey, status, isActiveSlide)}
           />
-        </View>
+        </MediaFilterFrame>
       ) : (
-        <View style={[styles.media, mediaFilterStyle]}>
+        <MediaFilterFrame filterId={filterId} style={styles.media}>
           <ReelPlayer
             ref={(ref) => onRef(slideKey, ref)}
             source={playbackUri}
@@ -137,18 +165,12 @@ export function ReelMediaSlide({
             onReadyForDisplay={() => onReady(slideKey)}
             onPlaybackStatusUpdate={(status) => onPlaybackStatus(slideKey, status, isActiveSlide)}
           />
-        </View>
+        </MediaFilterFrame>
       )}
-      {!isReady && !showPoster && !useWebStream && (
+      {!isReady && !showPoster && !useWebStream ? (
         <View style={styles.loadingOverlay}>
           <ActivityIndicator color="#fff" size="large" />
         </View>
-      )}
-      {showFilter && filterOverlay ? (
-        <View
-          style={[StyleSheet.absoluteFill, { backgroundColor: filterOverlay }]}
-          pointerEvents="none"
-        />
       ) : null}
     </View>
   );
@@ -164,7 +186,7 @@ const styles = StyleSheet.create({
     height: '100%',
   },
   loadingOverlay: {
-    ...StyleSheet.absoluteFill,
+    ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.35)',

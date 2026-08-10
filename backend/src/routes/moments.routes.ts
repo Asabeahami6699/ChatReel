@@ -38,6 +38,7 @@ const mediaItemSchema = z
     sound_start_sec: z.number().min(0).optional(),
     original_audio_volume: z.number().min(0).max(1).optional(),
     sound_volume: z.number().min(0).max(1).optional(),
+    filter_id: z.string().max(40).optional(),
   })
   .superRefine((item, ctx) => {
     if (item.media_type === 'text') {
@@ -101,6 +102,12 @@ function assertMomentThumbnailUrl(url: string): void {
   }
 }
 
+function normalizeFilterId(id?: string | null): string | null {
+  const trimmed = id?.trim();
+  if (!trimmed || trimmed === 'none') return null;
+  return trimmed;
+}
+
 function resolveMediaItems(body: z.infer<typeof createMomentSchema>) {
   if (body.media_items?.length) {
     return body.media_items.map((item) => ({
@@ -113,6 +120,8 @@ function resolveMediaItems(body: z.infer<typeof createMomentSchema>) {
       sound_start_sec: item.sound_start_sec ?? 0,
       original_audio_volume: item.original_audio_volume ?? 1,
       sound_volume: item.sound_volume ?? 0.45,
+      filter_id:
+        item.media_type === 'text' ? null : normalizeFilterId(item.filter_id),
     }));
   }
   if (body.media_type === 'text') {
@@ -127,6 +136,7 @@ function resolveMediaItems(body: z.infer<typeof createMomentSchema>) {
         sound_start_sec: 0,
         original_audio_volume: 1,
         sound_volume: 0.45,
+        filter_id: null,
       },
     ];
   }
@@ -141,6 +151,7 @@ function resolveMediaItems(body: z.infer<typeof createMomentSchema>) {
       sound_start_sec: 0,
       original_audio_volume: 1,
       sound_volume: 0.45,
+      filter_id: null,
     },
   ];
 }
@@ -236,6 +247,8 @@ router.post(
         item.media_type === 'video' ? item.original_audio_volume : 1,
       sound_volume:
         item.media_type === 'video' || item.media_type === 'image' ? item.sound_volume : 0.45,
+      filter_id:
+        item.media_type === 'video' || item.media_type === 'image' ? item.filter_id : null,
       duration_minutes: body.duration_minutes,
       expires_at: expiresAt,
       view_once: body.view_once,
@@ -435,6 +448,12 @@ router.post(
         media_type: 'reel',
         reel_id: reelId,
         caption,
+        filter_id:
+          typeof reelRow.filter_id === 'string' &&
+          reelRow.filter_id &&
+          reelRow.filter_id !== 'none'
+            ? reelRow.filter_id
+            : null,
         duration_minutes: body.duration_minutes,
         expires_at: expiresAt,
         view_once: body.view_once,

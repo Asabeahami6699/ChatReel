@@ -28,6 +28,7 @@ export type MomentRow = {
   sound_start_sec: number;
   original_audio_volume: number;
   sound_volume: number;
+  filter_id: string | null;
   created_at: string;
 };
 
@@ -68,6 +69,7 @@ export type MomentSlideDTO = {
   original_audio_volume?: number | null;
   sound_volume?: number | null;
   sound?: ReelSoundSummary | null;
+  filter_id?: string | null;
 };
 
 export type MomentViewerDTO = {
@@ -554,7 +556,7 @@ export async function buildMomentsFeed(viewerProfileId: string): Promise<MomentA
   const { data: rows, error } = await supabaseAdmin
     .from('moments')
     .select(
-      `id, author_id, media_url, media_type, caption, text_background, thumbnail_url, duration_minutes, expires_at, view_once, audience_mode, group_id, position, reel_id, sound_id, sound_start_sec, original_audio_volume, sound_volume, created_at,
+      `id, author_id, media_url, media_type, caption, text_background, thumbnail_url, duration_minutes, expires_at, view_once, audience_mode, group_id, position, reel_id, sound_id, sound_start_sec, original_audio_volume, sound_volume, filter_id, created_at,
        author:profiles!moments_author_id_fkey(id, user_id, display_name, email, avatar_url)`
     )
     .gt('expires_at', now)
@@ -629,6 +631,7 @@ export async function buildMomentsFeed(viewerProfileId: string): Promise<MomentA
       sound_start_sec: moment.sound_start_sec ?? 0,
       original_audio_volume: moment.original_audio_volume ?? 1,
       sound_volume: moment.sound_volume ?? 0.45,
+      filter_id: moment.filter_id ?? null,
     };
 
     if (!visibleByAuthor.has(moment.author_id)) visibleByAuthor.set(moment.author_id, []);

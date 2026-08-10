@@ -79,8 +79,8 @@ export const env = {
   },
   reelModeration: {
     enabled: process.env.REEL_MODERATION_ENABLED !== 'false',
-    rejectThreshold: Number(process.env.REEL_MODERATION_REJECT_THRESHOLD ?? 0.55),
-    flagThreshold: Number(process.env.REEL_MODERATION_FLAG_THRESHOLD ?? 0.35),
+    rejectThreshold: Number(process.env.REEL_MODERATION_REJECT_THRESHOLD ?? 0.7),
+    flagThreshold: Number(process.env.REEL_MODERATION_FLAG_THRESHOLD ?? 0.45),
   },
   paystack: {
     secretKey: process.env.PAYSTACK_SECRET_KEY ?? '',

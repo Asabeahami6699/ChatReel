@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import { api, type ReelDTO } from './api';
 import { uploadReelImage, uploadReelThumbnail, uploadReelVideo } from './reelUploader';
 import { isImageMime } from './reelPlayback';
@@ -12,6 +13,8 @@ import {
 } from './reelUploadMediaStore';
 import { saveReelComposeDraft } from './reelComposeDraftStore';
 import { reelTrimApiFields, reelTrimClipDurationSec } from './reelTrim';
+import { bakeFilteredImage } from './bakeFilteredImage';
+import { isPipelineOverlayFilter } from './reelFilterPipelineMap';
 
 /** Default display length for photo reels with music (seconds). */
 const IMAGE_REEL_CLIP_SEC = 15;
@@ -309,13 +312,40 @@ async function processOne(item: { id: string; draft: ReelUploadDraft }) {
 
   if (isImage) {
     updateTask(id, { status: 'uploading', stage: 'Uploading photo...', progress: 5 });
+    let imageUri = video.uri;
+    let imageMime = video.mime;
+    let imageFileName = video.fileName;
+    let imageFilterId =
+      video.filterId && video.filterId !== 'none' ? video.filterId : undefined;
+
+    if (Platform.OS === 'web' && imageFilterId && !checkpoint.videoPublicUrl) {
+      try {
+        setProgress(id, 4, 'Applying filter...');
+        const baked = await bakeFilteredImage(
+          imageUri,
+          imageFilterId,
+          imageFileName ?? 'reel.jpg'
+        );
+        if (baked) {
+          imageUri = baked.uri;
+          imageMime = baked.mime;
+          imageFileName = baked.fileName;
+          if (!isPipelineOverlayFilter(imageFilterId)) {
+            imageFilterId = undefined;
+          }
+        }
+      } catch {
+        /* upload original + keep filter_id for viewer */
+      }
+    }
+
     const imageExt = 'jpg';
     const imageUrl =
       checkpoint.videoPublicUrl ??
       (await uploadReelImage({
-        uri: video.uri,
-        fileName: video.fileName,
-        contentType: video.mime,
+        uri: imageUri,
+        fileName: imageFileName,
+        contentType: imageMime,
         storagePath: `pending/${id}/image.${imageExt}`,
         upsert: true,
         onProgress: (loaded, total) => {
@@ -341,12 +371,10 @@ async function processOne(item: { id: string; draft: ReelUploadDraft }) {
           thumbnail_url: imageUrl,
           width: video.width,
           height: video.height,
-          filter_id:
-            video.filterId && video.filterId !== 'none' ? video.filterId : undefined,
+          filter_id: imageFilterId,
         },
       ],
-      filter_id:
-        video.filterId && video.filterId !== 'none' ? video.filterId : undefined,
+      filter_id: imageFilterId,
       ...publishVisibility,
       ...soundPublishFields(draft),
       ...schedulePublishFields(draft),
@@ -491,10 +519,36 @@ async function processCarouselUpload(id: string, draft: ReelUploadDraft) {
       const storagePath = `pending/${id}/media-${i}.${isImage ? 'jpg' : 'mp4'}`;
 
       if (isImage) {
+        let imageUri = media.uri;
+        let imageMime = media.mime;
+        let imageFileName = media.fileName;
+        let imageFilterId =
+          media.filterId && media.filterId !== 'none' ? media.filterId : undefined;
+
+        if (Platform.OS === 'web' && imageFilterId) {
+          try {
+            const baked = await bakeFilteredImage(
+              imageUri,
+              imageFilterId,
+              imageFileName ?? `reel-${i}.jpg`
+            );
+            if (baked) {
+              imageUri = baked.uri;
+              imageMime = baked.mime;
+              imageFileName = baked.fileName;
+              if (!isPipelineOverlayFilter(imageFilterId)) {
+                imageFilterId = undefined;
+              }
+            }
+          } catch {
+            /* keep original */
+          }
+        }
+
         const imageUrl = await uploadReelImage({
-          uri: media.uri,
-          fileName: media.fileName,
-          contentType: media.mime,
+          uri: imageUri,
+          fileName: imageFileName,
+          contentType: imageMime,
           storagePath,
           upsert: true,
           onProgress: (loaded, totalBytes) => {
@@ -509,8 +563,7 @@ async function processCarouselUpload(id: string, draft: ReelUploadDraft) {
           thumbnail_url: imageUrl,
           width: media.width,
           height: media.height,
-          filter_id:
-            media.filterId && media.filterId !== 'none' ? media.filterId : undefined,
+          filter_id: imageFilterId,
         };
       }
 

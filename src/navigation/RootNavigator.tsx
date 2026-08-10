@@ -11,24 +11,31 @@ import { AuthNavigator } from './AuthNavigator';
 import { AppNavigator } from './AppNavigator';
 import { GuestNavigator } from './GuestNavigator';
 import { parseInviteTokenFromUrl } from '../lib/groupInviteLinks';
+import { parseReelIdFromUrl } from '../lib/reelShareLinks';
 import { config } from '../lib/config';
 import {
   consumePendingInviteToken,
   setPendingInviteToken,
 } from '../lib/pendingInvite';
+import {
+  consumePendingReelId,
+  setPendingReelId,
+} from '../lib/pendingReel';
 import { captureAppInviteFromUrl } from '../lib/pendingAppInvite';
 import { AppInviteDownloadPrompt } from '../components/AppInviteDownloadPrompt';
 import { navigateToInvite, rootNavigationRef } from './rootNavigation';
+import { navigateToReelPreview } from './navigateToChat';
 
 const prefix = Linking.createURL('/');
 const webHost = config.webUrl.replace(/\/$/, '');
 
 const linking = {
-  // Include HTTPS web host so shared invite links open the right screen in-app.
+  // Include HTTPS web host so shared invite / reel links open in-app.
   prefixes: [prefix, 'chatapp://', 'yourapp://', webHost, `${webHost}/`],
   config: {
     screens: {
       Invite: 'invite/:token',
+      ReelPreview: 'reel/:reelId',
       Main: {
         screens: {
           Chats: {
@@ -48,10 +55,22 @@ export const RootNavigator = () => {
   const { theme } = useChatSettings();
   const navigationTheme = useMemo(() => buildNavigationTheme(theme), [theme]);
 
-  const handleInviteUrl = useCallback(
+  const handleDeepLink = useCallback(
     (url: string | null | undefined) => {
       if (!url) return;
       void captureAppInviteFromUrl(url);
+
+      const reelId = parseReelIdFromUrl(url);
+      if (reelId) {
+        if (isAuthenticated) {
+          // Defer until nav tree is ready (auth stack → app stack).
+          requestAnimationFrame(() => navigateToReelPreview(reelId));
+        } else {
+          void setPendingReelId(reelId);
+        }
+        return;
+      }
+
       const token = parseInviteTokenFromUrl(url);
       if (!token) return;
       if (isAuthenticated) {
@@ -64,15 +83,24 @@ export const RootNavigator = () => {
   );
 
   useEffect(() => {
-    void Linking.getInitialURL().then(handleInviteUrl);
-    const sub = Linking.addEventListener('url', ({ url }) => handleInviteUrl(url));
+    void Linking.getInitialURL().then(handleDeepLink);
+    const sub = Linking.addEventListener('url', ({ url }) => handleDeepLink(url));
+    // Web: Expo Linking sometimes misses the address-bar path on first paint.
+    if (typeof window !== 'undefined' && window.location?.href) {
+      handleDeepLink(window.location.href);
+    }
     return () => sub.remove();
-  }, [handleInviteUrl]);
+  }, [handleDeepLink]);
 
   useEffect(() => {
     if (!isAuthenticated || loading) return;
     void consumePendingInviteToken().then((token) => {
       if (token) navigateToInvite(token);
+    });
+    void consumePendingReelId().then((reelId) => {
+      if (reelId) {
+        requestAnimationFrame(() => navigateToReelPreview(reelId));
+      }
     });
   }, [isAuthenticated, loading]);
 

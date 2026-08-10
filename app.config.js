@@ -110,7 +110,26 @@ module.exports = {
           {
             scheme: 'https',
             host: 'chat-reel.vercel.app',
+            pathPrefix: '/reel',
+          },
+          {
+            scheme: 'https',
+            host: 'chat-reel.vercel.app',
             pathPrefix: '/',
+          },
+        ],
+        category: ['BROWSABLE', 'DEFAULT'],
+      },
+      {
+        action: 'VIEW',
+        data: [
+          {
+            scheme: 'chatapp',
+            host: 'reel',
+          },
+          {
+            scheme: 'chatapp',
+            pathPrefix: '/reel',
           },
         ],
         category: ['BROWSABLE', 'DEFAULT'],

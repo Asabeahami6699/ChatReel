@@ -5,6 +5,7 @@ import {
   FlatList,
   Image,
   Modal,
+  Platform,
   ScrollView,
   StyleSheet,
   Switch,
@@ -25,13 +26,18 @@ import {
   MOMENT_TEXT_BACKGROUNDS,
 } from '../../lib/momentTextBackgrounds';
 import { useCurrentProfileId } from '../../hooks/useCurrentProfileId';
-import { ReelPlayer, type ReelPlaybackStatus } from '../../components/ReelPlayer';
 import { ComposeVideoPreview } from '../../components/ComposeVideoPreview';
 import { fitMediaInBounds } from '../Reel/reelVideoLayout';
 import { ReelSoundPicker, soundLabel } from '../Reel/ReelSoundPicker';
 import { ReelSoundTrimTimeline } from '../Reel/ReelSoundTrimTimeline';
 import { ReelTrimTimeline } from '../Reel/ReelTrimTimeline';
 import { defaultSoundRange, IMAGE_SOUND_CLIP_SEC, soundClipWindow, soundTrackDurationSec } from '../Reel/reelSoundUtils';
+import {
+  REEL_FILTER_PRESETS,
+  type ReelFilterId,
+} from '../Reel/reelFilters';
+import { WebGlFilterPreview } from '../../components/WebGlFilterPreview';
+import { bakeFilteredImage } from '../../lib/bakeFilteredImage';
 import { useOverlaySoundLoop } from '../../hooks/useOverlaySoundLoop';
 
 export type MomentDraftItem = {
@@ -51,6 +57,7 @@ export type MomentDraftItem = {
   /** Video clip trim (playback window). */
   trimStartSec?: number;
   trimEndSec?: number;
+  filterId?: ReelFilterId;
 };
 
 export type MomentDraft = {
@@ -116,6 +123,7 @@ export function MomentComposer({
   const [soundOpen, setSoundOpen] = useState(false);
   const [videoDurationSec, setVideoDurationSec] = useState(15);
   const [soundPreviewSec, setSoundPreviewSec] = useState(0);
+  const [posting, setPosting] = useState(false);
 
   const items = draft?.items ?? [];
   const currentItem = items[previewIndex];
@@ -126,6 +134,7 @@ export function MomentComposer({
   const soundVolume = currentItem?.soundVolume ?? 0.45;
   const isPhotoOrVideo =
     currentItem?.mediaType === 'video' || currentItem?.mediaType === 'image';
+  const filterId = (currentItem?.filterId ?? 'none') as ReelFilterId;
   const clipLenSec = Math.max(
     1,
     currentItem?.mediaType === 'image' ? IMAGE_SOUND_CLIP_SEC : videoDurationSec
@@ -269,7 +278,13 @@ export function MomentComposer({
   );
 
   const onVideoPlaybackStatus = useCallback(
-    (status: ReelPlaybackStatus) => {
+    (status: {
+      isLoaded?: boolean;
+      durationMillis?: number;
+      positionMillis?: number;
+      videoWidth?: number;
+      videoHeight?: number;
+    }) => {
       if (!status.isLoaded) return;
       if (status.durationMillis && status.durationMillis > 0) {
         setVideoDurationSec(status.durationMillis / 1000);
@@ -291,8 +306,8 @@ export function MomentComposer({
     [currentItem, onUpdateItem, previewIndex]
   );
 
-  const handlePost = () => {
-    if (!draft?.items.length) return;
+  const handlePost = async () => {
+    if (!draft?.items.length || posting) return;
     if (audienceMode !== 'friends' && selectedIds.size === 0) {
       Alert.alert(
         'Choose friends',
@@ -315,32 +330,88 @@ export function MomentComposer({
       }
     }
 
-    enqueueMomentUpload({
-      items: draft.items.map((item) => ({
-        uri: item.uri,
-        mediaType: item.mediaType,
-        fileName: item.fileName,
-        mime: item.mime,
-        caption: item.caption,
-        textBackground: item.textBackground,
-        ...(item.mediaType !== 'text' && item.sound
-          ? {
-              sound_id: item.sound.id,
-              sound_start_sec: item.soundStartSec ?? 0,
-              original_audio_volume:
-                item.mediaType === 'video' ? (item.originalAudioVolume ?? 1) : 1,
-              sound_volume: item.soundVolume ?? 0.45,
-            }
-          : {}),
-      })),
-      duration_minutes: durationMinutes,
-      view_once: viewOnce,
-      audience_mode: audienceMode,
-      audience_ids: audienceMode === 'friends' ? undefined : Array.from(selectedIds),
-    });
+    setPosting(true);
+    try {
+      const prepared = await Promise.all(
+        draft.items.map(async (item) => {
+          let uri = item.uri;
+          let mime = item.mime;
+          let fileName = item.fileName;
+          let filter_id =
+            item.mediaType !== 'text' && item.filterId && item.filterId !== 'none'
+              ? item.filterId
+              : undefined;
 
-    onPosted();
-    onClose();
+          // Bake stills on web so the uploaded JPEG already has the filter.
+          if (
+            Platform.OS === 'web' &&
+            item.mediaType === 'image' &&
+            item.uri &&
+            filter_id
+          ) {
+            try {
+              const baked = await bakeFilteredImage(
+                item.uri,
+                filter_id,
+                item.fileName ?? 'moment.jpg'
+              );
+              if (baked) {
+                uri = baked.uri;
+                mime = baked.mime;
+                fileName = baked.fileName;
+                // AR overlays need filter_id at view time; color grades are baked in.
+                if (
+                  ![
+                    'dog_ears',
+                    'cat_ears',
+                    'crown',
+                    'sunglasses',
+                    'big_eyes',
+                    'rainbow_vomit',
+                  ].includes(filter_id)
+                ) {
+                  filter_id = undefined;
+                }
+              }
+            } catch (err) {
+              console.warn('[MomentComposer] filter bake failed, uploading original', err);
+            }
+          }
+
+          return {
+            uri,
+            mediaType: item.mediaType,
+            fileName,
+            mime,
+            caption: item.caption,
+            textBackground: item.textBackground,
+            ...(item.mediaType !== 'text' && item.sound
+              ? {
+                  sound_id: item.sound.id,
+                  sound_start_sec: item.soundStartSec ?? 0,
+                  original_audio_volume:
+                    item.mediaType === 'video' ? (item.originalAudioVolume ?? 1) : 1,
+                  sound_volume: item.soundVolume ?? 0.45,
+                }
+              : {}),
+            ...(filter_id ? { filter_id } : {}),
+          };
+        })
+      );
+
+      enqueueMomentUpload({
+        items: prepared,
+        duration_minutes: durationMinutes,
+        view_once: viewOnce,
+        audience_mode: audienceMode,
+        audience_ids: audienceMode === 'friends' ? undefined : Array.from(selectedIds),
+      });
+
+      onPosted();
+      onClose();
+    } finally {
+      setPosting(false);
+    }
   };
 
   if (!draft?.items.length || !currentItem) return null;
@@ -358,8 +429,16 @@ export function MomentComposer({
               <Ionicons name="add-circle-outline" size={26} color={C.primary} />
             </TouchableOpacity>
           )}
-          <TouchableOpacity onPress={handlePost} style={styles.postBtn}>
-            <Text style={styles.postBtnText}>Post</Text>
+          <TouchableOpacity
+            onPress={() => void handlePost()}
+            style={[styles.postBtn, posting && { opacity: 0.6 }]}
+            disabled={posting}
+          >
+            {posting ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <Text style={styles.postBtnText}>Post</Text>
+            )}
           </TouchableOpacity>
         </View>
 
@@ -402,24 +481,27 @@ export function MomentComposer({
                 />
               </LinearGradient>
             ) : currentItem.mediaType === 'video' && currentItem.uri ? (
-              <ReelPlayer
+              <WebGlFilterPreview
                 key={currentItem.uri}
-                source={currentItem.uri}
+                uri={currentItem.uri}
+                mediaType="video"
+                filterId={filterId}
                 style={styles.previewMedia}
                 contentFit="contain"
                 shouldPlay
-                isMuted={Boolean(selectedSound)}
                 isLooping
+                muted={Boolean(selectedSound)}
                 volume={selectedSound ? originalAudioVolume : 1}
-                progressUpdateIntervalMillis={200}
                 onPlaybackStatusUpdate={onVideoPlaybackStatus}
               />
             ) : currentItem.uri ? (
-              <Image
+              <WebGlFilterPreview
                 key={currentItem.uri}
-                source={{ uri: currentItem.uri }}
+                uri={currentItem.uri}
+                mediaType="image"
+                filterId={filterId}
                 style={styles.previewMedia}
-                resizeMode="contain"
+                contentFit="contain"
               />
             ) : null}
             {items.length > 1 && (
@@ -475,6 +557,46 @@ export function MomentComposer({
                 onScrubStart={() => {}}
                 onScrubComplete={() => {}}
               />
+            </View>
+          ) : null}
+
+          {isPhotoOrVideo ? (
+            <View style={styles.section}>
+              <Text style={styles.sectionLabel}>Filter</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.filterRow}
+              >
+                {REEL_FILTER_PRESETS.map((preset) => {
+                  const active = filterId === preset.id;
+                  return (
+                    <TouchableOpacity
+                      key={preset.id}
+                      style={[styles.filterChip, active && styles.filterChipActive]}
+                      onPress={() => onUpdateItem(previewIndex, { filterId: preset.id })}
+                    >
+                      <View style={[styles.filterSwatch, active && { borderColor: C.primary }]}>
+                        <View
+                          style={[
+                            StyleSheet.absoluteFill,
+                            { backgroundColor: preset.swatch ?? '#444' },
+                            preset.cssFilter ? ({ filter: preset.cssFilter } as object) : null,
+                          ]}
+                        />
+                        {preset.overlay ? (
+                          <View
+                            style={[StyleSheet.absoluteFill, { backgroundColor: preset.overlay }]}
+                          />
+                        ) : null}
+                      </View>
+                      <Text style={[styles.filterLabel, active && styles.filterLabelActive]}>
+                        {preset.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
             </View>
           ) : null}
 
@@ -877,6 +999,20 @@ const styles = StyleSheet.create({
   bgChipGrad: { width: 48, height: 48, borderRadius: 10 },
   bgChipLabel: { fontSize: 11, fontWeight: '600', color: C.muted },
   bgChipLabelActive: { color: C.primary },
+  filterRow: { gap: 10, paddingBottom: 4 },
+  filterChip: { alignItems: 'center', width: 64 },
+  filterChipActive: {},
+  filterSwatch: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: 'transparent',
+    marginBottom: 4,
+  },
+  filterLabel: { fontSize: 11, fontWeight: '600', color: C.muted },
+  filterLabelActive: { color: C.primary },
 
   section: { paddingHorizontal: 14, marginTop: 8 },
   sectionLabel: {

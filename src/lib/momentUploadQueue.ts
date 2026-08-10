@@ -14,6 +14,7 @@ export type MomentUploadItem = {
   sound_start_sec?: number;
   original_audio_volume?: number;
   sound_volume?: number;
+  filter_id?: string;
 };
 
 export type MomentUploadDraft = {
@@ -138,6 +139,7 @@ async function processOne(item: { id: string; draft: MomentUploadDraft }) {
     sound_start_sec?: number;
     original_audio_volume?: number;
     sound_volume?: number;
+    filter_id?: string;
   }> = [];
 
   for (let i = 0; i < draft.items.length; i++) {
@@ -198,6 +200,11 @@ async function processOne(item: { id: string; draft: MomentUploadDraft }) {
             original_audio_volume: itemDraft.original_audio_volume ?? 1,
             sound_volume: itemDraft.sound_volume ?? 0.45,
           }
+        : {}),
+      ...(itemDraft.mediaType !== 'text' &&
+      itemDraft.filter_id &&
+      itemDraft.filter_id !== 'none'
+        ? { filter_id: itemDraft.filter_id }
         : {}),
     });
   }

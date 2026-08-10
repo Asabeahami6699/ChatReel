@@ -16,6 +16,20 @@ export function navigateToChat(target: ReelChatTarget) {
 }
 
 export function navigateToReelPreview(reelId: string) {
-  if (!rootNavigationRef.isReady()) return;
-  rootNavigationRef.navigate('ReelPreview', { reelId });
+  const go = () => {
+    if (!rootNavigationRef.isReady()) {
+      setTimeout(go, 80);
+      return;
+    }
+    try {
+      rootNavigationRef.navigate('ReelPreview', { reelId });
+    } catch {
+      setTimeout(() => {
+        if (rootNavigationRef.isReady()) {
+          rootNavigationRef.navigate('ReelPreview', { reelId });
+        }
+      }, 200);
+    }
+  };
+  go();
 }

@@ -3,7 +3,7 @@
  * local store (decrypt + persist). Complements realtime/WS for gaps after
  * background, reconnect, or missed deliveries.
  */
-import { api } from './api';
+import { ApiError, api } from './api';
 import { getActiveChatFocus } from './activeChatFocus';
 import { getOrCreateDeviceId } from './chatSocket';
 import { rememberChatThread } from './chatThreadCache';
@@ -21,10 +21,21 @@ const PAGE_LIMIT = 50;
 const MAX_STORED_PER_CHAT = 300;
 /** First-run window when neither local nor server cursor exists. */
 const BOOTSTRAP_LOOKBACK_MS = 2 * 24 * 60 * 60 * 1000;
+/** After a server 5xx, stop calling sync so DevTools isn't flooded. */
+const SYNC_COOLDOWN_MS = 30 * 60 * 1000;
 
 type ChatType = 'individual' | 'group';
 
 let inFlight: Promise<void> | null = null;
+let syncUnavailableUntil = 0;
+
+function markSyncUnavailable() {
+  syncUnavailableUntil = Date.now() + SYNC_COOLDOWN_MS;
+}
+
+function syncReady(): boolean {
+  return Date.now() >= syncUnavailableUntil;
+}
 
 function resolveChat(
   row: Record<string, unknown>,
@@ -91,13 +102,25 @@ async function resolveSince(deviceId: string): Promise<string> {
 }
 
 async function runCatchUp(userId: string): Promise<void> {
+  if (!syncReady()) return;
+
   const deviceId = await getOrCreateDeviceId();
   let since = await resolveSince(deviceId);
   let newest = since;
 
   for (let page = 0; page < MAX_PAGES; page++) {
-    const { messages } = await api.realtime.syncMessages(since, PAGE_LIMIT);
-    if (!messages?.length) break;
+    let messages: Record<string, unknown>[] = [];
+    try {
+      const res = await api.realtime.syncMessages(since, PAGE_LIMIT);
+      messages = (res.messages ?? []) as Record<string, unknown>[];
+    } catch (err) {
+      if (err instanceof ApiError && err.status >= 500) {
+        markSyncUnavailable();
+      }
+      // Best-effort — never rethrow (keeps console clean after the first failed fetch).
+      break;
+    }
+    if (!messages.length) break;
 
     const byChat = new Map<
       string,
@@ -150,6 +173,7 @@ async function runCatchUp(userId: string): Promise<void> {
 /** Coalesced catch-up — safe to call from foreground, reconnect, and push. */
 export function runMessageSyncCatchUp(userId: string): Promise<void> {
   if (!userId) return Promise.resolve();
+  if (!syncReady()) return Promise.resolve();
   if (inFlight) return inFlight;
   inFlight = runCatchUp(userId).finally(() => {
     inFlight = null;
