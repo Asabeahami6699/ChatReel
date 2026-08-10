@@ -104,7 +104,8 @@ router.get(
   asyncHandler(async (req: AuthedRequest, res) => {
     const profileId = await getProfileIdByUserId(req.userId!);
     if (!profileId) return res.status(404).json({ error: 'Profile not found' });
-    const poll = await getPollByMessageId(req.params.messageId, profileId);
+    const messageId = String(req.params.messageId ?? '');
+    const poll = await getPollByMessageId(messageId, profileId);
     if (!poll) return res.status(404).json({ error: 'Poll not found' });
     return res.json({ poll });
   })
@@ -120,7 +121,7 @@ router.post(
 
     try {
       const poll = await voteOnPoll({
-        pollId: req.params.pollId,
+        pollId: String(req.params.pollId ?? ''),
         optionId: body.option_id,
         userId: profileId,
       });

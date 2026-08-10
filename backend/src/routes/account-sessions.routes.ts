@@ -5,16 +5,26 @@ import { asyncHandler, requireAuth, type AuthedRequest } from '../middleware/aut
 
 const router = Router();
 
+const DEVICE_SELECT =
+  'id, installation_id, label, platform, device_name, trusted_at, last_seen_at, revoked_at' as const;
+
+type TrustedDeviceRow = {
+  id: string;
+  installation_id: string;
+  label: string | null;
+  platform: string | null;
+  device_name: string | null;
+  trusted_at: string | null;
+  last_seen_at: string | null;
+  revoked_at: string | null;
+};
+
 const registerSchema = z.object({
   installation_id: z.string().min(8).max(128),
   label: z.string().max(80).optional(),
   platform: z.string().max(40).optional(),
   device_name: z.string().max(80).optional(),
 });
-
-function deviceSelect() {
-  return 'id, installation_id, label, platform, device_name, trusted_at, last_seen_at, revoked_at';
-}
 
 /**
  * Register / refresh this installation as an active login device.
@@ -42,11 +52,11 @@ router.post(
         },
         { onConflict: 'user_id,installation_id' }
       )
-      .select(deviceSelect())
+      .select(DEVICE_SELECT)
       .single();
 
     if (error) return res.status(500).json({ error: error.message });
-    return res.json({ device: data });
+    return res.json({ device: data as TrustedDeviceRow });
   })
 );
 
@@ -63,19 +73,20 @@ router.post(
 
     const { data, error } = await supabaseAdmin
       .from('account_trusted_devices')
-      .select(deviceSelect())
+      .select(DEVICE_SELECT)
       .eq('user_id', req.userId!)
       .eq('installation_id', body.installation_id)
       .maybeSingle();
 
     if (error) return res.status(500).json({ error: error.message });
 
-    if (!data) {
+    const device = data as TrustedDeviceRow | null;
+    if (!device) {
       // Unknown installation — register lightly so the list isn't empty.
       return res.json({ ok: true, revoked: false, unknown: true });
     }
 
-    if (data.revoked_at) {
+    if (device.revoked_at) {
       return res.json({
         ok: false,
         revoked: true,
@@ -86,9 +97,9 @@ router.post(
     await supabaseAdmin
       .from('account_trusted_devices')
       .update({ last_seen_at: new Date().toISOString() })
-      .eq('id', data.id);
+      .eq('id', device.id);
 
-    return res.json({ ok: true, revoked: false, device: data });
+    return res.json({ ok: true, revoked: false, device });
   })
 );
 
@@ -104,14 +115,14 @@ router.get(
 
     const { data, error } = await supabaseAdmin
       .from('account_trusted_devices')
-      .select(deviceSelect())
+      .select(DEVICE_SELECT)
       .eq('user_id', req.userId!)
       .is('revoked_at', null)
       .order('last_seen_at', { ascending: false });
 
     if (error) return res.status(500).json({ error: error.message });
 
-    const devices = (data ?? []).map((d) => ({
+    const devices = ((data ?? []) as TrustedDeviceRow[]).map((d) => ({
       ...d,
       is_current: Boolean(installationId && d.installation_id === installationId),
     }));
@@ -136,13 +147,13 @@ router.delete(
       .eq('user_id', req.userId!)
       .eq('id', id)
       .is('revoked_at', null)
-      .select(deviceSelect())
+      .select(DEVICE_SELECT)
       .maybeSingle();
 
     if (error) return res.status(500).json({ error: error.message });
     if (!data) return res.status(404).json({ error: 'Device not found' });
 
-    return res.json({ ok: true, device: data });
+    return res.json({ ok: true, device: data as TrustedDeviceRow });
   })
 );
 

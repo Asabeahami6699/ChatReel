@@ -543,11 +543,11 @@ router.post(
 
       // Skip Expo when recipient already has this DM open (Realtime covers them).
       // Never push back to the sender (linked-device / shared-token edge cases).
-      let [needsPush] = filterUsersNeedingMessagePush(
+      let needsPush: string | undefined = filterUsersNeedingMessagePush(
         [body.receiver_id],
         userId,
         'individual'
-      );
+      )[0];
       if (needsPush === userId) needsPush = undefined;
       if (needsPush) {
         const unmuted = await filterMutedChatPush([needsPush], userId, 'individual');

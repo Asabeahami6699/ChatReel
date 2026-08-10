@@ -22,10 +22,10 @@ export async function identifyMusicFromUrl(
     form.append('url', audioUrl);
     form.append('return', 'apple_music,spotify');
 
-    const res = await fetch('https://api.audd.io/', {
-      method: 'POST',
-      body: form,
-    });
+    const res = await fetch(
+      'https://api.audd.io/',
+      { method: 'POST', body: form } as unknown as RequestInit
+    );
     if (!res.ok) {
       console.warn('[musicIdentify] AudD HTTP', res.status);
       return null;

@@ -50,7 +50,7 @@ async function translateWithGoogle(
     const response = await fetch(url, {
       signal: controller.signal,
       headers: { 'User-Agent': 'ChatReel/1.0' },
-    });
+    } as RequestInit);
     if (!response.ok) {
       throw new Error(`Google translate HTTP ${response.status}`);
     }
@@ -86,7 +86,7 @@ async function translateWithMyMemory(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    const response = await fetch(url, { signal: controller.signal });
+    const response = await fetch(url, { signal: controller.signal } as RequestInit);
     if (!response.ok) {
       throw new Error('MyMemory unavailable');
     }
