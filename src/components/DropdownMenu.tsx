@@ -201,6 +201,8 @@ export default function DropdownMenu({ triggerIcon = 'ellipsis-vertical' }: Drop
 
   const dropdownPanel = (
     <Animated.View
+      // Keep presses on the panel from falling through to the dismiss layer.
+      onStartShouldSetResponder={() => true}
       style={[
         styles.dropdown,
         {
@@ -262,6 +264,14 @@ export default function DropdownMenu({ triggerIcon = 'ellipsis-vertical' }: Drop
     </Animated.View>
   );
 
+  const dismissLayer = (
+    <Pressable
+      style={[styles.overlay, isWebDesktop ? styles.overlayClear : styles.overlayDim]}
+      onPress={closeMenu}
+      accessibilityLabel="Dismiss menu"
+    />
+  );
+
   return (
     <>
       <View ref={triggerRef} collapsable={false}>
@@ -274,12 +284,8 @@ export default function DropdownMenu({ triggerIcon = 'ellipsis-vertical' }: Drop
         ? visible
           ? (
             <Portal>
-              <View style={styles.webFloatRoot} pointerEvents="box-none">
-                <Pressable
-                  style={styles.webFloatDismiss}
-                  onPress={closeMenu}
-                  accessibilityLabel="Dismiss menu"
-                />
+              <View style={styles.webFloatRoot}>
+                {dismissLayer}
                 {dropdownPanel}
               </View>
             </Portal>
@@ -293,12 +299,8 @@ export default function DropdownMenu({ triggerIcon = 'ellipsis-vertical' }: Drop
             onRequestClose={closeMenu}
             statusBarTranslucent
           >
-            <View style={styles.modalRoot} pointerEvents="box-none">
-              <Pressable
-                style={[styles.overlay, styles.overlayDim]}
-                onPress={closeMenu}
-                accessibilityLabel="Dismiss menu"
-              />
+            <View style={styles.modalRoot}>
+              {dismissLayer}
               {dropdownPanel}
             </View>
           </Modal>
@@ -317,9 +319,14 @@ const styles = StyleSheet.create({
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,
+    // Non-zero alpha so web/desktop reliably receives outside clicks.
+    zIndex: 0,
   },
   overlayDim: {
     backgroundColor: 'rgba(0,0,0,0.3)',
+  },
+  overlayClear: {
+    backgroundColor: 'rgba(0,0,0,0.01)',
   },
   webFloatRoot: {
     ...Platform.select({
@@ -337,10 +344,6 @@ const styles = StyleSheet.create({
         elevation: 10050,
       },
     }),
-  },
-  webFloatDismiss: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'transparent',
   },
   dropdown: {
     position: 'absolute',

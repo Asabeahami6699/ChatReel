@@ -32,7 +32,7 @@ import {
 } from '../../lib/appAudio';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 import AttachmentPreview from '../../components/AttachmentPreview'; // Adjust the path as necessary
 import { USE_NATIVE_DRIVER } from '../../lib/animation';
@@ -84,12 +84,18 @@ type RecordingMode = 'text' | 'recording' | 'paused' | 'playing';
 type AttachmentFile = {
   id: string;
   uri: string;
-  mimeType: string | undefined;
-  name: string | null;
+  mimeType?: string;
+  name?: string | null;
   size?: number;
   type: 'photo' | 'video' | 'audio' | 'document';
   thumbnail?: string;
   duration?: number; // For videos
+  expiresInSeconds?: number | null;
+  viewOnce?: boolean;
+  viewOnceAutoCloseSec?: number | null;
+  trimStartSec?: number;
+  trimEndSec?: number;
+  caption?: string;
 };
 
 const commonEmojis = [
@@ -153,9 +159,9 @@ const ChatInput = forwardRef<TextInput, ChatInputProps>(({
   const inputRef = useRef<TextInput>(null);
   const audioRecorder = useAudioRecorder(VOICE_RECORDING_OPTIONS);
   const soundRef = useRef<AudioPlayer | null>(null);
-  const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const playbackIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const waveIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const recordingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const playbackIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const waveIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const recordedDurationRef = useRef(0);
   const recordingPreviewUriRef = useRef<string | null>(null);
   const recorderNeedsPrepareRef = useRef(false);
@@ -273,21 +279,22 @@ const ChatInput = forwardRef<TextInput, ChatInputProps>(({
     if (!sourceUri) return null;
 
     // Native paused session: play the in-progress file directly (no copy/finalize).
-    if (Platform.OS !== 'web' && modeRef.current === 'paused' && !recorderNeedsPrepareRef.current) {
+    if (modeRef.current === 'paused' && !recorderNeedsPrepareRef.current) {
       return sourceUri;
     }
 
     const status = audioRecorder.getStatus();
     const sessionStillOpen =
       modeRef.current === 'paused' && status.canRecord && !recorderNeedsPrepareRef.current;
+    const cacheDir = FileSystem.cacheDirectory;
 
-    if (!sessionStillOpen || Platform.OS === 'web' || !FileSystem.cacheDirectory) {
+    if (!sessionStillOpen || !cacheDir) {
       return sourceUri;
     }
 
     try {
       const extension = sourceUri.includes('.') ? sourceUri.split('.').pop() : 'm4a';
-      const previewPath = `${FileSystem.cacheDirectory}voice-preview-${Date.now()}.${extension}`;
+      const previewPath = `${cacheDir}voice-preview-${Date.now()}.${extension}`;
       await FileSystem.copyAsync({ from: sourceUri, to: previewPath });
       return previewPath;
     } catch {
@@ -577,16 +584,27 @@ const ChatInput = forwardRef<TextInput, ChatInputProps>(({
     setShowAttachmentPreview(false);
   };
 
-  const sendAllAttachments = (attachmentsToSend?: AttachmentFile[]) => {
-    const batch = attachmentsToSend ?? selectedAttachments;
+  const sendAllAttachments = (attachments: AttachmentFile[]) => {
+    const batch = attachments.length > 0 ? attachments : selectedAttachments;
     if (batch.length === 0) return;
 
     if (onSendMultipleAttachments) {
-      onSendMultipleAttachments(batch.map(({ id, ...rest }) => rest));
+      onSendMultipleAttachments(
+        batch.map(({ id: _id, ...rest }) => ({
+          uri: rest.uri,
+          mimeType: rest.mimeType,
+          name: rest.name ?? null,
+          size: rest.size,
+        }))
+      );
     } else if (onSendAttachment) {
       batch.forEach((attachment) => {
-        const { id, ...rest } = attachment;
-        onSendAttachment(rest.uri, rest.mimeType, rest.name, rest.size);
+        onSendAttachment(
+          attachment.uri,
+          attachment.mimeType,
+          attachment.name ?? null,
+          attachment.size
+        );
       });
     }
 
@@ -595,8 +613,12 @@ const ChatInput = forwardRef<TextInput, ChatInputProps>(({
 
   const sendSingleAttachment = (attachment: AttachmentFile) => {
     if (onSendAttachment) {
-      const { id, ...rest } = attachment;
-      onSendAttachment(rest.uri, rest.mimeType, rest.name, rest.size);
+      onSendAttachment(
+        attachment.uri,
+        attachment.mimeType,
+        attachment.name ?? null,
+        attachment.size
+      );
     }
     
     setSelectedAttachments(prev => prev.filter(att => att.id !== attachment.id));
@@ -1406,7 +1428,10 @@ const formatDuration = (seconds: number) => {
 
 const styles = StyleSheet.create({
   wrapper: {
+    // Stay in flex flow so KeyboardAvoidingView can lift the composer.
     width: '100%',
+    paddingHorizontal: 0,
+    paddingTop: 0,
     backgroundColor: '#f0f0f0',
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: '#e0e0e0',

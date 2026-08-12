@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
+  Modal,
   Platform,
   StyleSheet,
   Text,
@@ -25,6 +26,7 @@ type Props = {
 
 /**
  * Covers a single conversation when Chat Lock is set to specific chats.
+ * Full-screen Modal so messages/header stay hidden until unlock.
  * Does not re-engage on app background — only when the Chats tab is left.
  */
 export function ChatRoomLockCover({ kind, chatId, chatName, onBack }: Props) {
@@ -69,8 +71,6 @@ export function ChatRoomLockCover({ kind, chatId, chatName, onBack }: Props) {
     setSetupDraft(null);
   }, [chatId]);
 
-  if (!needsUnlock) return null;
-
   const title = chatName?.trim() ? `${chatName} is locked` : 'This chat is locked';
   const webSubtitle = needsPinSetup
     ? setupDraft
@@ -79,103 +79,114 @@ export function ChatRoomLockCover({ kind, chatId, chatName, onBack }: Props) {
     : 'Enter your PIN to open this conversation.';
 
   return (
-    <View
-      style={[
-        styles.root,
-        {
-          backgroundColor: theme.headerBg || theme.listBg || '#0b1220',
-          paddingTop: insets.top + 16,
-          paddingBottom: insets.bottom + 16,
-        },
-      ]}
-      accessibilityViewIsModal
+    <Modal
+      visible={needsUnlock}
+      animationType="fade"
+      presentationStyle="fullScreen"
+      statusBarTranslucent
+      onRequestClose={() => {
+        onBack?.();
+      }}
     >
-      {onBack ? (
-        <TouchableOpacity style={styles.backBtn} onPress={onBack} hitSlop={12}>
-          <Ionicons name="arrow-back" size={24} color="#fff" />
-        </TouchableOpacity>
-      ) : (
-        <View style={styles.backSpacer} />
-      )}
-
-      <View style={styles.center}>
-        <View style={styles.lockBadge}>
-          <Ionicons name="lock-closed" size={28} color="#fff" />
-        </View>
-        <Image
-          source={require('../../assets/favIconChat.png')}
-          style={styles.logo}
-          resizeMode="contain"
-        />
-        <Text style={styles.title}>{title}</Text>
-        <Text style={styles.subtitle}>
-          {isWeb
-            ? webSubtitle
-            : 'Unlock to read this conversation. Other chats stay available.'}
-        </Text>
-
-        {isWeb ? (
-          <AppLockPinPad
-            title={
-              needsPinSetup
-                ? setupDraft
-                  ? 'Confirm PIN'
-                  : 'Create PIN'
-                : undefined
-            }
-            error={pinError}
-            busy={unlocking}
-            onSubmit={async (pin) => {
-              setPinError(null);
-              if (needsPinSetup) {
-                if (!setupDraft) {
-                  setSetupDraft(pin);
-                  return;
-                }
-                if (pin !== setupDraft) {
-                  setPinError('Codes do not match. Try again.');
-                  setSetupDraft(null);
-                  return;
-                }
-                const result = await setAppLockPin(pin);
-                if (!result.ok) {
-                  setPinError(result.error);
-                  setSetupDraft(null);
-                  return;
-                }
-                setNeedsPinSetup(false);
-                setSetupDraft(null);
-              }
-              const ok = await unlockChat(kind, chatId, pin);
-              if (!ok) setPinError('Wrong code');
-            }}
-          />
-        ) : (
-          <TouchableOpacity
-            style={[styles.btn, unlocking && styles.btnDisabled]}
-            onPress={() => void unlockChat(kind, chatId)}
-            disabled={unlocking}
-            activeOpacity={0.85}
-          >
-            {unlocking ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <>
-                <Ionicons name="finger-print-outline" size={22} color="#fff" />
-                <Text style={styles.btnText}>Unlock chat</Text>
-              </>
-            )}
+      <View
+        style={[
+          styles.root,
+          {
+            backgroundColor: theme.headerBg || theme.listBg || '#0b1220',
+            paddingTop: insets.top + 16,
+            paddingBottom: insets.bottom + 16,
+          },
+        ]}
+        accessibilityViewIsModal
+      >
+        {onBack ? (
+          <TouchableOpacity style={styles.backBtn} onPress={onBack} hitSlop={12}>
+            <Ionicons name="arrow-back" size={24} color="#fff" />
           </TouchableOpacity>
+        ) : (
+          <View style={styles.backSpacer} />
         )}
+
+        <View style={styles.center}>
+          <View style={styles.lockBadge}>
+            <Ionicons name="lock-closed" size={28} color="#fff" />
+          </View>
+          <Image
+            source={require('../../assets/favIconChat.png')}
+            style={styles.logo}
+            resizeMode="contain"
+          />
+          <Text style={styles.title}>{title}</Text>
+          <Text style={styles.subtitle}>
+            {isWeb
+              ? webSubtitle
+              : 'Unlock to read this conversation. Other chats stay available.'}
+          </Text>
+
+          {isWeb ? (
+            <AppLockPinPad
+              title={
+                needsPinSetup
+                  ? setupDraft
+                    ? 'Confirm PIN'
+                    : 'Create PIN'
+                  : undefined
+              }
+              error={pinError}
+              busy={unlocking}
+              onSubmit={async (pin) => {
+                setPinError(null);
+                if (needsPinSetup) {
+                  if (!setupDraft) {
+                    setSetupDraft(pin);
+                    return;
+                  }
+                  if (pin !== setupDraft) {
+                    setPinError('Codes do not match. Try again.');
+                    setSetupDraft(null);
+                    return;
+                  }
+                  const result = await setAppLockPin(pin);
+                  if (!result.ok) {
+                    setPinError(result.error);
+                    setSetupDraft(null);
+                    return;
+                  }
+                  setNeedsPinSetup(false);
+                  setSetupDraft(null);
+                }
+                const ok = await unlockChat(kind, chatId, pin);
+                if (!ok) setPinError('Wrong code');
+              }}
+            />
+          ) : (
+            <TouchableOpacity
+              style={[styles.btn, unlocking && styles.btnDisabled]}
+              onPress={() => void unlockChat(kind, chatId)}
+              disabled={unlocking}
+              activeOpacity={0.85}
+            >
+              {unlocking ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <>
+                  <Ionicons name="finger-print-outline" size={22} color="#fff" />
+                  <Text style={styles.btnText}>Unlock chat</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
-    </View>
+    </Modal>
   );
 }
 
 const styles = StyleSheet.create({
   root: {
-    ...StyleSheet.absoluteFill,
-    zIndex: 50,
+    flex: 1,
+    width: '100%',
+    height: '100%',
     alignItems: 'center',
     paddingHorizontal: 28,
   },

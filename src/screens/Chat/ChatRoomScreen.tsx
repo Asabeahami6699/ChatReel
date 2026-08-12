@@ -147,8 +147,9 @@ export default function ChatRoomScreen() {
   const [loadingMore, setLoadingMore] = useState(false);
   const messagesRef = useRef<Message[]>(messages);
   messagesRef.current = messages;
-  // Header sits outside KeyboardAvoidingView.
-  const keyboardVerticalOffset = Platform.OS === 'ios' ? 70 + insets.top : 0;
+  // Measure real header height so KAV offset stays correct with status bar / layout changes.
+  const [measuredHeaderH, setMeasuredHeaderH] = useState(70 + insets.top);
+  const [measuredBannerH, setMeasuredBannerH] = useState(0);
 
   const [hasMore, setHasMore] = useState(true);
   const [isPlayingAudio, setIsPlayingAudio] = useState<string | null>(null);
@@ -297,10 +298,18 @@ export default function ChatRoomScreen() {
     initialLoadComplete,
   });
 
-  // Android uses softwareKeyboardLayoutMode: 'resize' — do not also pad by
-  // keyboardHeight or the composer gets an extra upward lift above the IME.
-  // iOS uses KeyboardAvoidingView below.
-  const androidKeyboardPad = 0;
+  const bannerVisible =
+    chatType === 'group' && activeGroupCall.canJoin && !!activeGroupCall.call;
+  // Banner sits outside KAV; include its height in the iOS offset.
+  const bannerHeight = bannerVisible ? measuredBannerH || 52 : 0;
+  const keyboardVerticalOffset =
+    Platform.OS === 'ios' ? measuredHeaderH + bannerHeight : 0;
+  // iOS: padding. Android: height works with softwareKeyboardLayoutMode: 'resize'.
+  const kavBehavior = Platform.OS === 'ios' ? 'padding' : 'height';
+
+  useEffect(() => {
+    if (!bannerVisible && measuredBannerH !== 0) setMeasuredBannerH(0);
+  }, [bannerVisible, measuredBannerH]);
 
   const persistMessages = useCallback(
     (updater: (prev: Message[]) => Message[]) => {
@@ -3308,6 +3317,7 @@ export default function ChatRoomScreen() {
         translucent={false}
       />
       <View
+        onLayout={(e) => setMeasuredHeaderH(e.nativeEvent.layout.height)}
         style={[
           styles.header,
           {
@@ -3348,7 +3358,6 @@ export default function ChatRoomScreen() {
                       ? partnerStatus
                       : `${messages.length ? 'Group chat' : 'New group'}`}
                 {syncing && ' · Syncing...'}
-                {__DEV__ && ` · ${visibleMessages.length}/${messages.length}`}
               </Text>
             </View>
           </TouchableOpacity>
@@ -3374,19 +3383,21 @@ export default function ChatRoomScreen() {
         </View>
       </View>
 
-      {chatType === 'group' && activeGroupCall.canJoin && activeGroupCall.call && (
-        <GroupCallBanner
-          call={activeGroupCall.call}
-          joinedCount={activeGroupCall.joinedCount}
-          onJoin={() => void joinGroupCall()}
-        />
-      )}
+      {bannerVisible && activeGroupCall.call ? (
+        <View onLayout={(e) => setMeasuredBannerH(e.nativeEvent.layout.height)}>
+          <GroupCallBanner
+            call={activeGroupCall.call}
+            joinedCount={activeGroupCall.joinedCount}
+            onJoin={() => void joinGroupCall()}
+          />
+        </View>
+      ) : null}
 
       <KeyboardAvoidingView
-        style={{ flex: 1, backgroundColor: chatBgColor, paddingBottom: androidKeyboardPad }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={{ flex: 1, backgroundColor: chatBgColor }}
+        behavior={kavBehavior}
         keyboardVerticalOffset={keyboardVerticalOffset}
-        enabled={Platform.OS === 'ios'}
+        enabled
       >
         <View style={[styles.chatBody, { backgroundColor: chatBgColor }]}>
           {wallpaperImageUri ? (
@@ -3448,6 +3459,7 @@ export default function ChatRoomScreen() {
             contentContainerStyle={styles.listContent}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
             onScrollToIndexFailed={(info) => {
               const approx = Math.max(0, info.averageItemLength * info.index);
               flatListRef.current?.scrollToOffset?.({ offset: approx, animated: true });
@@ -3522,7 +3534,10 @@ export default function ChatRoomScreen() {
 
           {showScrollDown && (
             <TouchableOpacity
-              style={[styles.scrollFab, { bottom: 76 + insets.bottom }]}
+              style={[
+                styles.scrollFab,
+                { bottom: 76 + insets.bottom + (isKeyboardVisible ? 12 : 0) },
+              ]}
               onPress={scrollToBottomAndStick}
               activeOpacity={0.85}
             >
@@ -3552,7 +3567,13 @@ export default function ChatRoomScreen() {
           onCreatePoll={
             chatType === 'group' ? () => setPollComposerOpen(true) : undefined
           }
-          style={{ paddingBottom: isKeyboardVisible ? 6 : insets.bottom }}
+          style={{
+            paddingBottom: isKeyboardVisible
+              ? Platform.OS === 'ios'
+                ? insets.bottom
+                : 6
+              : insets.bottom,
+          }}
           disabled={!user?.id}
         />
       </KeyboardAvoidingView>

@@ -37,6 +37,7 @@ export function FloatingActionMenu({ visible, x, y, actions, onClose }: Props) {
       <View style={styles.root}>
         <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Dismiss menu" />
         <View
+          onStartShouldSetResponder={() => true}
           style={[
             styles.menu,
             {

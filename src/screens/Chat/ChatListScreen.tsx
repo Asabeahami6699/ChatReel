@@ -1377,87 +1377,108 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
 
   const renderFabMenu = (actions: readonly FabAction[]) => (
     <>
-      {fabMenuOpen ? (
-        <Pressable
-          style={styles.fabDismissOverlay}
-          onPress={closeFabMenu}
-          accessibilityLabel="Dismiss action menu"
+      <Modal
+        visible={fabMenuOpen}
+        transparent
+        animationType="none"
+        onRequestClose={closeFabMenu}
+        statusBarTranslucent
+      >
+        <View style={styles.fabModalRoot}>
+          <Pressable
+            style={styles.fabDismissOverlay}
+            onPress={closeFabMenu}
+            accessibilityLabel="Dismiss action menu"
+          />
+          {actions.map((action, actionIndex) => {
+            const lift = (actionIndex + 1) * 64
+            return (
+              <Animated.View
+                key={action.key}
+                pointerEvents="auto"
+                style={[
+                  styles.fabActionRow,
+                  {
+                    bottom: fabBottom + 8,
+                    opacity: fabMenuAnim.interpolate({
+                      inputRange: [0, 0.35, 1],
+                      outputRange: [0, 0.7, 1],
+                    }),
+                    transform: [
+                      {
+                        translateY: fabMenuAnim.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [16, -lift],
+                        }),
+                      },
+                      {
+                        scale: fabMenuAnim.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [0.6, 1],
+                        }),
+                      },
+                    ],
+                  },
+                ]}
+              >
+                <TouchableOpacity
+                  style={[
+                    styles.fabActionLabel,
+                    {
+                      backgroundColor: theme.listCardBg,
+                      borderColor: theme.listBorder,
+                      borderWidth: theme.isDark ? 1 : 0,
+                    },
+                  ]}
+                  onPress={() => runFabAction(action.route)}
+                  activeOpacity={0.85}
+                  disabled={!isOnline}
+                  accessibilityRole="button"
+                  accessibilityLabel={action.label}
+                >
+                  <Text style={[styles.fabActionLabelText, { color: theme.listPrimaryText }]}>
+                    {action.label}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.fabMini, !isOnline && styles.fabMiniDisabled]}
+                  onPress={() => runFabAction(action.route)}
+                  activeOpacity={0.9}
+                  disabled={!isOnline}
+                  accessibilityRole="button"
+                  accessibilityLabel={action.label}
+                >
+                  <Ionicons name={action.icon} size={24} color="#fff" />
+                </TouchableOpacity>
+              </Animated.View>
+            )
+          })}
+          <FAB
+            style={[
+              styles.fab,
+              { bottom: fabBottom },
+              !isOnline && styles.disabledFab,
+              styles.fabOpen,
+            ]}
+            color="#FFFFFF"
+            icon="close"
+            onPress={closeFabMenu}
+            accessibilityLabel="Close action menu"
+          />
+        </View>
+      </Modal>
+
+      {!fabMenuOpen ? (
+        <FAB
+          style={[styles.fab, { bottom: fabBottom }, !isOnline && styles.disabledFab]}
+          color="#FFFFFF"
+          icon="plus"
+          onPress={() => {
+            if (isOnline) toggleFabMenu()
+          }}
+          accessibilityLabel="Open action menu"
         />
       ) : null}
-      {actions.map((action, actionIndex) => {
-        const lift = (actionIndex + 1) * 64
-        return (
-          <Animated.View
-            key={action.key}
-            pointerEvents={fabMenuOpen ? 'auto' : 'none'}
-            style={[
-              styles.fabActionRow,
-              {
-                bottom: fabBottom + 8,
-                opacity: fabMenuAnim.interpolate({
-                  inputRange: [0, 0.35, 1],
-                  outputRange: [0, 0.7, 1],
-                }),
-                transform: [
-                  {
-                    translateY: fabMenuAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [16, -lift],
-                    }),
-                  },
-                  {
-                    scale: fabMenuAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0.6, 1],
-                    }),
-                  },
-                ],
-              },
-            ]}
-          >
-            <TouchableOpacity
-              style={[
-                styles.fabActionLabel,
-                { backgroundColor: theme.listCardBg, borderColor: theme.listBorder, borderWidth: theme.isDark ? 1 : 0 },
-              ]}
-              onPress={() => runFabAction(action.route)}
-              activeOpacity={0.85}
-              disabled={!isOnline}
-              accessibilityRole="button"
-              accessibilityLabel={action.label}
-            >
-              <Text style={[styles.fabActionLabelText, { color: theme.listPrimaryText }]}>
-                {action.label}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.fabMini, !isOnline && styles.fabMiniDisabled]}
-              onPress={() => runFabAction(action.route)}
-              activeOpacity={0.9}
-              disabled={!isOnline}
-              accessibilityRole="button"
-              accessibilityLabel={action.label}
-            >
-              <Ionicons name={action.icon} size={24} color="#fff" />
-            </TouchableOpacity>
-          </Animated.View>
-        )
-      })}
-
-      <FAB
-        style={[
-          styles.fab,
-          { bottom: fabBottom },
-          !isOnline && styles.disabledFab,
-          fabMenuOpen && styles.fabOpen,
-        ]}
-        color="#FFFFFF"
-        icon={fabMenuOpen ? 'close' : 'plus'}
-        onPress={() => {
-          if (isOnline) toggleFabMenu()
-        }}
-        accessibilityLabel={fabMenuOpen ? 'Close action menu' : 'Open action menu'}
-      />
     </>
   )
 
@@ -2260,8 +2281,13 @@ const styles = StyleSheet.create({
   fabOpen: {
     backgroundColor: '#007AFF',
   },
+  fabModalRoot: {
+    flex: 1,
+  },
   fabDismissOverlay: {
     ...StyleSheet.absoluteFillObject,
+    // Tiny alpha so web reliably hits the dismiss layer.
+    backgroundColor: 'rgba(0,0,0,0.01)',
     zIndex: 20,
     elevation: 20,
   },
@@ -2274,8 +2300,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'flex-end',
     gap: 10,
-    zIndex: 30,
-    elevation: 30,
   },
   fabActionLabel: {
     backgroundColor: '#fff',
