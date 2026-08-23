@@ -425,7 +425,11 @@ export async function tryEncryptChatText(opts: {
   cleartext: string;
   memberUserIds?: string[];
 }): Promise<E2EWireFields | null> {
-  const { chatType, chatId } = opts;
+  const { chatType, chatId, senderUserId } = opts;
+  // WhatsApp-style "Message yourself" — store as plaintext (no Signal session with self).
+  if (chatType === 'individual' && senderUserId && chatId === senderUserId) {
+    return null;
+  }
   try {
     return await withTimeout(
       encryptChatText(opts),

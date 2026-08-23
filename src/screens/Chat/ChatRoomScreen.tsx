@@ -115,6 +115,7 @@ import {
 } from '../../lib/groupSenderKeys';
 import { rememberChatThread, recallChatThread, clearChatThread } from '../../lib/chatThreadCache';
 import { patchChatListMeta } from '../../lib/chatListMeta';
+import { setLocalActiveChatFocus } from '../../lib/activeChatFocus';
 
 /** First paint: recent window only. Older history is pull-to-load (WhatsApp-style). */
 const INITIAL_MESSAGE_PAGE = 30;
@@ -218,8 +219,8 @@ export default function ChatRoomScreen() {
   const unreadCapturedRef = useRef(false);
 
   const { statusText: partnerStatus } = usePartnerPresence(
-    chatType === 'individual' ? chatId : undefined,
-    chatType === 'individual'
+    chatType === 'individual' && !isSelfNotes ? chatId : undefined,
+    chatType === 'individual' && !isSelfNotes
   );
   const { typingLabel } = useChatTyping({
     chatId,
@@ -3073,7 +3074,12 @@ export default function ChatRoomScreen() {
   const menuItems: MenuItem[] = useMemo(() => {
     const items: MenuItem[] = [
       {
-        title: chatType === 'individual' ? 'View contact' : 'Group info',
+        title:
+          chatType === 'individual'
+            ? isSelfNotes
+              ? 'Your profile'
+              : 'View contact'
+            : 'Group info',
         icon: chatType === 'individual' ? 'person-outline' : 'people-outline',
         onPress: handleInfoPress,
       },
@@ -3120,7 +3126,7 @@ export default function ChatRoomScreen() {
       });
     }
 
-    if (chatType === 'individual') {
+    if (chatType === 'individual' && !isSelfNotes) {
       items.push({
         title: 'Block',
         icon: 'ban-outline',
@@ -3151,6 +3157,7 @@ export default function ChatRoomScreen() {
     handleAddMembers,
     handleBlockContact,
     handleExportChat,
+    isSelfNotes,
   ]);
 
   const openMediaViewer = useCallback(
@@ -3388,11 +3395,13 @@ export default function ChatRoomScreen() {
               <Text style={[styles.headerStatus, { color: theme.headerStatus }]} numberOfLines={1}>
                 {!hasNetwork
                   ? 'Waiting for network'
-                  : typingLabel
-                    ? typingLabel
-                    : chatType === 'individual'
-                      ? partnerStatus
-                      : `${messages.length ? 'Group chat' : 'New group'}`}
+                  : isSelfNotes
+                    ? 'Notes, links & to-dos'
+                    : typingLabel
+                      ? typingLabel
+                      : chatType === 'individual'
+                        ? partnerStatus
+                        : `${messages.length ? 'Group chat' : 'New group'}`}
                 {syncing && ' · Syncing...'}
               </Text>
             </View>
