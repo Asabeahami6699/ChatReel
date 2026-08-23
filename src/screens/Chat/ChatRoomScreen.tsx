@@ -23,7 +23,8 @@ import {
 } from 'react-native';
 import { useAuth } from '../../hooks/useAuth';
 import { api, ApiError } from '../../lib/api';
-import { setLocalActiveChatFocus } from '../../lib/activeChatFocus';
+import { keyboardAvoidingBehavior, keyboardAvoidingEnabled, keyboardPaddingAboveSafeArea } from '../../lib/keyboardLayout';
+import { isSelfNotesChat } from '../../lib/selfNotesChat';
 import { cancelChatThreadsPrefetch } from '../../lib/chatThreadsPrefetch';
 import { flushMessageOutbox, flushOutboxItem } from '../../lib/flushMessageOutbox';
 import { WallpaperPickerSheet } from '../../components/WallpaperPickerSheet';
@@ -31,6 +32,9 @@ import { ChatSharedMediaSheet } from '../../components/ChatSharedMediaSheet';
 import { showAppToast } from '../../lib/appToast';
 import { disappearLabel } from '../../lib/disappearOptions';
 import { DisappearTimerSheet } from './DisappearTimerSheet';
+import { RemindMeSheet } from './RemindMeSheet';
+import { refreshChatReminders } from '../../hooks/useChatReminders';
+import { formatReminderWhen } from '../../lib/chatReminders';
 import NetInfo from '@react-native-community/netinfo';
 import { uploadFromUri } from '../../lib/uploads';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
@@ -136,6 +140,7 @@ export default function ChatRoomScreen() {
   const insets = useSafeAreaInsets();
   const { theme } = useChatSettings();
   const roomKind = chatType === 'group' ? 'group' : 'individual';
+  const isSelfNotes = chatType === 'individual' && isSelfNotesChat(chatId, user?.id);
 
   const cachedThread = chatId ? recallChatThread<Message>(chatId) : null;
   const [messages, setMessages] = useState<Message[]>(() =>
@@ -182,6 +187,8 @@ export default function ChatRoomScreen() {
   const [searchVisible, setSearchVisible] = useState(false);
   const [searchHitId, setSearchHitId] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<Message | null>(null);
+  const [remindMessage, setRemindMessage] = useState<Message | null>(null);
+  const focusMessageHandledRef = useRef<string | null>(null);
   const [translations, setTranslations] = useState<Record<string, string>>({});
   const [momentPreviewId, setMomentPreviewId] = useState<string | null>(null);
   const [wallpaper, setWallpaper] = useState<string | null>(null);
@@ -279,7 +286,7 @@ export default function ChatRoomScreen() {
     showScrollDown,
     nearTop,
     isKeyboardVisible,
-    keyboardHeight: _keyboardHeight,
+    keyboardHeight,
     shouldStickToBottomRef: shouldScrollToBottomRef,
     scrollToBottom,
     scrollToBottomAndStick,
@@ -304,8 +311,11 @@ export default function ChatRoomScreen() {
   const bannerHeight = bannerVisible ? measuredBannerH || 52 : 0;
   const keyboardVerticalOffset =
     Platform.OS === 'ios' ? measuredHeaderH + bannerHeight : 0;
-  // iOS: padding. Android: height works with softwareKeyboardLayoutMode: 'resize'.
-  const kavBehavior = Platform.OS === 'ios' ? 'padding' : 'height';
+  const kavBehavior = keyboardAvoidingBehavior();
+  const manualKeyboardPad =
+    Platform.OS === 'android' || Platform.OS === 'web'
+      ? keyboardPaddingAboveSafeArea(keyboardHeight, insets.bottom)
+      : 0;
 
   useEffect(() => {
     if (!bannerVisible && measuredBannerH !== 0) setMeasuredBannerH(0);
@@ -469,6 +479,23 @@ export default function ChatRoomScreen() {
     [chatRows, flatListRef]
   );
 
+  // Deep-link / reminder / starred: jump to a specific message once the thread is ready.
+  useEffect(() => {
+    focusMessageHandledRef.current = null;
+  }, [chatId]);
+
+  useEffect(() => {
+    const focusId =
+      typeof params.focusMessageId === 'string' ? params.focusMessageId : null;
+    if (!focusId || !initialLoadComplete) return;
+    if (focusMessageHandledRef.current === focusId) return;
+    const exists = messages.some((m) => m.id === focusId);
+    if (!exists) return;
+    focusMessageHandledRef.current = focusId;
+    const t = setTimeout(() => scrollToMessage(focusId), 120);
+    return () => clearTimeout(t);
+  }, [params.focusMessageId, initialLoadComplete, messages, scrollToMessage]);
+
   const handleMessageAction = useCallback(
     async (action: MessageAction, emoji?: string) => {
       const msg = actionMessage;
@@ -601,6 +628,10 @@ export default function ChatRoomScreen() {
         setForwardMessage(msg);
         return;
       }
+      if (action === 'remind' && !msg.id.startsWith('temp-')) {
+        setRemindMessage(msg);
+        return;
+      }
       if (action === 'delete_me' && !msg.id.startsWith('temp-')) {
         try {
           await api.messages.delete(msg.id, false);
@@ -645,7 +676,8 @@ export default function ChatRoomScreen() {
       }
 
         try {
-          const payload = {
+          // Keep as Record so spread+conditional isn't narrowed to only receiver_id/group_id.
+          const payload: Record<string, unknown> = {
             ...buildForwardPayload({
               ...msg,
               content: getMessageDisplayText(msg),
@@ -2767,6 +2799,10 @@ export default function ChatRoomScreen() {
 
   const handleInfoPress = useCallback(() => {
     if (chatType === 'individual') {
+      if (isSelfNotes) {
+        navigation.navigate('Profile');
+        return;
+      }
       navigation.navigate('Contact', {
         userId: chatId,
         chatName,
@@ -2779,7 +2815,7 @@ export default function ChatRoomScreen() {
         avatarUrl,
       });
     }
-  }, [chatType, chatId, chatName, avatarUrl, navigation]);
+  }, [chatType, chatId, chatName, avatarUrl, navigation, isSelfNotes]);
 
   const handleMuteChat = useCallback(async () => {
     try {
@@ -3363,22 +3399,26 @@ export default function ChatRoomScreen() {
           </TouchableOpacity>
         </View>
         <View style={styles.headerActions}>
-          <TouchableOpacity
-            onPress={() => void startChatCall('video')}
-            style={styles.headerIconBtn}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            accessibilityLabel="Video call"
-          >
-            <Ionicons name="videocam" size={24} color={theme.headerText} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => void startChatCall('voice')}
-            style={styles.headerIconBtn}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            accessibilityLabel="Voice call"
-          >
-            <Ionicons name="call" size={22} color={theme.headerText} />
-          </TouchableOpacity>
+          {!isSelfNotes ? (
+            <>
+              <TouchableOpacity
+                onPress={() => void startChatCall('video')}
+                style={styles.headerIconBtn}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityLabel="Video call"
+              >
+                <Ionicons name="videocam" size={24} color={theme.headerText} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => void startChatCall('voice')}
+                style={styles.headerIconBtn}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityLabel="Voice call"
+              >
+                <Ionicons name="call" size={22} color={theme.headerText} />
+              </TouchableOpacity>
+            </>
+          ) : null}
           <ChatMenuDropdown items={menuItems} iconColor={theme.headerText} />
         </View>
       </View>
@@ -3394,10 +3434,10 @@ export default function ChatRoomScreen() {
       ) : null}
 
       <KeyboardAvoidingView
-        style={{ flex: 1, backgroundColor: chatBgColor }}
+        style={{ flex: 1, backgroundColor: chatBgColor, paddingBottom: manualKeyboardPad }}
         behavior={kavBehavior}
         keyboardVerticalOffset={keyboardVerticalOffset}
-        enabled
+        enabled={keyboardAvoidingEnabled()}
       >
         <View style={[styles.chatBody, { backgroundColor: chatBgColor }]}>
           {wallpaperImageUri ? (
@@ -3722,6 +3762,55 @@ export default function ChatRoomScreen() {
         }
         onClose={() => setActionMessage(null)}
         onAction={handleMessageAction}
+      />
+
+      <RemindMeSheet
+        visible={!!remindMessage}
+        chatName={chatName}
+        previewText={
+          remindMessage
+            ? getMessageDisplayText(remindMessage).trim() ||
+              remindMessage.file_name ||
+              String(remindMessage.message_type || 'Message')
+            : ''
+        }
+        onClose={() => setRemindMessage(null)}
+        onConfirm={(remindAt, note) => {
+          const msg = remindMessage;
+          setRemindMessage(null);
+          if (!msg) return;
+          const preview =
+            getMessageDisplayText(msg).trim() ||
+            msg.file_name ||
+            String(msg.message_type || 'Message');
+          void (async () => {
+            try {
+              const messageId =
+                typeof msg.id === 'string' &&
+                /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+                  msg.id
+                )
+                  ? msg.id
+                  : null;
+              await api.chatReminders.create({
+                chat_id: chatId,
+                chat_type: chatType === 'group' ? 'group' : 'individual',
+                message_id: messageId,
+                remind_at: remindAt.toISOString(),
+                note,
+                preview_text: String(preview).slice(0, 400),
+                chat_name: chatName,
+              });
+              await refreshChatReminders().catch(() => undefined);
+              showAppToast(`Reminder set · ${formatReminderWhen(remindAt.toISOString())}`);
+            } catch (err) {
+              showAppToast(
+                err instanceof ApiError ? err.message : 'Could not set reminder',
+                { isError: true }
+              );
+            }
+          })();
+        }}
       />
 
       <MomentChatPreview

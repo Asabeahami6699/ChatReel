@@ -9,25 +9,31 @@ import {
   phoneOtpVerifyRateLimit,
 } from '../middleware/rateLimit';
 import { gateSessionWith2fa } from '../services/account2fa.service';
+import { requireSignupDateOfBirth } from '../lib/ageGate';
 
 const router = Router();
+
+const dateOfBirthSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional();
 
 const credentialsSchema = z.object({
   email: z.string().email().transform((e) => e.trim().toLowerCase()),
   password: z.string().min(6),
   display_name: z.string().optional(),
+  date_of_birth: dateOfBirthSchema,
 });
 
 const otpSendSchema = z.object({
   phone: z.string().min(7).max(32),
   mode: z.enum(['login', 'register']).default('login'),
   display_name: z.string().trim().min(2).max(60).optional(),
+  date_of_birth: dateOfBirthSchema,
 });
 
 const otpVerifySchema = z.object({
   phone: z.string().min(7).max(32),
   token: z.string().trim().min(4).max(12),
   display_name: z.string().trim().min(2).max(60).optional(),
+  date_of_birth: dateOfBirthSchema,
   email: z
     .string()
     .email()
@@ -88,22 +94,25 @@ async function upsertProfileFromAuthUser(opts: {
   phone: string;
   email?: string | null;
   displayName?: string | null;
+  dateOfBirth?: string | null;
 }) {
   const displayName =
     opts.displayName?.trim() ||
     (opts.email ? opts.email.split('@')[0] : null) ||
     opts.phone;
 
-  await supabaseAdmin.from('profiles').upsert(
-    {
-      user_id: opts.userId,
-      phone: opts.phone,
-      email: opts.email ?? null,
-      display_name: displayName,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: 'user_id' }
-  );
+  const row: Record<string, unknown> = {
+    user_id: opts.userId,
+    phone: opts.phone,
+    email: opts.email ?? null,
+    display_name: displayName,
+    updated_at: new Date().toISOString(),
+  };
+  if (opts.dateOfBirth) {
+    row.date_of_birth = opts.dateOfBirth;
+  }
+
+  await supabaseAdmin.from('profiles').upsert(row, { onConflict: 'user_id' });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -126,7 +135,14 @@ router.post(
       return res.status(400).json({ error: 'Display name is required to create an account.' });
     }
 
+    let registerDob: string | undefined;
     if (body.mode === 'register') {
+      const dobCheck = requireSignupDateOfBirth(body.date_of_birth);
+      if (!dobCheck.ok) {
+        return res.status(dobCheck.status).json({ error: dobCheck.error });
+      }
+      registerDob = dobCheck.dateOfBirth;
+
       const { data: taken } = await supabaseAdmin
         .from('profiles')
         .select('id')
@@ -160,7 +176,10 @@ router.post(
           shouldCreateUser: body.mode === 'register',
           data:
             body.mode === 'register'
-              ? { display_name: body.display_name }
+              ? {
+                  display_name: body.display_name,
+                  date_of_birth: registerDob,
+                }
               : undefined,
         },
       });
@@ -260,11 +279,39 @@ router.post(
         ? data.user.user_metadata.display_name
         : null) || body.display_name;
 
+    const metaDob =
+      (typeof data.user.user_metadata?.date_of_birth === 'string'
+        ? data.user.user_metadata.date_of_birth
+        : null) || body.date_of_birth || null;
+
+    let dateOfBirth: string | null = null;
+    if (metaDob) {
+      const dobCheck = requireSignupDateOfBirth(metaDob);
+      if (!dobCheck.ok) {
+        // Under-age: do not leave a usable profile; best-effort delete auth user if brand new.
+        return res.status(dobCheck.status).json({ error: dobCheck.error });
+      }
+      dateOfBirth = dobCheck.dateOfBirth;
+    } else {
+      // New phone users must have passed the age gate; legacy logins may lack DOB.
+      const { data: existingProfile } = await supabaseAdmin
+        .from('profiles')
+        .select('id, date_of_birth')
+        .eq('user_id', data.user.id)
+        .maybeSingle();
+      if (!existingProfile) {
+        return res.status(400).json({
+          error: 'Birthday is required to create an account.',
+        });
+      }
+    }
+
     await upsertProfileFromAuthUser({
       userId: data.user.id,
       phone,
       email: body.email ?? data.user.email ?? null,
       displayName: metaName,
+      dateOfBirth,
     });
 
     const gated = await gateSessionWith2fa({
@@ -301,13 +348,21 @@ router.post(
     const body = credentialsSchema.parse(req.body);
     const displayName = body.display_name ?? body.email.split('@')[0];
 
+    const dobCheck = requireSignupDateOfBirth(body.date_of_birth);
+    if (!dobCheck.ok) {
+      return res.status(dobCheck.status).json({ error: dobCheck.error });
+    }
+
     // Admin create + email_confirm so login works even when the Supabase
     // project has "Confirm email" enabled (default on new projects).
     const { data: created, error: createError } = await supabaseAdmin.auth.admin.createUser({
       email: body.email,
       password: body.password,
       email_confirm: true,
-      user_metadata: { display_name: displayName },
+      user_metadata: {
+        display_name: displayName,
+        date_of_birth: dobCheck.dateOfBirth,
+      },
     });
 
     if (createError) {
@@ -324,6 +379,7 @@ router.post(
         user_id: user.id,
         email: body.email,
         display_name: displayName,
+        date_of_birth: dobCheck.dateOfBirth,
         updated_at: new Date().toISOString(),
       },
       { onConflict: 'user_id' }

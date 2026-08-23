@@ -20,6 +20,10 @@ import {
 
 const MESSAGE_REPLY_CATEGORY = 'message_reply';
 const REPLY_ACTION = 'REPLY';
+const REMINDER_CATEGORY = 'chat_reminder';
+const REMINDER_SNOOZE_1H = 'SNOOZE_1H';
+const REMINDER_SNOOZE_TOMORROW = 'SNOOZE_TOMORROW';
+const REMINDER_DONE = 'DONE';
 
 Notifications.setNotificationHandler({
   handleNotification: async (notification) => {
@@ -64,9 +68,11 @@ type PushData = {
   chat_name?: string;
   friendship_id?: string;
   message_id?: string;
+  reminder_id?: string;
   call_id?: string;
   sender_id?: string;
   badge?: number;
+  note?: string;
 };
 
 function handlePushOpen(data: PushData | undefined) {
@@ -93,6 +99,17 @@ function handlePushOpen(data: PushData | undefined) {
       chatType: data.chat_type === 'group' ? 'group' : 'individual',
       chatName: data.chat_name || (data.chat_type === 'group' ? 'Group' : 'Chat'),
     });
+    return;
+  }
+
+  if (data.type === 'chat_reminder' && data.chat_id) {
+    openChat({
+      chatId: data.chat_id,
+      chatType: data.chat_type === 'group' ? 'group' : 'individual',
+      chatName: data.chat_name || (data.chat_type === 'group' ? 'Group' : 'Chat'),
+      focusMessageId: data.message_id,
+    });
+    void import('../hooks/useChatReminders').then((m) => m.refreshChatReminders()).catch(() => undefined);
     return;
   }
 
@@ -186,6 +203,23 @@ async function ensureNotificationCategories() {
           // Android needs foreground for reliable text-input capture on some OEMs.
           opensAppToForeground: Platform.OS === 'android',
         },
+      },
+    ]);
+    await Notifications.setNotificationCategoryAsync(REMINDER_CATEGORY, [
+      {
+        identifier: REMINDER_SNOOZE_1H,
+        buttonTitle: 'Snooze 1h',
+        options: { opensAppToForeground: false },
+      },
+      {
+        identifier: REMINDER_SNOOZE_TOMORROW,
+        buttonTitle: 'Tomorrow',
+        options: { opensAppToForeground: false },
+      },
+      {
+        identifier: REMINDER_DONE,
+        buttonTitle: 'Done',
+        options: { opensAppToForeground: false },
       },
     ]);
     categoriesReady = true;
@@ -334,6 +368,34 @@ export function usePushNotifications(userId: string | undefined) {
             console.warn('[push] reply-from-notification failed:', err);
           });
         }
+        return;
+      }
+
+      // Reminder snooze / done without opening the chat.
+      if (
+        data?.type === 'chat_reminder' &&
+        data.reminder_id &&
+        (actionId === REMINDER_SNOOZE_1H ||
+          actionId === REMINDER_SNOOZE_TOMORROW ||
+          actionId === REMINDER_DONE)
+      ) {
+        const actionKey = `${id}:${actionId}`;
+        if (handledResponseIds.current.has(actionKey)) return;
+        handledResponseIds.current.add(actionKey);
+        void (async () => {
+          try {
+            if (actionId === REMINDER_DONE) {
+              await api.chatReminders.update(data.reminder_id!, { status: 'done' });
+            } else {
+              await api.chatReminders.update(data.reminder_id!, {
+                snooze_minutes: actionId === REMINDER_SNOOZE_1H ? 60 : 24 * 60,
+              });
+            }
+            await import('../hooks/useChatReminders').then((m) => m.refreshChatReminders());
+          } catch (err) {
+            console.warn('[push] reminder action failed:', err);
+          }
+        })();
         return;
       }
 

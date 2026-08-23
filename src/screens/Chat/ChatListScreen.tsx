@@ -17,11 +17,18 @@ import {
 } from 'react-native'
 import { ChatListAvatar } from '../../components/ChatListAvatar'
 import { ChatListRow, ChatListScrollPane } from '../../components/ChatListRow'
+import { useChatReminders } from '../../hooks/useChatReminders'
+import {
+  formatReminderWhen,
+  pickChatReminder,
+  reminderUrgency,
+} from '../../lib/chatReminders'
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { TextInput, FAB, Button } from 'react-native-paper'
 import { Ionicons } from '@expo/vector-icons'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { useAuth } from '../../hooks/useAuth'
+import { withoutGhostSelfChats } from '../../lib/chatListSanitize'
 import { promptSignIn } from '../../lib/requireSignedIn'
 import { TabView } from 'react-native-tab-view'
 import { LinearGradient } from 'expo-linear-gradient'
@@ -155,6 +162,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
   const isNarrow = width < 400
   const isWebDesktop = Platform.OS === 'web' && width >= MOBILE_BREAKPOINT
   const fabBottom = Math.max(16, insets.bottom + 12) + (setSelectedChat ? 4 : 20)
+  const { reminders, reload: reloadReminders } = useChatReminders()
   const [searchQuery, setSearchQuery] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchAnchor, setSearchAnchor] = useState({ top: 56, left: 12, width: 320 })
@@ -339,11 +347,11 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
 
   const visibleIndividualChats = useMemo(
     () =>
-      individualChats.filter((c) => {
+      withoutGhostSelfChats(individualChats, user?.id).filter((c) => {
         const key = chatListKey('individual', c.user_id)
         return !hiddenChatKeys.has(key) && !listMeta[key]?.archived
       }),
-    [individualChats, hiddenChatKeys, listMeta]
+    [individualChats, hiddenChatKeys, listMeta, user?.id]
   )
 
   const visibleGroupChats = useMemo(
@@ -615,6 +623,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
     softRefreshGroups()
     void fetchFriends()
     void fetchIncomingRequests()
+    void reloadReminders()
   }
 
   useFocusEffect(
@@ -628,8 +637,15 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
       console.log('Cannot refresh while offline')
       return
     }
-    Promise.all([refreshIndividuals(), refreshGroups(), fetchIncomingRequests()])
-  }, [fetchIncomingRequests, refreshGroups, refreshIndividuals, groupsOnline, individualOnline])
+    Promise.all([refreshIndividuals(), refreshGroups(), fetchIncomingRequests(), reloadReminders()])
+  }, [
+    fetchIncomingRequests,
+    refreshGroups,
+    refreshIndividuals,
+    groupsOnline,
+    individualOnline,
+    reloadReminders,
+  ])
 
   // Friend-request fetches must not drive the pull spinner (looks like a stuck circle).
   const isRefreshing = individualRefreshing || groupsRefreshing
@@ -1036,6 +1052,12 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
 
   const renderChatItem = ({ item, isGroup = false }: { item: any; isGroup?: boolean }) => {
     const entryId = isGroup ? String(item.id) : String(item.user_id)
+    const rem = pickChatReminder(
+      reminders,
+      isGroup ? 'group' : 'individual',
+      entryId
+    )
+    const urgency = rem ? reminderUrgency(rem.remind_at) : null
     return (
       <ChatListRow
         item={item}
@@ -1046,6 +1068,8 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
           settings.chatLockScope === 'selected' &&
           isChatProtected(isGroup ? 'group' : 'individual', entryId)
         }
+        reminderLabel={rem ? formatReminderWhen(rem.remind_at) : null}
+        reminderUrgency={urgency}
         listBg={theme.listBg}
         primaryText={theme.listPrimaryText}
         secondaryText={theme.listSecondaryText}
@@ -1129,15 +1153,36 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
   }
 
   const offlineOrStaleHeader = (
-    !isOnline ? (
-      <View style={styles.offlineNotice}>
-        <Text style={styles.offlineNoticeText}>📡 Offline Mode - Showing cached data</Text>
-      </View>
-    ) : individualStale || groupsStale ? (
-      <TouchableOpacity style={styles.staleNotice} onPress={onRefresh}>
-        <Text style={styles.staleNoticeText}>🔄 Data may be outdated. Tap to refresh.</Text>
-      </TouchableOpacity>
-    ) : null
+    <>
+      {reminders.length > 0 ? (
+        <TouchableOpacity
+          style={[
+            styles.remindersBanner,
+            {
+              backgroundColor: theme.isDark ? 'rgba(21,101,192,0.18)' : 'rgba(21,101,192,0.08)',
+              borderBottomColor: theme.listBorder,
+            },
+          ]}
+          onPress={() => navigation.navigate('Reminders')}
+          activeOpacity={0.75}
+        >
+          <Ionicons name="notifications-outline" size={18} color={theme.primary} />
+          <Text style={[styles.remindersBannerText, { color: theme.listPrimaryText }]}>
+            Reminders · {reminders.length}
+          </Text>
+          <Ionicons name="chevron-forward" size={16} color={theme.listSecondaryText} />
+        </TouchableOpacity>
+      ) : null}
+      {!isOnline ? (
+        <View style={styles.offlineNotice}>
+          <Text style={styles.offlineNoticeText}>📡 Offline Mode - Showing cached data</Text>
+        </View>
+      ) : individualStale || groupsStale ? (
+        <TouchableOpacity style={styles.staleNotice} onPress={onRefresh}>
+          <Text style={styles.staleNoticeText}>🔄 Data may be outdated. Tap to refresh.</Text>
+        </TouchableOpacity>
+      ) : null}
+    </>
   )
 
   const renderScene = ({ route }: { route: { key: string } }) => {
@@ -1854,6 +1899,19 @@ const styles = StyleSheet.create({
     backgroundColor: '#5c6bc0',
     borderWidth: 1.5,
     borderColor: '#fff',
+  },
+  remindersBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  remindersBannerText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
   },
   appLogo: {
     width: 36,

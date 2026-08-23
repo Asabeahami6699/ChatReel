@@ -126,13 +126,32 @@ export function useChatRoomScroll({
   }, [messageCount, initialLoadComplete, loadingMore, scrollToBottom]);
 
   useEffect(() => {
+    if (Platform.OS === 'web') {
+      const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+      if (!vv) return;
+      const update = () => {
+        const gap = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+        setIsKeyboardVisible(gap > 0);
+        setKeyboardHeight(gap);
+        if (gap > 0 && shouldStickToBottomRef.current) {
+          requestAnimationFrame(() => scrollToBottom(true));
+        }
+      };
+      update();
+      vv.addEventListener('resize', update);
+      vv.addEventListener('scroll', update);
+      return () => {
+        vv.removeEventListener('resize', update);
+        vv.removeEventListener('scroll', update);
+      };
+    }
+
     const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
 
     const showSub = Keyboard.addListener(showEvt, (e) => {
       setIsKeyboardVisible(true);
       setKeyboardHeight(e.endCoordinates?.height ?? 0);
-      // Only follow the keyboard when already at the latest messages.
       if (shouldStickToBottomRef.current) {
         requestAnimationFrame(() => scrollToBottom(true));
         setTimeout(() => {

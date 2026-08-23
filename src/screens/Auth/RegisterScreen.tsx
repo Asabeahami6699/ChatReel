@@ -8,7 +8,7 @@ import {
   Animated,
   Easing,
 } from 'react-native'
-import { useNavigation } from '@react-navigation/native'
+import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native'
 import { useWindowDimensions } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
 import QRCode from 'react-native-qrcode-svg'
@@ -18,11 +18,15 @@ import { useAuth } from '../../hooks/useAuth'
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack'
 import type { AuthStackParamList } from '../../navigation/AuthNavigator'
 import { USE_NATIVE_DRIVER } from '../../lib/animation'
+import { isOldEnoughToSignUp } from '../../lib/ageGate'
 
 type RegisterNavProp = NativeStackNavigationProp<AuthStackParamList, 'Register'>
+type RegisterRoute = RouteProp<AuthStackParamList, 'Register'>
 
 export default function RegisterScreen() {
   const navigation = useNavigation<RegisterNavProp>()
+  const route = useRoute<RegisterRoute>()
+  const dateOfBirth = route.params?.dateOfBirth
   const { signUp, sendPhoneOtp, verifyPhoneOtp, loading, enterGuest } = useAuth()
 
   const [method, setMethod] = useState<'phone' | 'email'>('phone')
@@ -41,6 +45,12 @@ export default function RegisterScreen() {
     inputRange: [0, 1],
     outputRange: ['0deg', '360deg'],
   })
+
+  useEffect(() => {
+    if (!dateOfBirth || !isOldEnoughToSignUp(dateOfBirth)) {
+      navigation.replace('AgeGate')
+    }
+  }, [dateOfBirth, navigation])
 
   const generateRef = async () => {
     const ref = `register_${Date.now()}`
@@ -73,6 +83,10 @@ export default function RegisterScreen() {
   }, [spinRef])
 
   const handleEmailRegister = async () => {
+    if (!dateOfBirth) {
+      navigation.replace('AgeGate')
+      return
+    }
     if (!displayName || !email || !password || !confirmPassword) {
       Alert.alert('Please fill in all fields')
       return
@@ -85,6 +99,7 @@ export default function RegisterScreen() {
 
     const { error, data } = await signUp(email.trim(), password, {
       display_name: displayName.trim(),
+      date_of_birth: dateOfBirth,
     })
 
     if (error) {
@@ -109,6 +124,10 @@ export default function RegisterScreen() {
     enterGuest()
   }
 
+  if (!dateOfBirth || !isOldEnoughToSignUp(dateOfBirth)) {
+    return null
+  }
+
   const phoneForm = (
     <PhoneAuthForm
       mode="register"
@@ -122,12 +141,15 @@ export default function RegisterScreen() {
       onSecondaryAction={handleExplore}
       noGradient={isDesktop}
       onSendCode={async ({ phone, displayName: name }) => {
-        const res = await sendPhoneOtp(phone, 'register', name)
+        const res = await sendPhoneOtp(phone, 'register', name, dateOfBirth)
         if (res.error) return { error: res.error.message }
         return { phone: res.data!.phone, phone_masked: res.data!.phone_masked }
       }}
       onVerifyCode={async ({ phone, token, displayName: name }) => {
-        const res = await verifyPhoneOtp(phone, token, { display_name: name })
+        const res = await verifyPhoneOtp(phone, token, {
+          display_name: name,
+          date_of_birth: dateOfBirth,
+        })
         if (res.error) return { error: res.error.message }
       }}
     />

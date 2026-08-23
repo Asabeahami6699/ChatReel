@@ -89,7 +89,7 @@ export default function LoginScreen() {
   }
 
   const handleSignUp = () => {
-    navigation.navigate('Register')
+    navigation.navigate('AgeGate')
   }
 
   const handleExplore = () => {

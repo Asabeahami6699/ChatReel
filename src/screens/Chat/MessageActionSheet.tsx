@@ -27,6 +27,7 @@ export type MessageAction =
   | 'star'
   | 'pin'
   | 'unpin'
+  | 'remind'
   | 'react';
 
 type Props = {
@@ -94,6 +95,9 @@ export function MessageActionSheet({
   });
 
   actions.push({ key: 'forward', label: 'Forward', icon: 'arrow-redo-outline' });
+  if (!message.id.startsWith('temp-')) {
+    actions.push({ key: 'remind', label: 'Remind me', icon: 'notifications-outline' });
+  }
   actions.push({ key: 'delete_me', label: 'Delete for me', icon: 'trash-outline', destructive: true });
 
   if (canDeleteForAll) {

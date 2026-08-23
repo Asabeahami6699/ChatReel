@@ -94,16 +94,21 @@ function evaluateVisualPayload(
   const score = Math.max(explicit, suggestive, gore, offensive, drugs, weapon);
   const educational = opts?.educationalContext ?? false;
   const isImage = opts?.mediaKind === 'image';
-  // Still photos get a higher reject bar — Sightengine often over-scores skin/selfies.
-  const rejectAt = isImage
-    ? Math.max(env.reelModeration.rejectThreshold, 0.72)
-    : env.reelModeration.rejectThreshold;
-  const flagAt = isImage
-    ? Math.max(env.reelModeration.flagThreshold, 0.5)
-    : env.reelModeration.flagThreshold;
+  const isVideo = opts?.mediaKind === 'video';
+  // Photos and videos get a higher reject bar — Sightengine often over-scores skin/selfies.
+  const rejectAt =
+    isImage || isVideo
+      ? Math.max(env.reelModeration.rejectThreshold, 0.72)
+      : env.reelModeration.rejectThreshold;
+  const flagAt =
+    isImage || isVideo
+      ? Math.max(env.reelModeration.flagThreshold, 0.5)
+      : env.reelModeration.flagThreshold;
+  // Video motion causes false positives — require higher explicit confidence to reject.
+  const explicitRejectAt = isVideo ? Math.max(rejectAt, 0.82) : rejectAt;
 
   // Hard reject: explicit sexual content, gore, weapons, drugs
-  if (explicit >= rejectAt || gore >= 0.65 || weapon >= 0.7 || drugs >= 0.75) {
+  if (explicit >= explicitRejectAt || gore >= 0.65 || weapon >= 0.7 || drugs >= 0.75) {
     return {
       status: 'rejected',
       score,
@@ -116,8 +121,20 @@ function evaluateVisualPayload(
     return { status: 'approved', score, reason: null };
   }
 
-  // Normal photos / fashion — approve unless clearly explicit
-  if (explicit < (isImage ? 0.45 : 0.3) && offensive < 0.75) {
+  // Normal photos / videos — approve unless clearly explicit
+  if (explicit < 0.45 && offensive < 0.75) {
+    return { status: 'approved', score, reason: null };
+  }
+
+  // Video: borderline suggestive scores → flag for review, not reject
+  if (isVideo && explicit < 0.55) {
+    if (suggestive >= flagAt || offensive >= 0.7) {
+      return {
+        status: 'flagged',
+        score,
+        reason: 'Video under review — visible to you while we check',
+      };
+    }
     return { status: 'approved', score, reason: null };
   }
 
@@ -171,15 +188,34 @@ function evaluateVideoSyncPayload(
   payload: VideoSyncPayload,
   opts?: { educationalContext?: boolean }
 ): ModerationDecision {
-  let decision: ModerationDecision = { status: 'approved', score: 0, reason: null };
   const frameOpts = { ...opts, mediaKind: 'video' as const };
+  const frames = payload.data?.frames ?? [];
+  let decision: ModerationDecision = { status: 'approved', score: 0, reason: null };
+  let rejectFrames = 0;
+  let flagFrames = 0;
 
-  for (const frame of payload.data?.frames ?? []) {
-    decision = mergeDecisions(decision, evaluateVisualPayload(frame, frameOpts));
-    if (decision.status === 'rejected') break;
+  for (const frame of frames) {
+    const next = evaluateVisualPayload(frame, frameOpts);
+    if (next.status === 'rejected') rejectFrames += 1;
+    if (next.status === 'flagged') flagFrames += 1;
+    decision = mergeDecisions(decision, next);
   }
 
-  return mergeDecisions(decision, evaluateVisualPayload(payload, frameOpts));
+  const root = evaluateVisualPayload(payload, frameOpts);
+  if (root.status === 'rejected') rejectFrames += 1;
+  if (root.status === 'flagged') flagFrames += 1;
+  decision = mergeDecisions(decision, root);
+
+  // One bad frame on a normal video should not auto-reject — flag instead.
+  if (decision.status === 'rejected' && rejectFrames <= 1 && flagFrames === 0) {
+    return {
+      status: 'flagged',
+      score: decision.score,
+      reason: 'Video under review — visible to you while we check',
+    };
+  }
+
+  return decision;
 }
 
 function mergeDecisions(current: ModerationDecision, next: ModerationDecision): ModerationDecision {
@@ -331,6 +367,7 @@ async function checkVideoFile(
   }
 
   let decision: ModerationDecision = { status: 'approved', score: 0, reason: null };
+  let rejectFrames = 0;
   const frames = await extractVideoFrames(videoPath, 12);
   for (const framePath of frames) {
     const frameBuffer = await fs.readFile(framePath);
@@ -338,8 +375,15 @@ async function checkVideoFile(
       ...opts,
       mediaKind: 'video',
     });
+    if (next.status === 'rejected') rejectFrames += 1;
     decision = mergeDecisions(decision, next);
-    if (decision.status === 'rejected') break;
+  }
+  if (decision.status === 'rejected' && rejectFrames <= 1) {
+    return {
+      status: 'flagged',
+      score: decision.score,
+      reason: 'Video under review — visible to you while we check',
+    };
   }
   return decision;
 }
@@ -440,10 +484,14 @@ export async function moderateReelById(
     }
 
     if (reel.thumbnail_url) {
-      decision = mergeDecisions(
-        decision,
-        await checkImageUrl(reel.thumbnail_url as string, visualOpts)
-      );
+      const isImageReel = reel.transcode_status === 'skipped';
+      const willScanVideo = Boolean(localVideoPath) || !isImageReel;
+      if (!willScanVideo) {
+        decision = mergeDecisions(
+          decision,
+          await checkImageUrl(reel.thumbnail_url as string, visualOpts)
+        );
+      }
     }
 
     const isImageReel = reel.transcode_status === 'skipped';

@@ -42,8 +42,9 @@ export default function ContactScreen() {
   const [muting, setMuting] = React.useState(false);
 
   useEffect(() => {
+    if (user?.id && userId === user.id) return;
     void ensureLoaded(userId);
-  }, [ensureLoaded, userId]);
+  }, [ensureLoaded, user?.id, userId]);
 
   const displayName =
     (profile?.display_name as string) || chatName || (profile?.email as string) || 'Contact';

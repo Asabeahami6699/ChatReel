@@ -1,4 +1,5 @@
 import type { ChatIndexRow } from '../utils/messageStorage';
+import { withoutGhostSelfChats } from './chatListSanitize';
 
 /** Apply local chat_index previews/unread onto a profile-bearing chat list. */
 export function mergeIndividualChatsWithIndex<
@@ -11,11 +12,14 @@ export function mergeIndividualChatsWithIndex<
     unread_count?: number;
     last_message_type?: string;
   },
->(chats: T[], index: ChatIndexRow[]): T[] {
+>(chats: T[], index: ChatIndexRow[], myUserId?: string | null): T[] {
+  const safeChats = withoutGhostSelfChats(chats, myUserId);
   const indexById = new Map(
-    index.filter((r) => r.chatType === 'individual').map((r) => [r.chatId, r])
+    index
+      .filter((r) => r.chatType === 'individual' && r.chatId !== myUserId)
+      .map((r) => [r.chatId, r])
   );
-  const chatById = new Map(chats.map((c) => [c.user_id, c]));
+  const chatById = new Map(safeChats.map((c) => [c.user_id, c]));
   const ids = new Set<string>([...chatById.keys(), ...indexById.keys()]);
   const rows: T[] = [];
 
@@ -24,15 +28,9 @@ export function mergeIndividualChatsWithIndex<
     const idx = indexById.get(id);
     if (!base && !idx) continue;
     if (!base && idx) {
-      rows.push({
-        id,
-        user_id: id,
-        name: 'Chat',
-        last_message: idx.lastMessagePreview,
-        last_message_at: idx.lastMessageAt,
-        unread_count: idx.unreadCount,
-        last_message_type: idx.lastMessageType ?? undefined,
-      } as unknown as T);
+      // Index-only orphans (no server/profile row) used to appear as a fake
+      // contact named "Chat". Groups already skip these — do the same here.
+      // Cached API/storage rows above still cover real offline threads.
       continue;
     }
     if (base && !idx) {

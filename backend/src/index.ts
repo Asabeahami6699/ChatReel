@@ -3,6 +3,10 @@ import os from 'os';
 import { createApp } from './app';
 import { env, isLiveKitConfigured } from './config/env';
 import { startMessageArchiveScheduler } from './jobs/archiveMessages';
+import {
+  startChatReminderScheduler,
+  stopChatReminderScheduler,
+} from './jobs/fireChatReminders';
 import { startMomentCleanupScheduler, stopMomentCleanupScheduler } from './jobs/cleanupMoments';
 import { startReelReconcileScheduler, stopReelReconcileScheduler } from './jobs/reconcileReels';
 import { startJobWorkers, stopJobWorkers } from './lib/jobQueue';
@@ -45,6 +49,7 @@ server.listen(env.port, '0.0.0.0', () => {
   startMessageArchiveScheduler();
   startReelReconcileScheduler();
   startMomentCleanupScheduler();
+  startChatReminderScheduler();
 });
 
 let shuttingDown = false;
@@ -54,6 +59,7 @@ function shutdown(signal: string) {
   console.log(`[shutdown] ${signal} received — stopping schedulers`);
   stopReelReconcileScheduler();
   stopMomentCleanupScheduler();
+  stopChatReminderScheduler();
   void stopJobWorkers();
   server.close(() => process.exit(0));
   // Fallback if open sockets keep the server from closing.

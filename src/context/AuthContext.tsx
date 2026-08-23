@@ -29,17 +29,18 @@ type AuthContextType = {
   signUp: (
     email: string,
     password: string,
-    metadata?: { display_name?: string }
+    metadata?: { display_name?: string; date_of_birth?: string }
   ) => Promise<AuthResult>;
   sendPhoneOtp: (
     phone: string,
     mode: 'login' | 'register',
-    display_name?: string
+    display_name?: string,
+    date_of_birth?: string
   ) => Promise<{ data?: { phone: string; phone_masked: string }; error?: { message: string } | null }>;
   verifyPhoneOtp: (
     phone: string,
     token: string,
-    opts?: { display_name?: string; email?: string }
+    opts?: { display_name?: string; email?: string; date_of_birth?: string }
   ) => Promise<AuthResult>;
   complete2faChallenge: (challengeToken: string, pin: string) => Promise<AuthResult>;
   recover2faChallenge: (
@@ -150,13 +151,18 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     setIsGuest(false);
   }, []);
 
-  const signUp = async (email: string, password: string, metadata?: { display_name?: string }) => {
+  const signUp = async (
+    email: string,
+    password: string,
+    metadata?: { display_name?: string; date_of_birth?: string }
+  ) => {
     setLoading(true);
     try {
       const { session: newSession, user: newUser } = await api.auth.register(
         email,
         password,
-        metadata?.display_name
+        metadata?.display_name,
+        metadata?.date_of_birth
       );
 
       if (newSession) {
@@ -214,11 +220,12 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const sendPhoneOtp = async (
     phone: string,
     mode: 'login' | 'register',
-    display_name?: string
+    display_name?: string,
+    date_of_birth?: string
   ) => {
     setLoading(true);
     try {
-      const res = await api.auth.sendPhoneOtp(phone, mode, display_name);
+      const res = await api.auth.sendPhoneOtp(phone, mode, display_name, date_of_birth);
       return {
         data: { phone: res.phone, phone_masked: res.phone_masked },
         error: null,
@@ -234,7 +241,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const verifyPhoneOtp = async (
     phone: string,
     token: string,
-    opts?: { display_name?: string; email?: string }
+    opts?: { display_name?: string; email?: string; date_of_birth?: string }
   ) => {
     setLoading(true);
     try {

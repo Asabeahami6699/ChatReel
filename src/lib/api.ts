@@ -518,10 +518,15 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
 
 export const api = {
   auth: {
-    register: (email: string, password: string, display_name?: string) =>
+    register: (
+      email: string,
+      password: string,
+      display_name?: string,
+      date_of_birth?: string
+    ) =>
       apiRequest<{ user: Session['user']; session: Session | null }>('/api/auth/register', {
         method: 'POST',
-        body: { email, password, display_name },
+        body: { email, password, display_name, date_of_birth },
         auth: false,
       }),
 
@@ -538,12 +543,17 @@ export const api = {
         auth: false,
       }),
 
-    sendPhoneOtp: (phone: string, mode: 'login' | 'register', display_name?: string) =>
+    sendPhoneOtp: (
+      phone: string,
+      mode: 'login' | 'register',
+      display_name?: string,
+      date_of_birth?: string
+    ) =>
       apiRequest<{ ok: boolean; phone: string; phone_masked: string; message: string }>(
         '/api/auth/otp/send',
         {
           method: 'POST',
-          body: { phone, mode, display_name },
+          body: { phone, mode, display_name, date_of_birth },
           auth: false,
         }
       ),
@@ -551,7 +561,12 @@ export const api = {
     verifyPhoneOtp: (
       phone: string,
       token: string,
-      opts?: { display_name?: string; email?: string; installation_id?: string }
+      opts?: {
+        display_name?: string;
+        email?: string;
+        date_of_birth?: string;
+        installation_id?: string;
+      }
     ) =>
       apiRequest<{
         user: Session['user'] | null;
@@ -566,6 +581,7 @@ export const api = {
           token,
           display_name: opts?.display_name,
           email: opts?.email,
+          date_of_birth: opts?.date_of_birth,
           installation_id: opts?.installation_id,
         },
         auth: false,
@@ -889,6 +905,54 @@ export const api = {
       apiRequest<{ pinned: Record<string, unknown>[] }>(
         `/api/chat-settings/${chatType}/${chatId}/pinned`
       ),
+  },
+
+  chatReminders: {
+    list: (status: 'active' | 'pending' | 'fired' | 'done' | 'cancelled' | 'all' = 'active') =>
+      apiRequest<{
+        reminders: Array<{
+          id: string;
+          chat_id: string;
+          chat_type: 'individual' | 'group';
+          message_id: string | null;
+          remind_at: string;
+          note: string | null;
+          preview_text: string | null;
+          chat_name: string | null;
+          status: string;
+          fired_at: string | null;
+          created_at: string;
+          updated_at: string;
+        }>;
+      }>(`/api/chat-reminders?status=${encodeURIComponent(status)}`),
+    create: (data: {
+      chat_id: string;
+      chat_type: 'individual' | 'group';
+      message_id?: string | null;
+      remind_at: string;
+      note?: string | null;
+      preview_text?: string | null;
+      chat_name?: string | null;
+    }) =>
+      apiRequest<{ reminder: Record<string, unknown> }>('/api/chat-reminders', {
+        method: 'POST',
+        body: data,
+      }),
+    update: (
+      id: string,
+      data: {
+        remind_at?: string;
+        note?: string | null;
+        status?: 'pending' | 'done' | 'cancelled';
+        snooze_minutes?: number;
+      }
+    ) =>
+      apiRequest<{ reminder: Record<string, unknown> }>(`/api/chat-reminders/${id}`, {
+        method: 'PATCH',
+        body: data,
+      }),
+    remove: (id: string) =>
+      apiRequest<{ ok: boolean }>(`/api/chat-reminders/${id}`, { method: 'DELETE' }),
   },
 
   keys: {

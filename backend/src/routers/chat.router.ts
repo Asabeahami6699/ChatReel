@@ -5,6 +5,7 @@
 import { Router } from 'express';
 import chatsRoutes from '../routes/chats.routes';
 import chatSettingsRoutes from '../routes/chat-settings.routes';
+import chatRemindersRoutes from '../routes/chat-reminders.routes';
 import keysRoutes from '../routes/keys.routes';
 import messagesRoutes from '../routes/messages.routes';
 import notificationsRoutes from '../routes/notifications.routes';
@@ -15,6 +16,7 @@ const chatRouter = Router();
 chatRouter.use('/messages', messagesRoutes);
 chatRouter.use('/chats', chatsRoutes);
 chatRouter.use('/chat-settings', chatSettingsRoutes);
+chatRouter.use('/chat-reminders', chatRemindersRoutes);
 chatRouter.use('/uploads', uploadsRoutes);
 chatRouter.use('/keys', keysRoutes);
 chatRouter.use('/notifications', notificationsRoutes);

@@ -14,6 +14,7 @@ export type ChatListRowItem = {
   user_id?: string;
   id?: string;
   name: string;
+  is_self_notes?: boolean;
   avatar_url?: string | null;
   last_message?: string | null;
   last_message_at?: string | null;
@@ -29,6 +30,8 @@ type RowProps = {
   isGroup?: boolean;
   muted?: boolean;
   chatLocked?: boolean;
+  reminderLabel?: string | null;
+  reminderUrgency?: 'scheduled' | 'soon' | 'due' | null;
   listBg: string;
   primaryText: string;
   secondaryText: string;
@@ -45,6 +48,8 @@ export const ChatListRow = memo(
     isGroup,
     muted,
     chatLocked,
+    reminderLabel,
+    reminderUrgency,
     listBg,
     primaryText,
     secondaryText,
@@ -53,6 +58,13 @@ export const ChatListRow = memo(
     onPress,
     onLongPress,
   }: RowProps) {
+    const reminderColor =
+      reminderUrgency === 'due'
+        ? '#E53935'
+        : reminderUrgency === 'soon'
+          ? '#F9A825'
+          : '#1565C0';
+
     return (
       <TouchableOpacity
         style={[styles.chatItem, { backgroundColor: listBg }]}
@@ -80,15 +92,20 @@ export const ChatListRow = memo(
 
         <View style={styles.chatInfo}>
           <View style={styles.chatHeader}>
-            <Text style={[styles.chatName, { color: primaryText }]} numberOfLines={1}>
-              {item.name}
-              {isGroup && (item.member_count ?? 0) > 0 && (
-                <Text style={[styles.memberCountText, { color: secondaryText }]}>
-                  {' '}
-                  • {item.member_count}
-                </Text>
-              )}
-            </Text>
+            <View style={styles.chatNameRow}>
+              {item.is_self_notes ? (
+                <Ionicons name="bookmark" size={14} color={primaryText} style={styles.selfNotesIcon} />
+              ) : null}
+              <Text style={[styles.chatName, { color: primaryText }]} numberOfLines={1}>
+                {item.name}
+                {isGroup && (item.member_count ?? 0) > 0 && (
+                  <Text style={[styles.memberCountText, { color: secondaryText }]}>
+                    {' '}
+                    • {item.member_count}
+                  </Text>
+                )}
+              </Text>
+            </View>
             <View style={styles.timeContainer}>
               {chatLocked ? (
                 <Ionicons
@@ -113,16 +130,30 @@ export const ChatListRow = memo(
           </View>
 
           <View style={styles.messageContainer}>
-            <Text
-              style={[
-                styles.lastMessage,
-                { color: secondaryText },
-                (item.unread_count ?? 0) > 0 && [styles.unreadMessage, { color: primaryText }],
-              ]}
-              numberOfLines={1}
-            >
-              {preview}
-            </Text>
+            <View style={styles.previewCol}>
+              <Text
+                style={[
+                  styles.lastMessage,
+                  { color: secondaryText },
+                  (item.unread_count ?? 0) > 0 && [styles.unreadMessage, { color: primaryText }],
+                ]}
+                numberOfLines={1}
+              >
+                {preview}
+              </Text>
+              {reminderLabel ? (
+                <View style={styles.reminderRow}>
+                  <Ionicons
+                    name={reminderUrgency === 'due' ? 'alarm' : 'notifications-outline'}
+                    size={12}
+                    color={reminderColor}
+                  />
+                  <Text style={[styles.reminderText, { color: reminderColor }]} numberOfLines={1}>
+                    {reminderLabel}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
             <View style={styles.rightContainer}>
               {(item.unread_count ?? 0) > 0 && (
                 <View style={styles.unreadBadge}>
@@ -152,7 +183,9 @@ export const ChatListRow = memo(
     prev.secondaryText === next.secondaryText &&
     prev.isGroup === next.isGroup &&
     prev.muted === next.muted &&
-    prev.chatLocked === next.chatLocked
+    prev.chatLocked === next.chatLocked &&
+    prev.reminderLabel === next.reminderLabel &&
+    prev.reminderUrgency === next.reminderUrgency
 );
 
 type PaneProps = {
@@ -224,6 +257,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 4,
   },
+  chatNameRow: { flex: 1, flexDirection: 'row', alignItems: 'center', minWidth: 0 },
+  selfNotesIcon: { marginRight: 6 },
   chatName: { fontSize: 16, fontWeight: '600', flex: 1 },
   memberCountText: { fontSize: 12, fontWeight: 'normal' },
   timeContainer: { flexDirection: 'row', alignItems: 'center', gap: 4 },
@@ -234,8 +269,16 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  lastMessage: { fontSize: 14, flex: 1, marginRight: 8 },
+  previewCol: { flex: 1, marginRight: 8 },
+  lastMessage: { fontSize: 14 },
   unreadMessage: { fontWeight: '600' },
+  reminderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 3,
+  },
+  reminderText: { fontSize: 12, fontWeight: '600', flexShrink: 1 },
   rightContainer: { flexDirection: 'row', alignItems: 'center' },
   unreadBadge: {
     backgroundColor: '#007AFF',

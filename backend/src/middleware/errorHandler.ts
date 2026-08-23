@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { ZodError } from 'zod';
 
 export function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction) {
   console.error('[API Error]', err);
@@ -11,6 +12,15 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
   ) {
     return res.status(413).json({
       error: 'File too large for this upload method. Try a smaller file.',
+    });
+  }
+
+  if (err instanceof ZodError) {
+    const issue = err.issues[0];
+    return res.status(400).json({
+      error: issue
+        ? `Validation failed: ${issue.path.join('.') || 'body'} — ${issue.message}`
+        : 'Validation failed',
     });
   }
 

@@ -159,6 +159,7 @@ export default function DropdownMenu({ triggerIcon = 'ellipsis-vertical' }: Drop
     ? [
         { title: 'Profile', icon: 'person-outline', onPress: () => requestLogin('open your profile') },
         { title: 'Starred messages', icon: 'star-outline', onPress: () => requestLogin('view starred messages') },
+        { title: 'Reminders', icon: 'notifications-outline', onPress: () => requestLogin('view reminders') },
         { title: 'Archived chats', icon: 'archive-outline', onPress: () => requestLogin('open archived chats') },
         { title: 'Settings', icon: 'settings-outline', onPress: () => requestLogin('open settings') },
         { title: 'Invite a Friend', icon: 'share-social-outline', onPress: () => requestLogin('invite friends') },
@@ -183,6 +184,7 @@ export default function DropdownMenu({ triggerIcon = 'ellipsis-vertical' }: Drop
           },
         },
         { title: 'Starred messages', icon: 'star-outline', onPress: () => navigation.navigate('StarredMessages') },
+        { title: 'Reminders', icon: 'notifications-outline', onPress: () => navigation.navigate('Reminders') },
         { title: 'Archived chats', icon: 'archive-outline', onPress: () => navigation.navigate('ArchivedChats') },
         { title: 'Settings', icon: 'settings-outline', onPress: () => navigation.navigate('Settings') },
         { title: 'Invite a Friend', icon: 'share-social-outline', onPress: () => navigation.navigate('Invite') },

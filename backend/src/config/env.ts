@@ -48,6 +48,8 @@ export const env = {
   reelReconcileStaleMinutes: Math.max(10, Number(process.env.REEL_RECONCILE_STALE_MINUTES ?? 30)),
   /** Purge long-expired moments and their media (ms). 0 disables. Default 6h. */
   momentCleanupIntervalMs: Math.max(0, Number(process.env.MOMENT_CLEANUP_INTERVAL_MS ?? 21_600_000)),
+  /** Fire due chat reminders (ms). 0 disables. Default 30s. */
+  chatReminderIntervalMs: Math.max(0, Number(process.env.CHAT_REMINDER_INTERVAL_MS ?? 30_000)),
   /** Phase 3: optional Redis for push/fan-out queues (memory fallback if unset). */
   redisUrl: (process.env.REDIS_URL ?? '').trim(),
   /** Phase 3 WebSocket path (same HTTP server). */

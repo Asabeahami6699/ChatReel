@@ -173,18 +173,20 @@ const MODERATION_TIMEOUT_MS = 45_000;
 async function waitForReelModeration(
   reelId: string,
   onStage: (stage: string) => void
-): Promise<'approved' | 'rejected' | 'flagged' | 'pending'> {
+): Promise<{ status: 'approved' | 'rejected' | 'flagged' | 'pending'; reason?: string | null }> {
   const deadline = Date.now() + MODERATION_TIMEOUT_MS;
   while (Date.now() < deadline) {
     const { reel } = await api.reels.get(reelId);
     const status = reel.moderation_status ?? 'pending';
-    if (status === 'approved') return 'approved';
-    if (status === 'rejected') return 'rejected';
-    if (status === 'flagged') return 'flagged';
+    if (status === 'approved') return { status: 'approved' };
+    if (status === 'rejected') {
+      return { status: 'rejected', reason: reel.moderation_reason ?? null };
+    }
+    if (status === 'flagged') return { status: 'flagged' };
     onStage('Reviewing content...');
     await new Promise((resolve) => setTimeout(resolve, MODERATION_POLL_MS));
   }
-  return 'pending';
+  return { status: 'pending' };
 }
 
 async function finalizePublishedReel(id: string, reelId: string) {
@@ -192,8 +194,11 @@ async function finalizePublishedReel(id: string, reelId: string) {
   setProgress(id, 92, 'Reviewing content...');
   updateTask(id, { status: 'publishing', stage: 'Reviewing content...', reelId });
   const mod = await waitForReelModeration(reelId, (stage) => setProgress(id, 94, stage));
-  if (mod === 'rejected') {
-    throw new Error('This reel did not meet our community guidelines.');
+  if (mod.status === 'rejected') {
+    throw new Error(
+      mod.reason?.trim() ||
+        'This reel did not meet our community guidelines. Try a different clip or caption.'
+    );
   }
   // Drop stale feed cache so soft-inject / local realtime picks up the approved reel.
   invalidateReelsFeedCache();
@@ -201,9 +206,9 @@ async function finalizePublishedReel(id: string, reelId: string) {
   updateTask(id, {
     status: 'done',
     stage:
-      mod === 'approved'
+      mod.status === 'approved'
         ? 'Posted'
-        : mod === 'flagged'
+        : mod.status === 'flagged'
           ? 'Posted — under review'
           : 'Under review',
     progress: 100,

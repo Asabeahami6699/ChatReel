@@ -5,6 +5,7 @@ export type IndividualChat = {
   user_id: string;
   name: string;
   avatar_url?: string;
+  is_self_notes?: boolean;
   last_message?: string;
   last_message_at?: string;
   unread_count?: number;
@@ -16,14 +17,51 @@ export type IndividualChat = {
   last_message_receiver_id?: string | null;
 };
 
+async function buildSelfNotesChat(authUserId: string): Promise<IndividualChat> {
+  const [{ data: profile }, { data: latest }] = await Promise.all([
+    supabaseAdmin
+      .from('profiles')
+      .select('avatar_url')
+      .eq('user_id', authUserId)
+      .maybeSingle(),
+    supabaseAdmin
+      .from('messages')
+      .select('*')
+      .eq('sender_id', authUserId)
+      .eq('receiver_id', authUserId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
+
+  return {
+    id: authUserId,
+    user_id: authUserId,
+    name: 'Message yourself',
+    is_self_notes: true,
+    avatar_url: profile?.avatar_url ?? undefined,
+    last_message: latest?.content ?? 'Save notes, links, and to-dos',
+    last_message_at: latest?.created_at ?? undefined,
+    unread_count: 0,
+    last_message_type: latest?.message_type ?? undefined,
+    last_message_plaintext: latest?.plaintext ?? null,
+    last_message_iv: latest?.iv ?? null,
+    last_message_ephemeral_public_key: latest?.ephemeral_public_key ?? null,
+    last_message_sender_id: latest?.sender_id ?? null,
+    last_message_receiver_id: latest?.receiver_id ?? null,
+  };
+}
+
 export async function getIndividualChats(authUserId: string): Promise<IndividualChat[]> {
+  const selfNotes = await buildSelfNotesChat(authUserId);
+
   const { data: currentProfile } = await supabaseAdmin
     .from('profiles')
     .select('id')
     .eq('user_id', authUserId)
     .single();
 
-  if (!currentProfile) return [];
+  if (!currentProfile) return [selfNotes];
 
   const { data: friendships } = await supabaseAdmin
     .from('friendships')
@@ -35,7 +73,7 @@ export async function getIndividualChats(authUserId: string): Promise<Individual
     .or(`user_id.eq.${currentProfile.id},friend_id.eq.${currentProfile.id}`)
     .eq('status', 'accepted');
 
-  if (!friendships?.length) return [];
+  if (!friendships?.length) return [selfNotes];
 
   const friendsMap = new Map<string, { user_id: string; name: string; avatar_url: string }>();
   friendships.forEach((f: Record<string, unknown>) => {
@@ -54,9 +92,11 @@ export async function getIndividualChats(authUserId: string): Promise<Individual
     }
   });
 
-  const friends = Array.from(friendsMap.values());
+  const friends = Array.from(friendsMap.values()).filter(
+    (f) => f.user_id !== authUserId
+  );
   const friendIds = friends.map((f) => f.user_id);
-  if (!friendIds.length) return [];
+  if (!friendIds.length) return [selfNotes];
 
   // Fetch the latest message per friend using a wide enough window, plus
   // compute true unread counts via a separate query (no global limit).
@@ -117,7 +157,7 @@ export async function getIndividualChats(authUserId: string): Promise<Individual
     return timeB - timeA;
   });
 
-  return formatted;
+  return [selfNotes, ...formatted];
 }
 
 export type GroupChat = {

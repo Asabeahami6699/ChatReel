@@ -8,9 +8,17 @@ import {
   ActivityIndicator,
   StyleSheet,
   KeyboardAvoidingView,
-  Platform,
+  ScrollView,
   useWindowDimensions,
 } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import {
+  keyboardAvoidingBehavior,
+  keyboardAvoidingEnabled,
+  keyboardPaddingAboveSafeArea,
+  keyboardVerticalOffset,
+  useKeyboardBottomInset,
+} from '../lib/keyboardLayout'
 import { LinearGradient } from 'expo-linear-gradient'
 import { Ionicons } from '@expo/vector-icons'
 
@@ -62,6 +70,10 @@ export default function AuthForm({
 
   const { width } = useWindowDimensions()
   const isDesktop = width > 700
+  const insets = useSafeAreaInsets()
+  const keyboardInset = useKeyboardBottomInset()
+  const scrollPad = keyboardPaddingAboveSafeArea(keyboardInset, insets.bottom) + 24
+  const kavOffset = keyboardVerticalOffset(insets.top)
 
   // Validation handlers
   const validateEmail = (text: string) => {
@@ -223,12 +235,29 @@ export default function AuthForm({
     </View>
   )
 
-  return noGradient ? (
-    <KeyboardAvoidingView
-      style={[styles.safeContainer, isDesktop && styles.desktopContainer]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+  const wrappedForm = (
+    <ScrollView
+      contentContainerStyle={[
+        styles.safeContainer,
+        isDesktop && styles.desktopContainer,
+        { paddingBottom: scrollPad },
+      ]}
+      keyboardShouldPersistTaps="handled"
+      bounces={false}
+      showsVerticalScrollIndicator={false}
     >
       {formContent}
+    </ScrollView>
+  )
+
+  return noGradient ? (
+    <KeyboardAvoidingView
+      style={[styles.flex, isDesktop && styles.desktopOuter]}
+      behavior={keyboardAvoidingBehavior()}
+      enabled={keyboardAvoidingEnabled()}
+      keyboardVerticalOffset={kavOffset}
+    >
+      {wrappedForm}
     </KeyboardAvoidingView>
   ) : (
     <LinearGradient
@@ -236,10 +265,12 @@ export default function AuthForm({
       style={styles.gradientBackground}
     >
       <KeyboardAvoidingView
-        style={[styles.safeContainer, isDesktop && styles.desktopContainer]}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={[styles.flex, isDesktop && styles.desktopOuter]}
+        behavior={keyboardAvoidingBehavior()}
+        enabled={keyboardAvoidingEnabled()}
+        keyboardVerticalOffset={kavOffset}
       >
-        {formContent}
+        {wrappedForm}
       </KeyboardAvoidingView>
     </LinearGradient>
   )
@@ -249,8 +280,14 @@ const styles = StyleSheet.create({
   gradientBackground: {
     flex: 1,
   },
-  safeContainer: {
+  flex: {
     flex: 1,
+  },
+  desktopOuter: {
+    justifyContent: 'center',
+  },
+  safeContainer: {
+    flexGrow: 1,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 16,

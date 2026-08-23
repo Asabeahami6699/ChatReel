@@ -42,7 +42,12 @@ function channelIdFor(data?: Record<string, unknown>): string {
   ) {
     return 'reel_inbox';
   }
-  if (type === 'message' || type === 'friend_request' || type === 'friend_accepted') {
+  if (
+    type === 'message' ||
+    type === 'friend_request' ||
+    type === 'friend_accepted' ||
+    type === 'chat_reminder'
+  ) {
     return 'default';
   }
   if (type === 'incoming_call') return 'calls';
@@ -232,6 +237,7 @@ export async function sendPushToUsers(userIds: string[], payload: PushPayload): 
   const channelId = channelIdFor(payload.data);
   const isCall = payload.data?.type === 'incoming_call';
   const isMessage = payload.data?.type === 'message';
+  const isReminder = payload.data?.type === 'chat_reminder';
 
   // Resolve badge once per recipient so the icon count matches SMS-style unread.
   const badgeByUser = new Map<string, number>();
@@ -284,6 +290,7 @@ export async function sendPushToUsers(userIds: string[], payload: PushPayload): 
       priority: 'high' as const,
       ...(badge != null ? { badge } : {}),
       ...(isMessage ? { categoryId: 'message_reply' } : {}),
+      ...(isReminder ? { categoryId: 'chat_reminder' } : {}),
       ...(tag ? { tag } : {}),
       ...(collapseId ? { collapseId } : {}),
       ...(isCall

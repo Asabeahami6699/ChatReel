@@ -42,6 +42,7 @@ import GroupsListScreen from '../screens/Group/GroupsListScreen';
 import ChatSettingsScreen from '../screens/Chat/ChatSettingsScreen';
 import GlobalSearchScreen from '../screens/Chat/GlobalSearchScreen';
 import StarredMessagesScreen from '../screens/Chat/StarredMessagesScreen';
+import RemindersScreen from '../screens/Chat/RemindersScreen';
 import ArchivedChatsScreen from '../screens/Chat/ArchivedChatsScreen';
 import QRCodeScreen from '../screens/QR/QRCodeScreen';
 import QRScannerScreen from '../screens/QR/QRScannerScreen';
@@ -103,6 +104,7 @@ export const ChatStack = ({ setSelectedChat }: ChatStackProps) => {
     <Stack.Screen name="Settings" component={ChatSettingsScreen} />
     <Stack.Screen name="GlobalSearch" component={GlobalSearchScreen} />
     <Stack.Screen name="StarredMessages" component={StarredMessagesScreen} />
+    <Stack.Screen name="Reminders" component={RemindersScreen} />
     <Stack.Screen name="ArchivedChats" component={ArchivedChatsScreen} />
     <Stack.Screen name="Contact" component={ContactScreen} />
     <Stack.Screen name="NewGroup" component={NewGroupScreen} />

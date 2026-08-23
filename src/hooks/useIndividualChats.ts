@@ -12,6 +12,12 @@ import { subscribeChatListMessageEvents } from '../lib/chatListRealtimeBridge';
 import { isEncryptedMessage, resolveChatListPreview } from '../lib/messageCrypto';
 import { subscribeLocalStore } from '../lib/localMessageBus';
 import { mergeIndividualChatsWithIndex } from '../lib/mergeChatListWithIndex';
+import {
+  buildSelfNotesChatRow,
+  isSelfNotesChat,
+  prependSelfNotesChat,
+  withoutGhostSelfChats,
+} from '../lib/selfNotesChat';
 import { resetChatIndexUnread } from '../lib/chatIndex';
 import { messageStorage } from '../utils/messageStorage';
 
@@ -20,6 +26,8 @@ export type IndividualChat = {
   user_id: string;
   name: string;
   avatar_url?: string;
+  /** WhatsApp-style "Message yourself" thread */
+  is_self_notes?: boolean;
   last_message?: string;
   last_message_at?: string;
   unread_count?: number;
@@ -99,13 +107,16 @@ async function withDecryptedPreviews(
 /** Keep avatar/name stable unless the profile path actually changed. */
 function mergeChatsPreservingProfiles(
   prev: IndividualChat[],
-  next: IndividualChat[]
+  next: IndividualChat[],
+  myUserId?: string | null
 ): IndividualChat[] {
-  if (!prev.length) return next;
-  const prevById = new Map(prev.map((c) => [c.user_id, c]));
+  const safePrev = withoutGhostSelfChats(prev, myUserId);
+  const safeNext = withoutGhostSelfChats(next, myUserId);
+  if (!safePrev.length) return safeNext;
+  const prevById = new Map(safePrev.map((c) => [c.user_id, c]));
   // Prefer whichever side has the newer preview so a lagging API refetch
   // cannot wipe a realtime INSERT that just painted.
-  const mergedList = next.map((chat) => {
+  const mergedList = safeNext.map((chat) => {
     const old = prevById.get(chat.user_id);
     if (!old) return chat;
     const avatarChanged =
@@ -154,9 +165,9 @@ function mergeChatsPreservingProfiles(
     }
     return merged;
   });
-  // Keep any live-only rows the API omitted (brand-new chats not in response yet).
-  const nextIds = new Set(next.map((c) => c.user_id));
-  for (const old of prev) {
+  // Keep live-only rows the API omitted — but never resurrect self-chat ghosts.
+  const nextIds = new Set(safeNext.map((c) => c.user_id));
+  for (const old of safePrev) {
     if (!nextIds.has(old.user_id)) mergedList.push(old);
   }
   mergedList.sort((a, b) => {
@@ -192,8 +203,9 @@ export const useIndividualChats = (searchQuery: string = '') => {
 
   const saveChatsToStorage = async (chatsData: IndividualChat[]) => {
     if (!user?.id) return;
+    const cleaned = withoutGhostSelfChats(chatsData, user.id);
     try {
-      await AsyncStorage.setItem(chatsKey(user.id), JSON.stringify(chatsData));
+      await AsyncStorage.setItem(chatsKey(user.id), JSON.stringify(cleaned));
       await AsyncStorage.setItem(chatsTsKey(user.id), Date.now().toString());
     } catch (error) {
       console.error('Error saving chats to storage:', error);
@@ -206,17 +218,43 @@ export const useIndividualChats = (searchQuery: string = '') => {
       const storedChats = await AsyncStorage.getItem(chatsKey(user.id));
       const timestamp = await AsyncStorage.getItem(chatsTsKey(user.id));
       if (storedChats && timestamp) {
-        const parsedChats = JSON.parse(storedChats);
+        const parsedChats = JSON.parse(storedChats) as IndividualChat[];
         const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
         const isStale = parseInt(timestamp, 10) < fiveMinutesAgo;
         setIsDataStale(isStale);
-        return parsedChats;
+        return withoutGhostSelfChats(parsedChats, user.id);
       }
     } catch (error) {
       console.error('Error loading chats from storage:', error);
     }
     return null;
   };
+
+  const selfNotesRow = useCallback(
+    (overrides?: Partial<IndividualChat>): IndividualChat | null => {
+      if (!user?.id) return null;
+      const existing = chatsRef.current.find(
+        (c) => c.user_id === user.id && c.is_self_notes
+      );
+      return buildSelfNotesChatRow(user.id, {
+        avatar_url: overrides?.avatar_url ?? existing?.avatar_url,
+        last_message: overrides?.last_message ?? existing?.last_message,
+        last_message_at: overrides?.last_message_at ?? existing?.last_message_at,
+        unread_count: overrides?.unread_count ?? existing?.unread_count ?? 0,
+      });
+    },
+    [user?.id]
+  );
+
+  const withSelfNotes = useCallback(
+    (rows: IndividualChat[]): IndividualChat[] => {
+      if (!user?.id) return rows;
+      const fromList = rows.find((c) => c.user_id === user.id && c.is_self_notes);
+      const selfRow = fromList ?? selfNotesRow();
+      return prependSelfNotesChat(rows, user.id, selfRow);
+    },
+    [selfNotesRow, user?.id]
+  );
 
   /** Decrypt previews after the list is already on screen. */
   const decryptPreviewsInBackground = useCallback(
@@ -263,18 +301,22 @@ export const useIndividualChats = (searchQuery: string = '') => {
         loadChatsFromStorage(),
         messageStorage.getChatIndex(),
       ]);
-      const merged = mergeIndividualChatsWithIndex(cached ?? chatsRef.current, index);
+      const merged = mergeIndividualChatsWithIndex(
+        cached ?? chatsRef.current,
+        index,
+        user.id
+      );
       if (merged.length === 0) return;
       // Cached rows are usually already cleartext from the last session.
       const quick = withQuickPreviews(merged, { trustCachedText: true });
-      setChats((prev) => mergeChatsPreservingProfiles(prev, quick));
+      setChats((prev) => withSelfNotes(mergeChatsPreservingProfiles(prev, quick, user.id)));
       paintedLocalRef.current = true;
       setLoading(false);
       decryptPreviewsInBackground(merged);
     } catch (error) {
       console.warn('[useIndividualChats] local index paint failed', error);
     }
-  }, [user?.id, decryptPreviewsInBackground]);
+  }, [user?.id, decryptPreviewsInBackground, withSelfNotes]);
 
   const fetchChats = useCallback(async (forceRefresh = false, silent = false) => {
     if (!user?.id) {
@@ -300,16 +342,16 @@ export const useIndividualChats = (searchQuery: string = '') => {
       if (!silent && !paintedLocalRef.current) setLoading(true);
 
       const { chats: formatted } = await api.chats.individual();
-      const raw = formatted as IndividualChat[];
+      const raw = withoutGhostSelfChats(formatted as IndividualChat[], user.id);
       const index = await messageStorage.getChatIndex();
       // Paint API rows immediately; decrypt cleartext off the critical path.
-      const quick = withQuickPreviews(mergeIndividualChatsWithIndex(raw, index), {
+      const quick = withQuickPreviews(mergeIndividualChatsWithIndex(raw, index, user.id), {
         trustCachedText: false,
       });
       setChats((prev) => {
-        const merged = mergeChatsPreservingProfiles(prev, quick);
+        const merged = mergeChatsPreservingProfiles(prev, quick, user.id);
         void saveChatsToStorage(merged);
-        return merged;
+        return withSelfNotes(merged);
       });
       paintedLocalRef.current = true;
       setIsDataStale(false);
@@ -323,7 +365,7 @@ export const useIndividualChats = (searchQuery: string = '') => {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [user?.id, paintFromLocalIndex, decryptPreviewsInBackground]);
+  }, [user?.id, paintFromLocalIndex, decryptPreviewsInBackground, withSelfNotes]);
 
   const scheduleSafetyRefetch = useCallback(() => {
     if (safetyRefetchTimer.current) clearTimeout(safetyRefetchTimer.current);
@@ -343,12 +385,14 @@ export const useIndividualChats = (searchQuery: string = '') => {
       if (cached && cached.length > 0) {
         const index = await messageStorage.getChatIndex().catch(() => null);
         const merged = index
-          ? mergeIndividualChatsWithIndex(cached, index)
-          : cached;
-        setChats(withQuickPreviews(merged, { trustCachedText: true }));
+          ? mergeIndividualChatsWithIndex(cached, index, user.id)
+          : withoutGhostSelfChats(cached, user.id);
+        setChats(withSelfNotes(withQuickPreviews(merged, { trustCachedText: true })));
         paintedLocalRef.current = true;
         setLoading(false);
         decryptPreviewsInBackground(merged);
+      } else {
+        setChats(withSelfNotes([]));
       }
       const net = await NetInfo.fetch();
       if (!mounted) return;
@@ -407,11 +451,12 @@ export const useIndividualChats = (searchQuery: string = '') => {
       const receiverId = row.receiver_id as string | undefined;
       if (!senderId || !receiverId) return;
 
-      const isIncoming = senderId !== user.id && receiverId === user.id;
-      const isOutgoing = senderId === user.id && receiverId !== user.id;
-      if (!isIncoming && !isOutgoing) return;
+      const isSelfNotes = senderId === user.id && receiverId === user.id;
+      const isIncoming = !isSelfNotes && senderId !== user.id && receiverId === user.id;
+      const isOutgoing = !isSelfNotes && senderId === user.id && receiverId !== user.id;
+      if (!isSelfNotes && !isIncoming && !isOutgoing) return;
 
-      const partnerId = isIncoming ? senderId : receiverId;
+      const partnerId = isSelfNotes ? user.id : isIncoming ? senderId : receiverId;
 
       if (event === 'INSERT') {
         const createdAt = String(row.created_at ?? new Date().toISOString());

@@ -50,7 +50,12 @@ function resolveChat(
   const sender = typeof row.sender_id === 'string' ? row.sender_id : '';
   const receiver = typeof row.receiver_id === 'string' ? row.receiver_id : '';
   if (!sender || !receiver) return null;
-  if (sender === myUserId) return { chatId: receiver, chatType: 'individual' };
+  if (sender === myUserId) {
+    if (receiver === myUserId) {
+      return { chatId: myUserId, chatType: 'individual' };
+    }
+    return { chatId: receiver, chatType: 'individual' };
+  }
   if (receiver === myUserId) return { chatId: sender, chatType: 'individual' };
   return null;
 }
