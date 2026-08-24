@@ -9,11 +9,11 @@ import {
   ActivityIndicator,
   Image,
   StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
   Animated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { KeyboardSafeScreen } from '../../components/KeyboardSafeScreen';
+import { KeyboardStickyFooter } from '../../components/KeyboardStickyFooter';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
@@ -367,10 +367,7 @@ const ProfileScreen = ({ navigation }: { navigation: any }) => {
   }
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={{ flex: 1, backgroundColor: theme.listBg }}
-    >
+    <View style={{ flex: 1, backgroundColor: theme.listBg }}>
       {/* === Header with Back Button === */}
       <View style={[styles.header, { backgroundColor: theme.headerBg }]}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
@@ -380,7 +377,7 @@ const ProfileScreen = ({ navigation }: { navigation: any }) => {
         <View style={{ width: 40 }} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContainer}>
+      <KeyboardSafeScreen contentContainerStyle={styles.scrollContainer} bottomOffset={100}>
         {/* === Profile Card === */}
         <View
           style={[
@@ -425,26 +422,27 @@ const ProfileScreen = ({ navigation }: { navigation: any }) => {
             </View>
           </View>
         </View>
-      </ScrollView>
+      </KeyboardSafeScreen>
 
-      {/* === Floating Save Button === */}
-      <View style={[styles.floatingButtonContainer, { bottom: 30 + insets.bottom }]}>
-        <TouchableOpacity
-          style={[styles.saveBtn, saving && styles.saveBtnDisabled]}
-          onPress={handleSubmit(onSubmit)}
-          disabled={saving}
-        >
-          {saving ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <>
-              <Ionicons name="checkmark" size={20} color="#fff" style={{ marginRight: 8 }} />
-              <Text style={styles.saveBtnText}>Save Changes</Text>
-            </>
-          )}
-        </TouchableOpacity>
-      </View>
-    </KeyboardAvoidingView>
+      <KeyboardStickyFooter>
+        <View style={styles.floatingButtonContainer}>
+          <TouchableOpacity
+            style={[styles.saveBtn, saving && styles.saveBtnDisabled]}
+            onPress={handleSubmit(onSubmit)}
+            disabled={saving}
+          >
+            {saving ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <>
+                <Ionicons name="checkmark" size={20} color="#fff" style={{ marginRight: 8 }} />
+                <Text style={styles.saveBtnText}>Save Changes</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+      </KeyboardStickyFooter>
+    </View>
   );
 };
 
@@ -664,10 +662,8 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   floatingButtonContainer: {
-    position: 'absolute',
-    bottom: 30,
-    left: 20,
-    right: 20,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
     alignItems: 'center',
   },
   saveBtn: {

@@ -10,7 +10,6 @@ import {
   View,
   Text,
   StyleSheet,
-  KeyboardAvoidingView,
   Platform,
   TouchableOpacity,
   Image,
@@ -23,7 +22,8 @@ import {
 } from 'react-native';
 import { useAuth } from '../../hooks/useAuth';
 import { api, ApiError } from '../../lib/api';
-import { keyboardAvoidingBehavior, keyboardAvoidingEnabled, keyboardPaddingAboveSafeArea } from '../../lib/keyboardLayout';
+import { useResizeMode } from 'react-native-keyboard-controller';
+import { KeyboardStickyFooter } from '../../components/KeyboardStickyFooter';
 import { isSelfNotesChat } from '../../lib/selfNotesChat';
 import { cancelChatThreadsPrefetch } from '../../lib/chatThreadsPrefetch';
 import { flushMessageOutbox, flushOutboxItem } from '../../lib/flushMessageOutbox';
@@ -142,6 +142,7 @@ export default function ChatRoomScreen() {
   const { theme } = useChatSettings();
   const roomKind = chatType === 'group' ? 'group' : 'individual';
   const isSelfNotes = chatType === 'individual' && isSelfNotesChat(chatId, user?.id);
+  useResizeMode();
 
   const cachedThread = chatId ? recallChatThread<Message>(chatId) : null;
   const [messages, setMessages] = useState<Message[]>(() =>
@@ -308,15 +309,8 @@ export default function ChatRoomScreen() {
 
   const bannerVisible =
     chatType === 'group' && activeGroupCall.canJoin && !!activeGroupCall.call;
-  // Banner sits outside KAV; include its height in the iOS offset.
+  // Banner sits outside the composer; measured for scroll FAB positioning only.
   const bannerHeight = bannerVisible ? measuredBannerH || 52 : 0;
-  const keyboardVerticalOffset =
-    Platform.OS === 'ios' ? measuredHeaderH + bannerHeight : 0;
-  const kavBehavior = keyboardAvoidingBehavior();
-  const manualKeyboardPad =
-    Platform.OS === 'android' || Platform.OS === 'web'
-      ? keyboardPaddingAboveSafeArea(keyboardHeight, insets.bottom)
-      : 0;
 
   useEffect(() => {
     if (!bannerVisible && measuredBannerH !== 0) setMeasuredBannerH(0);
@@ -3442,12 +3436,7 @@ export default function ChatRoomScreen() {
         </View>
       ) : null}
 
-      <KeyboardAvoidingView
-        style={{ flex: 1, backgroundColor: chatBgColor, paddingBottom: manualKeyboardPad }}
-        behavior={kavBehavior}
-        keyboardVerticalOffset={keyboardVerticalOffset}
-        enabled={keyboardAvoidingEnabled()}
-      >
+      <View style={{ flex: 1, backgroundColor: chatBgColor }}>
         <View style={[styles.chatBody, { backgroundColor: chatBgColor }]}>
           {wallpaperImageUri ? (
             <ImageBackground
@@ -3595,37 +3584,31 @@ export default function ChatRoomScreen() {
           )}
         </View>
 
-        {replyTo && (
-          <ReplyPreviewBar
-            message={replyTo}
-            senderName={replyTo.profiles?.display_name}
-            onCancel={() => setReplyTo(null)}
+        <KeyboardStickyFooter>
+          {replyTo ? (
+            <ReplyPreviewBar
+              message={replyTo}
+              senderName={replyTo.profiles?.display_name}
+              onCancel={() => setReplyTo(null)}
+            />
+          ) : null}
+          <ChatInput
+            placeholder={editingMessage ? 'Edit message' : 'Message'}
+            draft={composerDraft}
+            onDraftChange={handleDraftChange}
+            onSend={sendMessage}
+            onSendVoice={sendVoiceMessage}
+            onAttachmentsSelected={handleAttachmentsSelected}
+            pendingAttachmentCount={pendingAttachments.length}
+            onPendingAttachmentsPress={() => setShowAttachmentPreview(true)}
+            mentionMembers={chatType === 'group' ? groupMembers : undefined}
+            onCreatePoll={
+              chatType === 'group' ? () => setPollComposerOpen(true) : undefined
+            }
+            disabled={!user?.id}
           />
-        )}
-
-        <ChatInput
-          placeholder={editingMessage ? 'Edit message' : 'Message'}
-          draft={composerDraft}
-          onDraftChange={handleDraftChange}
-          onSend={sendMessage}
-          onSendVoice={sendVoiceMessage}
-          onAttachmentsSelected={handleAttachmentsSelected}
-          pendingAttachmentCount={pendingAttachments.length}
-          onPendingAttachmentsPress={() => setShowAttachmentPreview(true)}
-          mentionMembers={chatType === 'group' ? groupMembers : undefined}
-          onCreatePoll={
-            chatType === 'group' ? () => setPollComposerOpen(true) : undefined
-          }
-          style={{
-            paddingBottom: isKeyboardVisible
-              ? Platform.OS === 'ios'
-                ? insets.bottom
-                : 6
-              : insets.bottom,
-          }}
-          disabled={!user?.id}
-        />
-      </KeyboardAvoidingView>
+        </KeyboardStickyFooter>
+      </View>
 
       <PollComposerSheet
         visible={pollComposerOpen}
@@ -3932,7 +3915,7 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     paddingHorizontal: 8,
     paddingTop: 8,
-    paddingBottom: 12,
+    paddingBottom: 72,
   },
   sectionHeader: {
     alignItems: 'center',

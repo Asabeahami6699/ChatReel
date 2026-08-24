@@ -3,6 +3,7 @@ import React from 'react';
 import * as SplashScreen from 'expo-splash-screen';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { AuthProvider } from './src/context/AuthContext';
 import { ChatSettingsProvider } from './src/context/ChatSettingsContext';
 import { AppLockProvider } from './src/context/AppLockContext';
@@ -44,7 +45,8 @@ export default function App() {
   }
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <SafeAreaProvider>
+      <KeyboardProvider>
+        <SafeAreaProvider>
         <AuthProvider>
           <ChatSettingsProvider>
             <ThemedPaperProvider>
@@ -76,7 +78,8 @@ export default function App() {
             </ThemedPaperProvider>
           </ChatSettingsProvider>
         </AuthProvider>
-      </SafeAreaProvider>
+        </SafeAreaProvider>
+      </KeyboardProvider>
     </GestureHandlerRootView>
   );
 }

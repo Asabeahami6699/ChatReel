@@ -10,6 +10,11 @@ export type ReelsStackParamList = {
   ReelCreatorProfile: { profileId: string; displayName?: string };
   ReelCreatorWallet: undefined;
   ReelCreatorAnalytics: undefined;
-  ReelDetail: { reelId: string; contextReels?: import('../lib/api').ReelDTO[]; initialIndex?: number };
+  ReelDetail: {
+    reelId: string;
+    contextReels?: import('../lib/api').ReelDTO[];
+    initialIndex?: number;
+    disableProfileNavigation?: boolean;
+  };
   ReelSound: { soundId?: string; fromReelId?: string };
 };

@@ -3,26 +3,14 @@ import {
   Modal,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
   useWindowDimensions,
-  KeyboardAvoidingView,
 } from 'react-native';
-import DateTimePicker from '@react-native-community/datetimepicker';
-import { Ionicons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useChatSettings } from '../../context/ChatSettingsContext';
-import { buildReminderPresets, formatReminderWhen } from '../../lib/chatReminders';
-import {
-  keyboardAvoidingBehavior,
-  keyboardAvoidingEnabled,
-  keyboardPaddingAboveSafeArea,
-  useKeyboardBottomInset,
-} from '../../lib/keyboardLayout';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 
 function toLocalInputValue(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -50,8 +38,6 @@ export function RemindMeSheet({
 }: Props) {
   const { theme } = useChatSettings();
   const insets = useSafeAreaInsets();
-  const keyboardInset = useKeyboardBottomInset();
-  const keyboardPad = keyboardPaddingAboveSafeArea(keyboardInset, insets.bottom);
   const { width, height } = useWindowDimensions();
   const isPhoneLayout = !(Platform.OS === 'web' && width >= 768);
 
@@ -98,18 +84,13 @@ export function RemindMeSheet({
             {
               backgroundColor: cardBg,
               maxHeight: isPhoneLayout ? height * 0.88 : Math.min(height * 0.85, 640),
-              paddingBottom: isPhoneLayout ? Math.max(insets.bottom, 12) + 8 + keyboardPad : 14,
+              paddingBottom: isPhoneLayout ? Math.max(insets.bottom, 12) + 8 : 14,
             },
             isPhoneLayout ? styles.sheetPhone : styles.sheetDesktop,
             !isPhoneLayout && { maxWidth: Math.min(420, width - 40) },
           ]}
           onPress={(e) => e.stopPropagation()}
         >
-          <KeyboardAvoidingView
-            behavior={keyboardAvoidingBehavior()}
-            enabled={keyboardAvoidingEnabled()}
-            style={{ maxHeight: '100%' }}
-          >
           {isPhoneLayout ? <View style={[styles.grabber, { backgroundColor: muted }]} /> : null}
 
           <View style={styles.titleRow}>
@@ -121,12 +102,13 @@ export function RemindMeSheet({
             {previewText ? ` — “${previewText.slice(0, 80)}”` : ''}
           </Text>
 
-          <ScrollView
+          <KeyboardAwareScrollView
             style={styles.listScroll}
             contentContainerStyle={styles.list}
             bounces={false}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
+            bottomOffset={24}
           >
             {presets.map((opt) => (
               <TouchableOpacity
@@ -247,7 +229,7 @@ export function RemindMeSheet({
               onChangeText={setNote}
               maxLength={200}
             />
-          </ScrollView>
+          </KeyboardAwareScrollView>
 
           <TouchableOpacity
             style={[styles.cancelBtn, { backgroundColor: cancelBg }]}
@@ -255,7 +237,6 @@ export function RemindMeSheet({
           >
             <Text style={[styles.cancelText, { color: text }]}>Cancel</Text>
           </TouchableOpacity>
-          </KeyboardAvoidingView>
         </Pressable>
       </Pressable>
     </Modal>

@@ -1,8 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   FlatList,
-  KeyboardAvoidingView,
-  Platform,
   StyleSheet,
   Text,
   TextInput,
@@ -10,6 +8,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { KeyboardStickyFooter } from '../../components/KeyboardStickyFooter';
 import type { CallExtrasSignal, PublishCallExtras } from './callExtrasSignaling';
 
 export type InCallChatMessage = {
@@ -66,10 +65,7 @@ export function CallInCallChat({
   return (
     <View style={styles.wrap} pointerEvents="box-none">
       <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose} />
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={styles.sheet}
-      >
+      <View style={styles.sheet}>
         <View style={styles.header}>
           <Text style={styles.title}>In-call chat</Text>
           <Text style={styles.hint}>Only people on this call · not saved</Text>
@@ -93,22 +89,24 @@ export function CallInCallChat({
             <Text style={styles.empty}>Say hi — messages disappear when the call ends.</Text>
           }
         />
-        <View style={styles.composer}>
-          <TextInput
-            style={styles.input}
-            value={text}
-            onChangeText={setText}
-            placeholder="Message…"
-            placeholderTextColor="#888"
-            maxLength={280}
-            onSubmitEditing={send}
-            returnKeyType="send"
-          />
-          <TouchableOpacity style={styles.sendBtn} onPress={send}>
-            <Ionicons name="send" size={18} color="#fff" />
-          </TouchableOpacity>
-        </View>
-      </KeyboardAvoidingView>
+        <KeyboardStickyFooter>
+          <View style={styles.composer}>
+            <TextInput
+              style={styles.input}
+              value={text}
+              onChangeText={setText}
+              placeholder="Message…"
+              placeholderTextColor="#888"
+              maxLength={280}
+              onSubmitEditing={send}
+              returnKeyType="send"
+            />
+            <TouchableOpacity style={styles.sendBtn} onPress={send}>
+              <Ionicons name="send" size={18} color="#fff" />
+            </TouchableOpacity>
+          </View>
+        </KeyboardStickyFooter>
+      </View>
     </View>
   );
 }

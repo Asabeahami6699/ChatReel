@@ -47,6 +47,8 @@ type Props = {
   onReelsChange?: (reels: ReelDTO[]) => void;
   /** When true, avatar/username are not tappable (e.g. viewing from a profile grid). */
   disableProfileNavigation?: boolean;
+  /** Standalone viewer (ReelDetail / profile grid) — ignore global feed playback gates. */
+  ignorePlaybackGate?: boolean;
 };
 
 function formatCount(n: number): string {
@@ -65,6 +67,7 @@ export function ReelImmersiveViewer({
   onClose,
   onReelsChange,
   disableProfileNavigation = false,
+  ignorePlaybackGate = false,
 }: Props) {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<any>();
@@ -86,7 +89,8 @@ export function ReelImmersiveViewer({
   const [openShare, setOpenShare] = useState<ReelDTO | null>(null);
   const [openProfile, setOpenProfile] = useState<ReelDTO | null>(null);
 
-  const gateActive = useReelPlaybackGateActive();
+  const globalGateActive = useReelPlaybackGateActive();
+  const gateActive = ignorePlaybackGate ? false : globalGateActive;
   const sheetOpen = Boolean(openComments || openShare || openProfile);
   const mediaShouldPlay = isPlaying && !sheetOpen && !gateActive;
   const mediaShouldPlayRef = useRef(mediaShouldPlay);
@@ -246,11 +250,12 @@ export function ReelImmersiveViewer({
   }, []);
 
   useEffect(() => {
+    if (ignorePlaybackGate) return;
     const unregisterPause = registerReelFeedPauseHandler(() => {
       void pauseAllVideos();
     });
     return () => unregisterPause();
-  }, [pauseAllVideos]);
+  }, [pauseAllVideos, ignorePlaybackGate]);
 
   const playActiveReel = useCallback(async (reelId: string | null, shouldPlay?: boolean) => {
     const wantPlay = shouldPlay ?? mediaShouldPlayRef.current;
@@ -766,6 +771,7 @@ export function ReelImmersiveViewer({
       insets.top,
       isMuted,
       isPlaying,
+      mediaShouldPlay,
       playActiveReel,
       progress,
       progressPan.panHandlers,

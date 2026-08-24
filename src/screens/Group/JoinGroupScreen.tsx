@@ -9,10 +9,8 @@ import {
   Alert,
   ActivityIndicator,
   TextInput,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
 } from 'react-native';
+import { KeyboardSafeScreen } from '../../components/KeyboardSafeScreen';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { OfflineAvatar } from '../../components/OfflineAvatar';
@@ -72,11 +70,11 @@ export default function JoinGroupScreen() {
   };
 
   return (
-    <KeyboardAvoidingView
+    <KeyboardSafeScreen
       style={[styles.container, { backgroundColor: theme.listBg }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      contentContainerStyle={[styles.scrollContent, { paddingBottom: 20 + insets.bottom }]}
+      bottomOffset={24}
     >
-      <ScrollView contentContainerStyle={[styles.scrollContent, { paddingBottom: 20 + insets.bottom }]}>
         <View
           style={[
             styles.card,
@@ -170,8 +168,7 @@ export default function JoinGroupScreen() {
             <Text style={[styles.cancelButtonText, { color: theme.listSecondaryText }]}>Cancel</Text>
           </TouchableOpacity>
         </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+    </KeyboardSafeScreen>
   );
 }
 

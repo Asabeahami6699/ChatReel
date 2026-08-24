@@ -80,6 +80,8 @@ export default function ReelDetailScreen() {
       initialIndex={initialIndex >= 0 ? initialIndex : 0}
       onClose={() => navigation.goBack()}
       onReelsChange={setReels}
+      disableProfileNavigation={route.params.disableProfileNavigation}
+      ignorePlaybackGate
     />
   );
 }

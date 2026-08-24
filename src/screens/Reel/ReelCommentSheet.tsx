@@ -4,27 +4,21 @@ import {
   Alert,
   FlatList,
   Image,
-  KeyboardAvoidingView,
-  Platform,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { KeyboardStickyFooter } from '../../components/KeyboardStickyFooter';
 import { useReelComments } from '../../hooks/useReelComments';
 import { useCurrentProfileId } from '../../hooks/useCurrentProfileId';
 import { ApiError, type ReelCommentDTO } from '../../lib/api';
 import { showAppToast } from '../../lib/appToast';
 import { REEL_ACCENT } from './reelTheme';
-import {
-  keyboardAvoidingBehavior,
-  keyboardAvoidingEnabled,
-  keyboardPaddingAboveSafeArea,
-  useKeyboardBottomInset,
-} from '../../lib/keyboardLayout';
 
 interface Props {
   reelId: string;
@@ -64,8 +58,6 @@ export default function ReelCommentSheet({
   onCommentRemoved,
 }: Props) {
   const insets = useSafeAreaInsets();
-  const keyboardInset = useKeyboardBottomInset();
-  const keyboardPad = keyboardPaddingAboveSafeArea(keyboardInset, insets.bottom);
   const currentProfileId = useCurrentProfileId();
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -200,21 +192,8 @@ export default function ReelCommentSheet({
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={keyboardAvoidingBehavior()}
-      enabled={keyboardAvoidingEnabled()}
-      keyboardVerticalOffset={0}
-    >
-      <View
-        style={[
-          styles.sheetBody,
-          {
-            paddingBottom:
-              keyboardPad > 0 ? keyboardPad : insets.bottom,
-          },
-        ]}
-      >
+    <View style={styles.container}>
+      <View style={[styles.sheetBody, { paddingBottom: 0 }]}>
       <View style={styles.handle} />
       <View style={styles.header}>
         <Text style={styles.title}>
@@ -264,7 +243,9 @@ export default function ReelCommentSheet({
       {postError ? (
         <Text style={styles.postErrorText}>{postError}</Text>
       ) : null}
+      </View>
 
+      <KeyboardStickyFooter closedOffset={insets.bottom}>
       {replyTo && (
         <View style={styles.replyBanner}>
           <Text style={styles.replyBannerText} numberOfLines={1}>
@@ -305,6 +286,7 @@ export default function ReelCommentSheet({
           )}
         </TouchableOpacity>
       </View>
+      </KeyboardStickyFooter>
 
       {pendingDeleteId && (
         <View style={styles.deleteConfirmLayer}>
@@ -345,8 +327,7 @@ export default function ReelCommentSheet({
           </View>
         </View>
       )}
-      </View>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 

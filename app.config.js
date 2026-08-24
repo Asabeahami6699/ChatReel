@@ -68,6 +68,10 @@ module.exports = {
   },
   web: {
     favicon: './assets/favIconChat.png',
+    meta: {
+      viewport:
+        'width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content',
+    },
   },
   android: {
     package: 'com.chatapp',
@@ -179,6 +183,7 @@ module.exports = {
     'expo-video',
     'expo-navigation-bar',
     withLiveKitSetup,
+    'react-native-keyboard-controller',
     'expo-secure-store',
     [
       'expo-local-authentication',

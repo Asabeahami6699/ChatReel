@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
-  Modal,
   Platform,
   StatusBar,
   StyleSheet,
@@ -16,8 +15,7 @@ import { SoftFadeImage } from '../../components/SoftFadeImage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { ReelImmersiveViewer } from './ReelImmersiveViewer';
-import { api, ApiError, type ReelDTO } from '../../lib/api';
+import { api, ApiError } from '../../lib/api';
 import { navigateToOutgoingCall, navigateToPostReel } from '../../navigation/rootNavigation';
 import { openPostReelCompose } from '../../lib/reelPlaybackBridge';
 import type { SavedReelComposeDraft } from '../../lib/reelComposeDraftStore';
@@ -25,7 +23,6 @@ import {
   deleteReelComposeDraft,
   listReelComposeDrafts,
 } from '../../lib/reelComposeDraftStore';
-import { useReelPlaybackGate } from '../../hooks/useReelPlaybackGate';
 import { showAppToast } from '../../lib/appToast';
 import { startCallGuarded } from '../../lib/startCallGuarded';
 import type { ReelsStackParamList } from '../../navigation/reelsNavigation';
@@ -87,12 +84,24 @@ export default function ReelProfileView({ profileId, isSelf = false, showBack = 
   const [followState, setFollowState] = useState<'none' | 'pending' | 'following'>('none');
   const [friendshipId, setFriendshipId] = useState<string | null>(null);
   const [followBusy, setFollowBusy] = useState(false);
-  const [immersiveIndex, setImmersiveIndex] = useState<number | null>(null);
-  useReelPlaybackGate('profile-immersive', immersiveIndex != null);
   const [followerCount, setFollowerCount] = useState(0);
   const [followersLoading, setFollowersLoading] = useState(true);
   const [drafts, setDrafts] = useState<SavedReelComposeDraft[]>([]);
-  const { removeOne, removeMany } = useReelGridDeleteHandlers(profileId, setImmersiveIndex);
+  const { removeOne, removeMany } = useReelGridDeleteHandlers(profileId);
+
+  const openProfileReel = useCallback(
+    (index: number) => {
+      const reel = posts[index];
+      if (!reel) return;
+      navigation.navigate('ReelDetail', {
+        reelId: reel.id,
+        contextReels: posts,
+        initialIndex: index,
+        disableProfileNavigation: true,
+      });
+    },
+    [navigation, posts]
+  );
 
   const loadDrafts = useCallback(async () => {
     if (!isSelf) {
@@ -362,7 +371,7 @@ export default function ReelProfileView({ profileId, isSelf = false, showBack = 
           contentWidth={contentWidth}
           bottomPad={bottomPad}
           generatedThumbs={thumbs}
-          onOpen={setImmersiveIndex}
+          onOpen={openProfileReel}
           onOpenDraft={(draft) => openPostReel(draft)}
           onDeleteDraft={async (draft) => {
             await deleteReelComposeDraft(draft.id);
@@ -377,18 +386,6 @@ export default function ReelProfileView({ profileId, isSelf = false, showBack = 
           }}
         />
       )}
-
-      <Modal visible={immersiveIndex != null} animationType="slide" onRequestClose={() => setImmersiveIndex(null)}>
-        {immersiveIndex != null && (
-          <ReelImmersiveViewer
-            reels={posts}
-            initialIndex={immersiveIndex}
-            onClose={() => setImmersiveIndex(null)}
-            onReelsChange={setPosts}
-            disableProfileNavigation
-          />
-        )}
-      </Modal>
       </View>
     </View>
   );

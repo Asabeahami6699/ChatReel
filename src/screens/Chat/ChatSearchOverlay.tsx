@@ -8,10 +8,9 @@ import {
   FlatList,
   Modal,
   Pressable,
-  KeyboardAvoidingView,
-  Platform,
   useWindowDimensions,
 } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useChatSettings } from '../../context/ChatSettingsContext';
@@ -64,10 +63,7 @@ export function ChatSearchOverlay({ visible, messages, onClose, onSelect }: Prop
       onRequestClose={onClose}
       statusBarTranslucent
     >
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
+      <KeyboardAvoidingView style={styles.flex} behavior="padding">
         <Pressable style={styles.backdrop} onPress={onClose} />
         <View
           style={[

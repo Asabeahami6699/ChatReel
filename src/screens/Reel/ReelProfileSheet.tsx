@@ -3,7 +3,6 @@ import { useCurrentProfileId } from '../../hooks/useCurrentProfileId';
 import {
   ActivityIndicator,
   Image,
-  Modal,
   Platform,
   StyleSheet,
   Text,
@@ -14,7 +13,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import { ReelImmersiveViewer } from './ReelImmersiveViewer';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { api, ApiError, type ReelDTO } from '../../lib/api';
 import { REEL_ACCENT } from './reelTheme';
 import { REEL_PHONE_MAX_WIDTH } from './reelVideoLayout';
@@ -29,7 +28,7 @@ import {
   listReelComposeDrafts,
 } from '../../lib/reelComposeDraftStore';
 import { ReelProfileMenuFloat } from './ReelProfileMenuFloat';
-import { useReelPlaybackGate } from '../../hooks/useReelPlaybackGate';
+import type { ReelsStackParamList } from '../../navigation/reelsNavigation';
 
 interface Props {
   reel: ReelDTO;
@@ -38,10 +37,9 @@ interface Props {
 }
 
 export default function ReelProfileSheet({ reel, onClose, onFollowStateChange }: Props) {
-  const navigation = useNavigation<any>();
+  const navigation = useNavigation<NativeStackNavigationProp<ReelsStackParamList>>();
   const insets = useSafeAreaInsets();
   const { width: windowWidth } = useWindowDimensions();
-  useReelPlaybackGate('profile-sheet', true);
   const usePhoneLayout = Platform.OS === 'web' && windowWidth > REEL_PHONE_MAX_WIDTH + 64;
   const contentWidth = usePhoneLayout ? REEL_PHONE_MAX_WIDTH : windowWidth;
   const bottomPad = insets.bottom;
@@ -53,8 +51,6 @@ export default function ReelProfileSheet({ reel, onClose, onFollowStateChange }:
   const [followState, setFollowState] = useState<'none' | 'pending' | 'following'>('none');
   const [friendshipId, setFriendshipId] = useState<string | null>(null);
   const [followBusy, setFollowBusy] = useState(false);
-  const [immersiveIndex, setImmersiveIndex] = useState<number | null>(null);
-  useReelPlaybackGate('profile-sheet-immersive', immersiveIndex != null);
   const [followerCount, setFollowerCount] = useState(0);
   const [followersLoading, setFollowersLoading] = useState(true);
   const [drafts, setDrafts] = useState<SavedReelComposeDraft[]>([]);
@@ -71,7 +67,22 @@ export default function ReelProfileSheet({ reel, onClose, onFollowStateChange }:
     thumbs,
   } = useReelProfilePosts(profileId, 24);
   const loading = postsLoading && posts.length === 0;
-  const { removeOne, removeMany } = useReelGridDeleteHandlers(profileId ?? '', setImmersiveIndex);
+  const { removeOne, removeMany } = useReelGridDeleteHandlers(profileId ?? '');
+
+  const openProfileReel = useCallback(
+    (index: number) => {
+      const target = posts[index];
+      if (!target) return;
+      onClose();
+      navigation.navigate('ReelDetail', {
+        reelId: target.id,
+        contextReels: posts,
+        initialIndex: index,
+        disableProfileNavigation: true,
+      });
+    },
+    [navigation, onClose, posts]
+  );
 
   const loadDrafts = useCallback(async () => {
     if (!canDeleteReels) {
@@ -253,7 +264,7 @@ export default function ReelProfileSheet({ reel, onClose, onFollowStateChange }:
             contentWidth={contentWidth}
             bottomPad={bottomPad}
             generatedThumbs={thumbs}
-            onOpen={setImmersiveIndex}
+            onOpen={openProfileReel}
             onOpenDraft={(draft: SavedReelComposeDraft) => {
               onClose();
               openPostReelCompose(draft);
@@ -283,18 +294,6 @@ export default function ReelProfileSheet({ reel, onClose, onFollowStateChange }:
             }}
           />
         ) : null}
-
-        <Modal visible={immersiveIndex != null} animationType="slide" onRequestClose={() => setImmersiveIndex(null)}>
-          {immersiveIndex != null && (
-            <ReelImmersiveViewer
-              reels={posts}
-              initialIndex={immersiveIndex}
-              onClose={() => setImmersiveIndex(null)}
-              onReelsChange={setPosts}
-              disableProfileNavigation
-            />
-          )}
-        </Modal>
       </View>
     </View>
   );

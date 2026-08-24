@@ -1428,7 +1428,7 @@ const formatDuration = (seconds: number) => {
 
 const styles = StyleSheet.create({
   wrapper: {
-    // Stay in flex flow so KeyboardAvoidingView can lift the composer.
+    // Stays in flex flow; KeyboardStickyFooter lifts the composer with the keyboard.
     width: '100%',
     paddingHorizontal: 0,
     paddingTop: 0,

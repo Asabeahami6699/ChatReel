@@ -6,18 +6,9 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   StyleSheet,
-  KeyboardAvoidingView,
-  ScrollView,
   useWindowDimensions,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import {
-  keyboardAvoidingBehavior,
-  keyboardAvoidingEnabled,
-  keyboardPaddingAboveSafeArea,
-  keyboardVerticalOffset,
-  useKeyboardBottomInset,
-} from '../lib/keyboardLayout';
+import { KeyboardSafeScreen } from './KeyboardSafeScreen';
 import { LinearGradient } from 'expo-linear-gradient';
 import Constants from 'expo-constants';
 import { normalizePhoneToE164 } from '../lib/phone';
@@ -71,10 +62,6 @@ export default function PhoneAuthForm({
 }: Props) {
   const { width } = useWindowDimensions();
   const isDesktop = width > 700;
-  const insets = useSafeAreaInsets();
-  const keyboardInset = useKeyboardBottomInset();
-  const scrollPad = keyboardPaddingAboveSafeArea(keyboardInset, insets.bottom) + 24;
-  const kavOffset = keyboardVerticalOffset(insets.top);
   const countryHint = useMemo(() => defaultCountryCode(), []);
   const [selectedCountryCode, setSelectedCountryCode] = useState(countryHint);
 
@@ -303,43 +290,22 @@ export default function PhoneAuthForm({
   );
 
   const wrappedForm = (
-    <ScrollView
-      contentContainerStyle={[
-        styles.safeContainer,
-        isDesktop && styles.desktopContainer,
-        { paddingBottom: scrollPad },
-      ]}
-      keyboardShouldPersistTaps="handled"
-      bounces={false}
-      showsVerticalScrollIndicator={false}
+    <KeyboardSafeScreen
+      style={isDesktop ? styles.desktopOuter : styles.flex}
+      contentContainerStyle={[styles.safeContainer, isDesktop && styles.desktopContainer]}
+      bottomOffset={32}
     >
       {formContent}
-    </ScrollView>
+    </KeyboardSafeScreen>
   );
 
   if (noGradient) {
-    return (
-      <KeyboardAvoidingView
-        style={[styles.flex, isDesktop && styles.desktopOuter]}
-        behavior={keyboardAvoidingBehavior()}
-        enabled={keyboardAvoidingEnabled()}
-        keyboardVerticalOffset={kavOffset}
-      >
-        {wrappedForm}
-      </KeyboardAvoidingView>
-    );
+    return wrappedForm;
   }
 
   return (
     <LinearGradient colors={['#E3F2FD', '#BBDEFB', '#90CAF9']} style={styles.gradientBackground}>
-      <KeyboardAvoidingView
-        style={[styles.flex, isDesktop && styles.desktopOuter]}
-        behavior={keyboardAvoidingBehavior()}
-        enabled={keyboardAvoidingEnabled()}
-        keyboardVerticalOffset={kavOffset}
-      >
-        {wrappedForm}
-      </KeyboardAvoidingView>
+      {wrappedForm}
     </LinearGradient>
   );
 }

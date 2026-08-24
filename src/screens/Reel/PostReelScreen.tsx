@@ -2,9 +2,6 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
   Image,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
@@ -12,6 +9,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import * as ImagePicker from 'expo-image-picker';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 import { Ionicons } from '@expo/vector-icons';
@@ -611,10 +609,7 @@ export default function PostReelScreen() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#000" />
       <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
         <TouchableOpacity onPress={() => navigation.goBack()} disabled={isQueuing}>
@@ -628,9 +623,10 @@ export default function PostReelScreen() {
         </TouchableOpacity>
       </View>
 
-      <ScrollView
+      <KeyboardAwareScrollView
         contentContainerStyle={[styles.scrollContent, { paddingBottom: 80 + insets.bottom }]}
         keyboardShouldPersistTaps="handled"
+        bottomOffset={24}
       >
         {!items.length ? (
           <View style={styles.pickerArea}>
@@ -769,8 +765,8 @@ export default function PostReelScreen() {
         )}
 
         {isQueuing ? <Text style={styles.queuingText}>Starting upload...</Text> : null}
-      </ScrollView>
-    </KeyboardAvoidingView>
+      </KeyboardAwareScrollView>
+    </View>
   );
 }
 

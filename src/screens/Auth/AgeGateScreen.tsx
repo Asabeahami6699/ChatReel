@@ -6,17 +6,8 @@ import {
   StyleSheet,
   Platform,
   useWindowDimensions,
-  KeyboardAvoidingView,
-  ScrollView,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import {
-  keyboardAvoidingBehavior,
-  keyboardAvoidingEnabled,
-  keyboardPaddingAboveSafeArea,
-  keyboardVerticalOffset,
-  useKeyboardBottomInset,
-} from '../../lib/keyboardLayout';
+import { KeyboardSafeScreen } from '../../components/KeyboardSafeScreen';
 import { LinearGradient } from 'expo-linear-gradient';
 import DateTimePicker, {
   type DateTimePickerEvent,
@@ -41,10 +32,6 @@ export default function AgeGateScreen() {
   const { enterGuest } = useAuth();
   const { width } = useWindowDimensions();
   const isDesktop = width > 700;
-  const insets = useSafeAreaInsets();
-  const keyboardInset = useKeyboardBottomInset();
-  const scrollPad = keyboardPaddingAboveSafeArea(keyboardInset, insets.bottom) + 24;
-  const kavOffset = keyboardVerticalOffset(insets.top);
 
   const [birthday, setBirthday] = useState(() => defaultBirthdayPickerDate());
   const [showPicker, setShowPicker] = useState(Platform.OS === 'ios');
@@ -165,21 +152,9 @@ export default function AgeGateScreen() {
   }
 
   const body = (
-    <KeyboardAvoidingView
-      style={styles.flex}
-      behavior={keyboardAvoidingBehavior()}
-      enabled={keyboardAvoidingEnabled()}
-      keyboardVerticalOffset={kavOffset}
-    >
-      <ScrollView
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: scrollPad }]}
-        keyboardShouldPersistTaps="handled"
-        bounces={false}
-        showsVerticalScrollIndicator={false}
-      >
-        {form}
-      </ScrollView>
-    </KeyboardAvoidingView>
+    <KeyboardSafeScreen contentContainerStyle={styles.scrollContent} bottomOffset={32}>
+      {form}
+    </KeyboardSafeScreen>
   );
 
   return (
