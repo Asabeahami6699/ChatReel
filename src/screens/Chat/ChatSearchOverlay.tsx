@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   FlatList,
   Modal,
+  Platform,
   Pressable,
   useWindowDimensions,
 } from 'react-native';

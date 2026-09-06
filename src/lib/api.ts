@@ -1002,6 +1002,28 @@ export const api = {
         method: 'POST',
         body: { ref },
       }),
+    /** WhatsApp-style: desktop creates pending login QR (no auth). */
+    createLoginSession: () =>
+      apiRequest<{ ref: string; expires_in_sec: number }>('/api/qr/login-sessions', {
+        method: 'POST',
+        auth: false,
+      }),
+    /** Desktop polls until phone approves. */
+    getLoginSession: (ref: string) =>
+      apiRequest<{
+        status: 'pending' | 'approved' | 'consumed' | 'expired';
+        session?: {
+          access_token: string;
+          refresh_token: string;
+          user: unknown;
+        };
+      }>(`/api/qr/login-sessions/${encodeURIComponent(ref)}`, { auth: false }),
+    /** Phone (logged in) approves desktop login. */
+    approveLoginSession: (ref: string) =>
+      apiRequest<{ success: boolean }>(
+        `/api/qr/login-sessions/${encodeURIComponent(ref)}/approve`,
+        { method: 'POST' }
+      ),
   },
 
   accountSessions: {

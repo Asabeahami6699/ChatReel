@@ -48,6 +48,8 @@ type AuthContextType = {
     securityAnswer: string,
     newPin: string
   ) => Promise<AuthResult>;
+  /** Apply a session from WhatsApp-style QR desktop login. */
+  applySession: (session: Session) => Promise<void>;
   signOut: () => Promise<void>;
 };
 
@@ -332,6 +334,15 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     }
   };
 
+  const applySession = async (newSession: Session) => {
+    setLoading(true);
+    try {
+      await persistSession(newSession);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const signOut = async () => {
     const uid = user?.id ?? session?.user?.id ?? null;
     await clearUserLocalCaches(uid);
@@ -360,6 +371,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         signUp,
         sendPhoneOtp,
         verifyPhoneOtp,
+        applySession,
         signOut,
       }}
     >

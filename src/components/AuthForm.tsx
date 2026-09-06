@@ -224,7 +224,7 @@ export default function AuthForm({
 
   const wrappedForm = (
     <KeyboardSafeScreen
-      style={isDesktop ? styles.desktopOuter : styles.flex}
+      style={styles.flex}
       contentContainerStyle={[
         styles.safeContainer,
         isDesktop && styles.desktopContainer,
@@ -253,9 +253,6 @@ const styles = StyleSheet.create({
   },
   flex: {
     flex: 1,
-  },
-  desktopOuter: {
-    justifyContent: 'center',
   },
   safeContainer: {
     flexGrow: 1,

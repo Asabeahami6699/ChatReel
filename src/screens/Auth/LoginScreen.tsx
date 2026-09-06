@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { Alert, View, Text, StyleSheet, TouchableOpacity, Animated, Easing } from 'react-native'
 import { useNavigation } from '@react-navigation/native'
 import { useWindowDimensions } from 'react-native'
@@ -11,8 +11,13 @@ import { useAuth } from '../../hooks/useAuth'
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack'
 import type { AuthStackParamList } from '../../navigation/AuthNavigator'
 import { USE_NATIVE_DRIVER } from '../../lib/animation'
+import { api, ApiError } from '../../lib/api'
+import type { Session } from '@supabase/supabase-js'
 
 type LoginNavProp = NativeStackNavigationProp<AuthStackParamList, 'Login'>
+
+const DEFAULT_TTL_SEC = 120
+const POLL_MS = 1800
 
 export default function LoginScreen() {
   const navigation = useNavigation<LoginNavProp>()
@@ -22,6 +27,7 @@ export default function LoginScreen() {
     verifyPhoneOtp,
     complete2faChallenge,
     recover2faChallenge,
+    applySession,
     loading,
     enterGuest,
   } = useAuth()
@@ -38,33 +44,104 @@ export default function LoginScreen() {
   const isDesktop = width > 700
 
   const [qrRef, setQrRef] = useState('')
-  const [timeLeft, setTimeLeft] = useState(30)
-  const spinRef = React.useRef(new Animated.Value(0)).current
+  const [timeLeft, setTimeLeft] = useState(DEFAULT_TTL_SEC)
+  const [ttlSec, setTtlSec] = useState(DEFAULT_TTL_SEC)
+  const [qrStatus, setQrStatus] = useState<'idle' | 'waiting' | 'linking' | 'error'>('idle')
+  const [qrError, setQrError] = useState<string | null>(null)
+  const generatingRef = useRef(false)
+  const claimingRef = useRef(false)
+
+  const spinRef = useRef(new Animated.Value(0)).current
   const spin = spinRef.interpolate({
     inputRange: [0, 1],
     outputRange: ['0deg', '360deg'],
   })
 
-  const generateRef = async () => {
-    const ref = `login_${Date.now()}`
-    setQrRef(ref)
-    setTimeLeft(30)
-  }
-
-  React.useEffect(() => {
-    generateRef()
-    const id = setInterval(generateRef, 30000)
-    return () => clearInterval(id)
+  const generateRef = useCallback(async () => {
+    if (generatingRef.current || claimingRef.current) return
+    generatingRef.current = true
+    setQrError(null)
+    try {
+      const res = await api.qr.createLoginSession()
+      setQrRef(res.ref)
+      const nextTtl = res.expires_in_sec ?? DEFAULT_TTL_SEC
+      setTtlSec(nextTtl)
+      setTimeLeft(nextTtl)
+      setQrStatus('waiting')
+    } catch (err) {
+      const message =
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : 'Could not create login QR'
+      setQrError(message)
+      setQrStatus('error')
+      setQrRef('')
+    } finally {
+      generatingRef.current = false
+    }
   }, [])
 
-  React.useEffect(() => {
+  useEffect(() => {
+    if (!isDesktop) return
+    void generateRef()
+  }, [generateRef, isDesktop])
+
+  useEffect(() => {
+    if (!isDesktop || !qrRef || qrStatus !== 'waiting') return
+    let cancelled = false
     const id = setInterval(() => {
-      setTimeLeft((t) => (t > 0 ? t - 1 : 0))
+      void (async () => {
+        if (cancelled || claimingRef.current) return
+        try {
+          const res = await api.qr.getLoginSession(qrRef)
+          if (cancelled) return
+          if (res.status === 'pending') return
+          if (res.status === 'approved' && res.session?.access_token && res.session.refresh_token) {
+            claimingRef.current = true
+            setQrStatus('linking')
+            const session = {
+              access_token: res.session.access_token,
+              refresh_token: res.session.refresh_token,
+              user: res.session.user,
+            } as Session
+            await applySession(session)
+            return
+          }
+          if (res.status === 'consumed') {
+            setQrError('Code already used. Refresh for a new one.')
+            setQrStatus('error')
+          }
+        } catch (err) {
+          if (cancelled) return
+          if (err instanceof ApiError && err.status === 410) {
+            setQrError('QR expired')
+            setQrStatus('error')
+            void generateRef()
+          }
+        }
+      })()
+    }, POLL_MS)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [applySession, generateRef, isDesktop, qrRef, qrStatus])
+
+  useEffect(() => {
+    if (!isDesktop || !qrRef) return
+    const id = setInterval(() => {
+      setTimeLeft((t) => {
+        if (t > 1) return t - 1
+        void generateRef()
+        return ttlSec
+      })
     }, 1000)
     return () => clearInterval(id)
-  }, [])
+  }, [generateRef, isDesktop, qrRef, ttlSec])
 
-  React.useEffect(() => {
+  useEffect(() => {
     Animated.loop(
       Animated.timing(spinRef, {
         toValue: 1,
@@ -172,19 +249,24 @@ export default function LoginScreen() {
         <View style={styles.qrContainer}>
           <View style={styles.qrHeader}>
             <Text style={styles.qrTitle}>Link with Mobile</Text>
-            <Text style={styles.qrSubtitle}>Scan QR with your app to log in</Text>
+            <Text style={styles.qrSubtitle}>
+              Open ChatReel on your phone → Link a Device → scan this code to sign in here
+            </Text>
           </View>
           <View style={styles.qrContent}>
             {!qrRef ? (
-              <Text style={styles.loading}>Generating QR...</Text>
+              <Text style={styles.loading}>
+                {qrError || (qrStatus === 'error' ? 'Could not create QR' : 'Generating QR...')}
+              </Text>
             ) : (
               <>
                 <View style={styles.qrBox}>
                   <QRCode
-                    value={`myapp://login?ref=${qrRef}`}
+                    value={`chatapp://login?ref=${encodeURIComponent(qrRef)}`}
                     size={240}
                     color="#000"
                     backgroundColor="#fff"
+                    ecl="M"
                   />
                   <Animated.View style={[styles.ring, { transform: [{ rotate: spin }] }]}>
                     <Ionicons name="sync" size={32} color="#007AFF" />
@@ -192,10 +274,23 @@ export default function LoginScreen() {
                 </View>
                 <View style={styles.info}>
                   <Text style={styles.timer}>
-                    Expires in <Text style={styles.bold}>{timeLeft}s</Text>
+                    {qrStatus === 'linking'
+                      ? 'Signing you in…'
+                      : (
+                        <>
+                          Expires in <Text style={styles.bold}>{timeLeft}s</Text>
+                        </>
+                      )}
                   </Text>
+                  {qrError ? <Text style={styles.qrErr}>{qrError}</Text> : null}
                 </View>
-                <TouchableOpacity style={styles.refreshBtn} onPress={generateRef}>
+                <TouchableOpacity
+                  style={styles.refreshBtn}
+                  onPress={() => {
+                    claimingRef.current = false
+                    void generateRef()
+                  }}
+                >
                   <Ionicons name="refresh" size={20} color="#fff" />
                   <Text style={styles.refreshText}>New Code</Text>
                 </TouchableOpacity>
@@ -243,6 +338,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
     marginTop: 4,
+    lineHeight: 20,
   },
   qrContent: {
     flex: 1,
@@ -250,22 +346,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 24,
   },
-  formContainerDesktop: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 16,
-    backgroundColor: '#f9f9f9',
-  },
   qrBox: {
     padding: 20,
     backgroundColor: '#fff',
     borderRadius: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 10,
     position: 'relative',
   },
   ring: {
@@ -275,15 +359,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     padding: 8,
     borderRadius: 30,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 8,
   },
-  info: { marginTop: 24 },
-  timer: { fontSize: 16, color: '#007AFF', textAlign: 'center' },
+  info: { marginTop: 24, alignItems: 'center' },
+  timer: { fontSize: 16, color: '#333', textAlign: 'center' },
   bold: { fontWeight: 'bold' },
+  qrErr: { marginTop: 8, color: '#dc2626', fontSize: 13, textAlign: 'center' },
   refreshBtn: {
     flexDirection: 'row',
     backgroundColor: '#007AFF',
@@ -294,5 +374,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   refreshText: { color: '#fff', marginLeft: 8, fontWeight: '600' },
-  loading: { fontSize: 18, color: '#666', textAlign: 'center' },
+  loading: { fontSize: 16, color: '#666', textAlign: 'center' },
+  formContainerDesktop: {
+    width: 420,
+    maxWidth: '45%',
+    backgroundColor: '#fff',
+    borderLeftWidth: 1,
+    borderLeftColor: '#eee',
+  },
 })

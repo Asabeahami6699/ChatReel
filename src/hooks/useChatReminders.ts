@@ -9,6 +9,8 @@ import {
 import { useAuth } from './useAuth';
 
 let memoryCache: ChatReminder[] = [];
+let prefetchPromise: Promise<ChatReminder[]> | null = null;
+let prefetchTimer: ReturnType<typeof setTimeout> | null = null;
 
 export function getCachedChatReminders(): ChatReminder[] {
   return memoryCache;
@@ -19,11 +21,40 @@ export function setCachedChatReminders(next: ChatReminder[]): void {
   emitChatRemindersChanged();
 }
 
+export function clearCachedChatReminders(): void {
+  memoryCache = [];
+  prefetchPromise = null;
+  if (prefetchTimer) {
+    clearTimeout(prefetchTimer);
+    prefetchTimer = null;
+  }
+  emitChatRemindersChanged();
+}
+
 export async function refreshChatReminders(): Promise<ChatReminder[]> {
   const { reminders } = await api.chatReminders.list('active');
   memoryCache = reminders as ChatReminder[];
   emitChatRemindersChanged();
   return memoryCache;
+}
+
+/** Warm active reminders after login so chat list + Reminders screen open live. */
+export async function prefetchChatReminders(): Promise<ChatReminder[]> {
+  if (prefetchPromise) return prefetchPromise;
+  prefetchPromise = refreshChatReminders()
+    .catch(() => memoryCache)
+    .finally(() => {
+      prefetchPromise = null;
+    });
+  return prefetchPromise;
+}
+
+export function scheduleChatRemindersPrefetch(delayMs = 0): void {
+  if (prefetchTimer) clearTimeout(prefetchTimer);
+  prefetchTimer = setTimeout(() => {
+    prefetchTimer = null;
+    void prefetchChatReminders();
+  }, delayMs);
 }
 
 export function useChatReminders() {
@@ -33,7 +64,7 @@ export function useChatReminders() {
 
   const reload = useCallback(async () => {
     if (!user?.id) {
-      memoryCache = [];
+      clearCachedChatReminders();
       setReminders([]);
       return;
     }
@@ -50,10 +81,12 @@ export function useChatReminders() {
 
   useEffect(() => {
     if (!user?.id) {
-      memoryCache = [];
+      clearCachedChatReminders();
       setReminders([]);
       return;
     }
+    // Paint from cache immediately; refresh in background if already warm.
+    setReminders([...memoryCache]);
     void reload();
     const unsub = subscribeChatRemindersChanged(() => {
       setReminders([...memoryCache]);

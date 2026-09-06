@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Platform, StyleSheet } from 'react-native';
+import { StyleSheet } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createMaterialTopTabNavigator } from '@react-navigation/material-top-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -10,7 +10,7 @@ import ReelDetailScreen from '../screens/Reel/ReelDetailScreen';
 import ReelsTabBar from '../screens/Reel/ReelsTabBar';
 import { ReelFeedModeProvider, useReelFeedMode } from '../screens/Reel/ReelFeedModeContext';
 import type { ReelsStackParamList, ReelsTabParamList } from './reelsNavigation';
-import { ChatStack } from './AppNavigator';
+import { ChatStack, ThemedPhoneTabBar } from './AppNavigator';
 import ExploreNavigator from './ExploreNavigator';
 import CallsScreen from '../screens/Call/CallsScreen';
 import { useChatSettings } from '../context/ChatSettingsContext';
@@ -101,19 +101,41 @@ export function GuestNavigator() {
   const tabBarBase = useMemo(
     () => ({
       ...styles.tabBarMobile,
-      height: 56 + insets.bottom,
-      paddingBottom: Math.max(insets.bottom, Platform.OS === 'android' ? 8 : 0),
+      height: 56,
+      paddingBottom: 0,
+      paddingTop: 4,
       backgroundColor: theme.listCardBg,
-      borderTopColor: theme.listBorder,
+      borderTopColor: 'transparent',
+      elevation: 0,
     }),
-    [insets.bottom, theme.listCardBg, theme.listBorder]
+    [theme.listCardBg]
   );
 
   return (
     <GuestTab.Navigator
+      key={theme.id}
       initialRouteName="Reels"
       tabBarPosition="bottom"
       screenListeners={tabScreenListeners}
+      tabBar={(props) => {
+        const tabState = props.state;
+        const currentTab = tabState?.routes?.[tabState.index ?? 0]?.name;
+        const chatsRoute = tabState?.routes?.find((r) => r.name === 'Chats');
+        const stackScreen = getFocusedRouteName(
+          chatsRoute?.state as Parameters<typeof getFocusedRouteName>[0]
+        );
+        const hideTabBar =
+          (currentTab === 'Chats' && !!stackScreen && stackScreen !== 'ChatList') ||
+          currentTab === 'Reels';
+        return (
+          <ThemedPhoneTabBar
+            {...props}
+            theme={theme}
+            bottomInset={insets.bottom}
+            hidden={hideTabBar}
+          />
+        );
+      }}
       screenOptions={{
         lazy: true,
         lazyPreloadDistance: 0,
@@ -131,29 +153,17 @@ export function GuestNavigator() {
       <GuestTab.Screen
         name="Chats"
         component={ChatStack}
-        options={({ navigation }) => {
-          const tabState = navigation.getState();
-          const currentTab = tabState?.routes?.[tabState.index ?? 0]?.name;
-          const chatsRoute = tabState?.routes?.find((r) => r.name === 'Chats');
-          const stackScreen = getFocusedRouteName(
-            chatsRoute?.state as Parameters<typeof getFocusedRouteName>[0]
-          );
-          const hideTabBar =
-            currentTab === 'Chats' && !!stackScreen && stackScreen !== 'ChatList';
-
-          return {
-            lazy: false,
-            tabBarStyle: hideTabBar ? { display: 'none' } : tabBarBase,
-            tabBarIcon: ({ color, focused }) => (
-              <AnimatedTabIcon
-                name="chatbubble-ellipses-outline"
-                focusedName="chatbubble-ellipses"
-                size={22}
-                color={color}
-                focused={focused}
-              />
-            ),
-          };
+        options={{
+          lazy: false,
+          tabBarIcon: ({ color, focused }) => (
+            <AnimatedTabIcon
+              name="chatbubble-ellipses-outline"
+              focusedName="chatbubble-ellipses"
+              size={22}
+              color={color}
+              focused={focused}
+            />
+          ),
         }}
       />
       <GuestTab.Screen
@@ -191,7 +201,6 @@ export function GuestNavigator() {
         name="Reels"
         component={GuestReelsNavigator}
         options={{
-          tabBarStyle: { display: 'none' },
           tabBarIcon: ({ color, focused }) => (
             <AnimatedTabIcon
               name="play-circle-outline"

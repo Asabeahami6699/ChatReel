@@ -183,7 +183,6 @@ module.exports = {
     'expo-video',
     'expo-navigation-bar',
     withLiveKitSetup,
-    'react-native-keyboard-controller',
     'expo-secure-store',
     [
       'expo-local-authentication',

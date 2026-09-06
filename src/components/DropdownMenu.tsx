@@ -26,6 +26,7 @@ import {
   prefetchMyProfile,
   subscribeCachedProfile,
 } from '../lib/profileCache';
+import { prefetchChatReminders } from '../hooks/useChatReminders';
 import { MOBILE_BREAKPOINT } from '../navigation/navigationUtils';
 import Portal from './Portal';
 
@@ -184,7 +185,14 @@ export default function DropdownMenu({ triggerIcon = 'ellipsis-vertical' }: Drop
           },
         },
         { title: 'Starred messages', icon: 'star-outline', onPress: () => navigation.navigate('StarredMessages') },
-        { title: 'Reminders', icon: 'notifications-outline', onPress: () => navigation.navigate('Reminders') },
+        {
+          title: 'Reminders',
+          icon: 'notifications-outline',
+          onPress: () => {
+            void prefetchChatReminders();
+            navigation.navigate('Reminders');
+          },
+        },
         { title: 'Archived chats', icon: 'archive-outline', onPress: () => navigation.navigate('ArchivedChats') },
         { title: 'Settings', icon: 'settings-outline', onPress: () => navigation.navigate('Settings') },
         { title: 'Invite a Friend', icon: 'share-social-outline', onPress: () => navigation.navigate('Invite') },

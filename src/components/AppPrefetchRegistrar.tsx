@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { prefetch2faStatus } from '../lib/account2faCache';
+import { scheduleChatRemindersPrefetch } from '../hooks/useChatReminders';
 import { scheduleCallsPrefetch } from '../lib/callsPrefetch';
 import { scheduleFriendsPrefetch } from '../lib/friendsPrefetch';
 import { scheduleGiftCatalogPrefetch } from '../lib/giftCatalogPrefetch';
@@ -17,8 +18,9 @@ export function AppPrefetchRegistrar() {
 
   useEffect(() => {
     if (!user) return;
-    // 2FA status is tiny — prefetch early so Settings opens live.
+    // Tiny payloads — prefetch early so Settings / Reminders / chat list open live.
     void prefetch2faStatus();
+    scheduleChatRemindersPrefetch(400);
     scheduleExplorePrefetch(APP_PREFETCH_DELAY_MS);
     scheduleFriendsPrefetch(APP_PREFETCH_DELAY_MS + 400);
     scheduleCallsPrefetch(APP_PREFETCH_DELAY_MS + 800);

@@ -118,7 +118,8 @@ export default function QRCodeScreen() {
 
       <View style={styles.content}>
         <Text style={[styles.subtitle, { color: theme.listSecondaryText }]}>
-          Open ChatReel on your other device → Scan QR. Hold steady until it locks.
+          To sign in on a computer: open ChatReel on desktop, then scan that login QR here
+          (Link a Device). Or show this code for an already-signed-in phone to pair accounts.
         </Text>
 
         <View style={styles.qrBox}>

@@ -68,6 +68,7 @@ import { ReelNativeFeed, type ReelNativeFeedHandle } from './ReelNativeFeed';
 import { ReelFloatingChrome } from './ReelFloatingChrome';
 import { useAuth } from '../../hooks/useAuth';
 import { promptSignIn } from '../../lib/requireSignedIn';
+import { ReelDesktopNavArrows } from './ReelDesktopNavArrows';
 
 const WINDOW_HEIGHT = SCREEN_HEIGHT;
 const PROGRESS_UI_MS = 280;
@@ -1528,6 +1529,16 @@ export default function ReelsScreen() {
       </View>
       </View>
 
+      {usePhoneFrame && reels.length > 1 ? (
+        <ReelDesktopNavArrows
+          left={windowWidth / 2 + (reelWidth + desktopActionOffset) / 2 + 12}
+          canGoUp={currentIndex > 0}
+          canGoDown={currentIndex < reels.length - 1}
+          onUp={() => goToReelIndex(currentIndex - 1)}
+          onDown={() => goToReelIndex(currentIndex + 1)}
+        />
+      ) : null}
+
       <ReelGiftSheet
         visible={Boolean(giftReel)}
         reel={giftReel}
@@ -1552,13 +1563,19 @@ export default function ReelsScreen() {
         transparent
         onRequestClose={closeSheets}
       >
-        <View style={styles.modalBackdrop}>
+        <View style={[styles.modalBackdrop, usePhoneFrame && styles.modalBackdropCentered]}>
           <TouchableOpacity
             style={StyleSheet.absoluteFill}
             activeOpacity={1}
             onPress={closeSheets}
           />
-          <View style={[styles.sheetWrapper, { paddingBottom: insets.bottom }]}>
+          <View
+            style={[
+              styles.sheetWrapper,
+              usePhoneFrame && [styles.sheetPhone, { width: reelWidth }],
+              { paddingBottom: usePhoneFrame ? 0 : insets.bottom },
+            ]}
+          >
             {openComments && (
               <ReelCommentSheet
                 reelId={openComments.id}
@@ -1580,13 +1597,19 @@ export default function ReelsScreen() {
         transparent
         onRequestClose={closeSheets}
       >
-        <View style={styles.modalBackdrop}>
+        <View style={[styles.modalBackdrop, usePhoneFrame && styles.modalBackdropCentered]}>
           <TouchableOpacity
             style={StyleSheet.absoluteFill}
             activeOpacity={1}
             onPress={closeSheets}
           />
-          <View style={[styles.sheetWrapper, { paddingBottom: insets.bottom }]}>
+          <View
+            style={[
+              styles.sheetWrapper,
+              usePhoneFrame && [styles.sheetPhone, { width: reelWidth }],
+              { paddingBottom: usePhoneFrame ? 0 : insets.bottom },
+            ]}
+          >
             {openShare && (
               <ReelShareSheet reel={openShare} onClose={closeSheets} />
             )}
@@ -2099,6 +2122,16 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
     overflow: 'hidden',
+  },
+  sheetPhone: {
+    alignSelf: 'center',
+    width: REEL_PHONE_MAX_WIDTH,
+    maxWidth: '92%',
+    height: '78%',
+    maxHeight: 760,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#1f1f1f',
   },
   profileSheetWrapper: {
     height: '100%',

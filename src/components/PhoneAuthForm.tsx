@@ -291,7 +291,7 @@ export default function PhoneAuthForm({
 
   const wrappedForm = (
     <KeyboardSafeScreen
-      style={isDesktop ? styles.desktopOuter : styles.flex}
+      style={styles.flex}
       contentContainerStyle={[styles.safeContainer, isDesktop && styles.desktopContainer]}
       bottomOffset={32}
     >
@@ -313,7 +313,6 @@ export default function PhoneAuthForm({
 const styles = StyleSheet.create({
   gradientBackground: { flex: 1 },
   flex: { flex: 1 },
-  desktopOuter: { justifyContent: 'center' },
   safeContainer: {
     flexGrow: 1,
     justifyContent: 'center',

@@ -162,6 +162,9 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
   const isNarrow = width < 400
   const isWebDesktop = Platform.OS === 'web' && width >= MOBILE_BREAKPOINT
   const fabBottom = Math.max(16, insets.bottom + 12) + (setSelectedChat ? 4 : 20)
+  /** Modal FAB is viewport-absolute; on desktop keep it aligned with the list panel. */
+  const listHostRef = useRef<View>(null)
+  const [fabMenuRight, setFabMenuRight] = useState(12)
   const { reminders, reload: reloadReminders } = useChatReminders()
   const [searchQuery, setSearchQuery] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
@@ -661,8 +664,27 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
     }).start()
   }, [fabMenuAnim])
 
+  const syncFabMenuAnchor = useCallback(() => {
+    if (!isWebDesktop) {
+      setFabMenuRight(12)
+      return
+    }
+    const node = listHostRef.current as
+      | (View & { measureInWindow?: (cb: (x: number, y: number, w: number, h: number) => void) => void })
+      | null
+    if (!node?.measureInWindow) {
+      // Desktop sidebar: 72px nav rail + 320px list (WebDesktopMain).
+      setFabMenuRight(Math.max(12, width - 392 + 12))
+      return
+    }
+    node.measureInWindow((x, _y, w) => {
+      setFabMenuRight(Math.max(12, width - (x + w) + 12))
+    })
+  }, [isWebDesktop, width])
+
   const toggleFabMenu = useCallback(() => {
     const next = !fabMenuOpen
+    if (next) syncFabMenuAnchor()
     setFabMenuOpen(next)
     Animated.spring(fabMenuAnim, {
       toValue: next ? 1 : 0,
@@ -670,7 +692,12 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
       tension: 120,
       useNativeDriver: true,
     }).start()
-  }, [fabMenuAnim, fabMenuOpen])
+  }, [fabMenuAnim, fabMenuOpen, syncFabMenuAnchor])
+
+  useEffect(() => {
+    if (!fabMenuOpen) return
+    syncFabMenuAnchor()
+  }, [fabMenuOpen, syncFabMenuAnchor, width])
 
   const requireAuth = useCallback(
     (message?: string) => {
@@ -1444,6 +1471,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
                 style={[
                   styles.fabActionRow,
                   {
+                    right: fabMenuRight,
                     bottom: fabBottom + 8,
                     opacity: fabMenuAnim.interpolate({
                       inputRange: [0, 0.35, 1],
@@ -1501,7 +1529,7 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
           <FAB
             style={[
               styles.fab,
-              { bottom: fabBottom },
+              { bottom: fabBottom, right: fabMenuRight },
               !isOnline && styles.disabledFab,
               styles.fabOpen,
             ]}
@@ -1653,7 +1681,14 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
   )
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: theme.listBg }]} edges={['left', 'right']}>
+    <SafeAreaView
+      ref={listHostRef}
+      style={[styles.container, { backgroundColor: theme.listBg }]}
+      edges={['left', 'right']}
+      onLayout={() => {
+        if (fabMenuOpen) syncFabMenuAnchor()
+      }}
+    >
       {isFocused ? (
         <StatusBar
           barStyle={theme.isDark ? 'light-content' : 'dark-content'}

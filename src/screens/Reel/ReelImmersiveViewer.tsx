@@ -28,6 +28,7 @@ import ReelProfileSheet from './ReelProfileSheet';
 import { useReelVideoPrefetch } from './useReelVideoPrefetch';
 import { markReelWatched } from './reelVideoCache';
 import { REEL_ACTION_RAIL_RIGHT, REEL_ACTION_RAIL_WIDTH, REEL_BOTTOM_INSET, REEL_PHONE_MAX_WIDTH, REEL_PROGRESS_BAR_HEIGHT, getReelFrameDimensions } from './reelVideoLayout';
+import { ReelDesktopNavArrows } from './ReelDesktopNavArrows';
 import { ExpandableCaption } from './ExpandableCaption';
 import { ReelSoundStrip } from './ReelSoundStrip';
 import { ReelBrandBadge } from './ReelBrandBadge';
@@ -538,6 +539,25 @@ export function ReelImmersiveViewer({
     }
   }, []);
 
+  const goToReelIndex = useCallback((index: number, animated = true) => {
+    const h = reelHeightRef.current;
+    if (h <= 0) return;
+    const clamped = Math.max(0, Math.min(reelsRef.current.length - 1, index));
+    if (clamped === currentIndexRef.current) return;
+    scrollAnchorIndexRef.current = currentIndexRef.current;
+    wheelLockRef.current = true;
+    isSnappingRef.current = true;
+    if (Platform.OS === 'web') {
+      flatListRef.current?.scrollToOffset({ offset: clamped * h, animated });
+    } else {
+      pagerRef.current?.setPage(clamped);
+    }
+    setTimeout(() => {
+      isSnappingRef.current = false;
+      wheelLockRef.current = false;
+    }, 420);
+  }, []);
+
   const onScrollBeginDrag = useCallback(() => {
     scrollAnchorIndexRef.current = currentIndexRef.current;
   }, []);
@@ -865,10 +885,25 @@ export function ReelImmersiveViewer({
       </TouchableOpacity>
       </View>
 
+      {usePhoneFrame && reels.length > 1 ? (
+        <ReelDesktopNavArrows
+          left={windowWidth / 2 + (reelWidth + desktopActionOffset) / 2 + 12}
+          canGoUp={currentIndex > 0}
+          canGoDown={currentIndex < reels.length - 1}
+          onUp={() => goToReelIndex(currentIndex - 1)}
+          onDown={() => goToReelIndex(currentIndex + 1)}
+        />
+      ) : null}
+
       <Modal visible={!!openComments} animationType="slide" transparent onRequestClose={closeSheets}>
-        <View style={styles.sheetBackdrop}>
+        <View style={[styles.sheetBackdrop, usePhoneFrame && styles.sheetBackdropCentered]}>
           <TouchableOpacity style={StyleSheet.absoluteFill} onPress={closeSheets} />
-          <View style={styles.sheet}>
+          <View
+            style={[
+              styles.sheet,
+              usePhoneFrame && [styles.sheetPhone, { width: reelWidth }],
+            ]}
+          >
             {openComments && (
               <ReelCommentSheet
                 reelId={openComments.id}
@@ -885,9 +920,14 @@ export function ReelImmersiveViewer({
       </Modal>
 
       <Modal visible={!!openShare} animationType="slide" transparent onRequestClose={closeSheets}>
-        <View style={styles.sheetBackdrop}>
+        <View style={[styles.sheetBackdrop, usePhoneFrame && styles.sheetBackdropCentered]}>
           <TouchableOpacity style={StyleSheet.absoluteFill} onPress={closeSheets} />
-          <View style={styles.sheet}>
+          <View
+            style={[
+              styles.sheet,
+              usePhoneFrame && [styles.sheetPhone, { width: reelWidth }],
+            ]}
+          >
             {openShare && <ReelShareSheet reel={openShare} onClose={closeSheets} />}
           </View>
         </View>
@@ -1041,6 +1081,16 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
     overflow: 'hidden',
+  },
+  sheetPhone: {
+    alignSelf: 'center',
+    width: REEL_PHONE_MAX_WIDTH,
+    maxWidth: '92%',
+    height: '78%',
+    maxHeight: 760,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#1f1f1f',
   },
   profileSheetPhone: {
     height: '92%',

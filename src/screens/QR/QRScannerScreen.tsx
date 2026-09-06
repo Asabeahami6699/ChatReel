@@ -25,7 +25,39 @@ const STABLE_HITS = 5;
 /** Green frame is 280×280 centered — require the QR bbox center inside it. */
 const FRAME_SIZE = 280;
 
+function parseLoginRef(raw: string): string | null {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed) return null;
+
+  if (/^lq_[a-z0-9]+_[a-f0-9]+$/i.test(trimmed) && !trimmed.includes('://')) {
+    return trimmed;
+  }
+
+  try {
+    const url = new URL(trimmed);
+    const scheme = url.protocol.replace(':', '').toLowerCase();
+    if (scheme === 'chatapp' || scheme === 'myapp') {
+      const isLoginHost = url.hostname.toLowerCase() === 'login';
+      const isLoginPath = /^\/?login\/?$/i.test(url.pathname);
+      if (isLoginHost || isLoginPath) {
+        const ref = url.searchParams.get('ref');
+        if (ref) return decodeURIComponent(ref);
+      }
+    }
+  } catch {
+    /* not a full URL */
+  }
+
+  const match = trimmed.match(/(?:chatapp|myapp):\/\/login\?ref=([^&\s#]+)/i);
+  if (match?.[1]) return decodeURIComponent(match[1]);
+
+  return null;
+}
+
 function parseLinkRef(raw: string): string | null {
+  // Login QR takes priority.
+  if (parseLoginRef(raw)) return null;
+
   const trimmed = String(raw || '').trim();
   if (!trimmed) return null;
 
@@ -111,8 +143,19 @@ function VisionQRScanner({
 
       try {
         if (!user?.id) throw new Error('You must be logged in');
+
+        const loginRef = parseLoginRef(data);
+        if (loginRef) {
+          setLockHint('Approving desktop login…');
+          await api.qr.approveLoginSession(loginRef);
+          Alert.alert('Desktop linked', 'Your computer is now signed in.', [
+            { text: 'OK', onPress: () => navigation.goBack() },
+          ]);
+          return;
+        }
+
         const ref = parseLinkRef(data);
-        if (!ref) throw new Error('Invalid QR code. Scan a ChatReel link-device code.');
+        if (!ref) throw new Error('Invalid QR code. Scan a ChatReel login or link-device code.');
 
         // Validate before linking so we never stick on a stale/expired code silently.
         try {
@@ -166,9 +209,11 @@ function VisionQRScanner({
   const onRawCode = useCallback(
     (value: string, frame?: { x: number; y: number; width: number; height: number } | null) => {
       if (scanned || loading || linkingRef.current) return;
-      const ref = parseLinkRef(value);
+      const loginRef = parseLoginRef(value);
+      const linkRef = loginRef ? null : parseLinkRef(value);
+      const ref = loginRef || linkRef;
       if (!ref) {
-        setLockHint('Unrecognized code — use a ChatReel link QR');
+        setLockHint('Unrecognized code — use a ChatReel login QR');
         return;
       }
       if (!codeInFrame(frame)) {
@@ -188,8 +233,12 @@ function VisionQRScanner({
         setLockHint(`Hold steady… ${pending.hits}/${STABLE_HITS}`);
         return;
       }
-      // Stable ref inside the frame — proceed with the normalized ref.
-      void completeLink(`chatapp://link?ref=${encodeURIComponent(ref)}`);
+      // Stable ref inside the frame — proceed with the original payload (or normalized).
+      void completeLink(
+        loginRef
+          ? `chatapp://login?ref=${encodeURIComponent(ref)}`
+          : `chatapp://link?ref=${encodeURIComponent(ref)}`
+      );
     },
     [codeInFrame, completeLink, loading, scanned]
   );
@@ -339,15 +388,34 @@ export default function QRScannerScreen() {
   if (isWeb) {
     return (
       <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
+        <View style={styles.webHeader}>
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            style={styles.webBackBtn}
+            hitSlop={12}
+            accessibilityLabel="Go back"
+            accessibilityRole="button"
+          >
+            <Ionicons name="arrow-back" size={24} color="#fff" />
+          </TouchableOpacity>
+          <Text style={styles.webHeaderTitle}>Link a Device</Text>
+          <View style={styles.webBackBtn} />
+        </View>
         <View style={styles.web}>
           <Ionicons name="phone-portrait" size={80} color="#007AFF" />
           <Text style={styles.webTitle}>Open on Mobile</Text>
           <Text style={styles.webText}>
-            QR scanning is only available on the mobile app. On this device, show your QR
-            code instead.
+            To sign in on this computer like WhatsApp Web: keep this page open, then on your phone
+            open ChatReel → Link a Device and scan the QR on the login screen.
           </Text>
-          <TouchableOpacity style={styles.btn} onPress={() => navigation.navigate('QRCode')}>
-            <Text style={styles.btnText}>Show My QR Code</Text>
+          <TouchableOpacity style={styles.btn} onPress={() => navigation.goBack()}>
+            <Text style={styles.btnText}>Go back</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.btn, styles.btnOutline]}
+            onPress={() => navigation.navigate('QRCode')}
+          >
+            <Text style={[styles.btnText, { color: '#007AFF' }]}>Show My QR Code</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -360,6 +428,25 @@ export default function QRScannerScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 },
+  webHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingTop: 12,
+    paddingBottom: 8,
+  },
+  webBackBtn: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  webHeaderTitle: {
+    color: '#fff',
+    fontSize: 17,
+    fontWeight: '600',
+  },
   web: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 },
   webTitle: { fontSize: 28, fontWeight: 'bold', color: '#007AFF', marginTop: 20 },
   webText: { fontSize: 16, color: '#ccc', marginTop: 10, textAlign: 'center' },

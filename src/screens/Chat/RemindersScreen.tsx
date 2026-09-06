@@ -20,7 +20,7 @@ import {
   urgencyColor,
   type ChatReminder,
 } from '../../lib/chatReminders';
-import { refreshChatReminders } from '../../hooks/useChatReminders';
+import { refreshChatReminders, getCachedChatReminders } from '../../hooks/useChatReminders';
 import { openChat } from '../../navigation/chatNavigationBridge';
 
 function sectionFor(remindAt: string, now = Date.now()): 'due' | 'today' | 'later' {
@@ -36,16 +36,18 @@ export default function RemindersScreen() {
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
   const { theme } = useChatSettings();
-  const [items, setItems] = useState<ChatReminder[]>([]);
-  const [loading, setLoading] = useState(true);
+  const cached = getCachedChatReminders();
+  const [items, setItems] = useState<ChatReminder[]>(cached);
+  const [loading, setLoading] = useState(cached.length === 0);
 
   const reload = useCallback(async () => {
-    setLoading(true);
+    const hadCache = getCachedChatReminders().length > 0;
+    if (!hadCache) setLoading(true);
     try {
       const next = await refreshChatReminders();
       setItems(next);
     } catch {
-      setItems([]);
+      if (!hadCache) setItems([]);
     } finally {
       setLoading(false);
     }

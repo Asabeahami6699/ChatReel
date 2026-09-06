@@ -15,11 +15,13 @@ import {
   unregisterDesktopChatOpener,
   type OpenChatParams,
 } from './chatNavigationBridge';
-import { createMaterialTopTabNavigator } from '@react-navigation/material-top-tabs';
+import { createMaterialTopTabNavigator, MaterialTopTabBar } from '@react-navigation/material-top-tabs';
+import type { MaterialTopTabBarProps } from '@react-navigation/material-top-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { AnimatedTabIcon } from './AnimatedTabIcon';
 import { DesktopVerticalTabBar } from './DesktopCollapsedVerticalTabBar';
 import { USE_NATIVE_DRIVER } from '../lib/animation';
+import type { ChatThemeTokens } from '../lib/chatThemes';
 
 // === SCREENS ===
 import ChatListScreen from '../screens/Chat/ChatListScreen';
@@ -61,6 +63,35 @@ import { blurActiveElementOnWeb } from '../lib/webFocus';
 
 // === NAVIGATORS ===
 const Tab = createMaterialTopTabNavigator();
+
+/** Bottom tab chrome + home-indicator strip — follows light / dark / night themes. */
+export function ThemedPhoneTabBar({
+  theme,
+  bottomInset,
+  hidden,
+  ...props
+}: MaterialTopTabBarProps & {
+  theme: ChatThemeTokens;
+  bottomInset: number;
+  hidden?: boolean;
+}) {
+  if (hidden) return null;
+  return (
+    <View
+      style={[
+        styles.phoneTabBarShell,
+        {
+          backgroundColor: theme.listCardBg,
+          borderTopColor: theme.listBorder,
+          paddingBottom: Math.max(bottomInset, Platform.OS === 'android' ? 8 : 0),
+        },
+      ]}
+    >
+      <MaterialTopTabBar {...props} />
+    </View>
+  );
+}
+
 const Stack = createNativeStackNavigator();
 
 /** Inactive tab panels get aria-hidden; blur so focus isn't trapped on a hidden Pressable. */
@@ -217,20 +248,42 @@ const MainTabNavigator = () => {
   const tabBarBase = useMemo(
     () => ({
       ...styles.tabBarMobile,
-      height: 62 + insets.bottom,
-      paddingBottom: Math.max(insets.bottom, Platform.OS === 'android' ? 8 : 0),
+      height: 62,
+      paddingBottom: 0,
       paddingTop: 4,
       backgroundColor: theme.listCardBg,
-      borderTopColor: theme.listBorder,
+      borderTopColor: 'transparent',
+      elevation: 0,
+      shadowOpacity: 0,
     }),
-    [insets.bottom, theme.listCardBg, theme.listBorder]
+    [theme.listCardBg]
   );
 
   return (
     <Tab.Navigator
+      key={theme.id}
       initialRouteName="Chats"
       tabBarPosition="bottom"
       screenListeners={tabScreenListeners}
+      tabBar={(props) => {
+        const tabState = props.state;
+        const currentTab = tabState?.routes?.[tabState.index ?? 0]?.name;
+        const chatsRoute = tabState?.routes?.find((r) => r.name === 'Chats');
+        const stackScreen = getFocusedRouteName(
+          chatsRoute?.state as Parameters<typeof getFocusedRouteName>[0]
+        );
+        const hideTabBar =
+          (currentTab === 'Chats' && !!stackScreen && stackScreen !== 'ChatList') ||
+          currentTab === 'Reels';
+        return (
+          <ThemedPhoneTabBar
+            {...props}
+            theme={theme}
+            bottomInset={insets.bottom}
+            hidden={hideTabBar}
+          />
+        );
+      }}
       screenOptions={{
         tabBarShowLabel: true,
         tabBarActiveTintColor: theme.tabActive,
@@ -249,33 +302,20 @@ const MainTabNavigator = () => {
       <Tab.Screen
         name="Chats"
         component={ChatStack}
-        options={({ navigation }) => {
-          const tabState = navigation.getState();
-          const currentTab =
-            tabState?.routes?.[tabState.index ?? 0]?.name;
-          const chatsRoute = tabState?.routes?.find((r) => r.name === 'Chats');
-          const stackScreen = getFocusedRouteName(
-            chatsRoute?.state as Parameters<typeof getFocusedRouteName>[0]
-          );
-          const hideTabBar =
-            currentTab === 'Chats' && !!stackScreen && stackScreen !== 'ChatList';
-
-          return {
-            lazy: false,
-            tabBarStyle: hideTabBar ? { display: 'none' } : tabBarBase,
-            tabBarLabel: ({ color, focused }) => (
-              <TabBarLabel label="Chats" color={color} focused={focused} />
-            ),
-            tabBarIcon: ({ color, focused }) => (
-              <AnimatedTabIcon
-                name="chatbubble-ellipses-outline"
-                focusedName="chatbubble-ellipses"
-                size={24}
-                color={color}
-                focused={focused}
-              />
-            ),
-          };
+        options={{
+          lazy: false,
+          tabBarLabel: ({ color, focused }) => (
+            <TabBarLabel label="Chats" color={color} focused={focused} />
+          ),
+          tabBarIcon: ({ color, focused }) => (
+            <AnimatedTabIcon
+              name="chatbubble-ellipses-outline"
+              focusedName="chatbubble-ellipses"
+              size={24}
+              color={color}
+              focused={focused}
+            />
+          ),
         }}
       />
 
@@ -326,7 +366,6 @@ const MainTabNavigator = () => {
         name="Reels"
         component={ReelsWrapper}
         options={{
-          tabBarStyle: { display: 'none' },
           tabBarLabel: ({ color, focused }) => (
             <TabBarLabel label="Reels" color={color} focused={focused} />
           ),
@@ -693,15 +732,14 @@ const styles = StyleSheet.create({
     zIndex: 9999,
   },
   tabBarMobile: {
-    backgroundColor: '#fff',
-    borderTopWidth: 0.5,
-    borderColor: '#eee',
+    backgroundColor: 'transparent',
+    borderTopWidth: 0,
     minHeight: 56,
-    elevation: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 3,
+    elevation: 0,
+    shadowOpacity: 0,
+  },
+  phoneTabBarShell: {
+    borderTopWidth: StyleSheet.hairlineWidth,
   },
   reelsPlaceholder: {
     flex: 1,

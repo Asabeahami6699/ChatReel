@@ -38,7 +38,7 @@ function useAndroidSystemChrome(isDark: boolean) {
       const NavigationBar = require('expo-navigation-bar') as {
         setStyle?: (style: 'light' | 'dark' | 'auto') => void;
       };
-      // Edge-to-edge: solid nav colors are limited; style controls icon contrast.
+      // `dark` = dark bar + light icons; `light` = light bar + dark icons.
       NavigationBar.setStyle?.(isDark ? 'dark' : 'light');
     } catch {
       /* optional native module */
