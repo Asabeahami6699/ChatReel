@@ -15,6 +15,7 @@ type LocalAuthModule = typeof import('expo-local-authentication');
 
 const WEB_PIN_HASH_KEY = 'app_lock_web_pin_hash_v1';
 const WEB_PIN_SALT_KEY = 'app_lock_web_pin_salt_v1';
+const WEB_PIN_LEN_KEY = 'app_lock_web_pin_len_v1';
 
 function loadLocalAuth(): LocalAuthModule | null {
   if (Platform.OS === 'web') return null;
@@ -49,6 +50,7 @@ export async function setAppLockPin(
   const hash = await hashPin(digits, salt);
   await setSecretItem(WEB_PIN_SALT_KEY, salt);
   await setSecretItem(WEB_PIN_HASH_KEY, hash);
+  await setSecretItem(WEB_PIN_LEN_KEY, String(digits.length));
   return { ok: true };
 }
 
@@ -64,10 +66,19 @@ export async function verifyAppLockPin(pin: string): Promise<boolean> {
   return attempt === hash;
 }
 
+/** Stored digit count (4–6). Null for legacy PINs saved before length was stored. */
+export async function getAppLockPinLength(): Promise<number | null> {
+  const raw = await getSecretItem(WEB_PIN_LEN_KEY);
+  const n = Number(raw);
+  if (n >= 4 && n <= 6) return n;
+  return null;
+}
+
 export async function clearAppLockPin(): Promise<void> {
   try {
     await setSecretItem(WEB_PIN_HASH_KEY, '');
     await setSecretItem(WEB_PIN_SALT_KEY, '');
+    await setSecretItem(WEB_PIN_LEN_KEY, '');
   } catch {
     /* ignore */
   }
@@ -140,10 +151,16 @@ export async function authenticateAppUnlock(
     if (!pin) {
       return { success: false, needsPin: true };
     }
-    const ok = await verifyAppLockPin(pin);
-    return ok
-      ? { success: true }
-      : { success: false, error: 'Wrong code', needsPin: true };
+    const digits = pin.replace(/\D/g, '');
+    const ok = await verifyAppLockPin(digits);
+    if (ok) {
+      // Migrate legacy PINs so the pad can auto-submit at the right length.
+      if (digits.length >= 4 && digits.length <= 6) {
+        await setSecretItem(WEB_PIN_LEN_KEY, String(digits.length)).catch(() => undefined);
+      }
+      return { success: true };
+    }
+    return { success: false, error: 'Wrong code', needsPin: true };
   }
 
   const LocalAuthentication = loadLocalAuth();

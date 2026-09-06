@@ -45,6 +45,7 @@ import { clearOfflineFeedKeys, OFFLINE_FEED_KEYS } from '../../lib/offlineFeedSt
 import {
   authenticateAppUnlock,
   getAppLockAvailability,
+  getAppLockPinLength,
   hasAppLockPin,
   setAppLockPin,
 } from '../../lib/appLock';
@@ -218,6 +219,7 @@ export default function ChatSettingsScreen() {
     mode: 'setup' | 'confirm' | 'verify';
     intent?: 'enable' | 'disable';
     draft?: string;
+    pinLength?: number | null;
   } | null>(null);
   const [webLockPinError, setWebLockPinError] = useState<string | null>(null);
   const [chatLockPickerOpen, setChatLockPickerOpen] = useState(false);
@@ -439,6 +441,7 @@ export default function ChatSettingsScreen() {
         purpose: 'app',
         mode: hasPin ? 'verify' : 'setup',
         intent: 'enable',
+        pinLength: hasPin ? await getAppLockPinLength() : 4,
       });
       return;
     }
@@ -477,6 +480,7 @@ export default function ChatSettingsScreen() {
           purpose: 'chat',
           mode: 'verify',
           intent: 'disable',
+          pinLength: await getAppLockPinLength(),
         });
         return;
       }
@@ -500,6 +504,7 @@ export default function ChatSettingsScreen() {
         purpose: 'chat',
         mode: hasPin ? 'verify' : 'setup',
         intent: 'enable',
+        pinLength: hasPin ? await getAppLockPinLength() : 4,
       });
       return;
     }
@@ -552,42 +557,44 @@ export default function ChatSettingsScreen() {
     setWebLockPinError(null);
   };
 
-  const onWebLockPinSubmit = async (pin: string) => {
-    if (!webLockPinModal) return;
-    const { purpose, mode, draft, intent = 'enable' } = webLockPinModal;
+  const onWebLockPinSubmit = async (pin: string): Promise<boolean> => {
+    if (!webLockPinModal) return false;
+    const { purpose, mode, draft, intent = 'enable', pinLength } = webLockPinModal;
     setWebLockPinError(null);
 
     if (mode === 'setup') {
       if (pin.length < 4) {
         setWebLockPinError('Use a 4–6 digit code.');
-        return;
+        return false;
       }
-      setWebLockPinModal({ purpose, mode: 'confirm', intent, draft: pin });
-      return;
+      setWebLockPinModal({ purpose, mode: 'confirm', intent, draft: pin, pinLength: pin.length });
+      return true;
     }
 
     if (mode === 'confirm') {
       if (pin !== draft) {
         setWebLockPinError('Codes do not match. Try again.');
-        setWebLockPinModal({ purpose, mode: 'setup', intent });
-        return;
+        setWebLockPinModal({ purpose, mode: 'setup', intent, pinLength: 4 });
+        return false;
       }
       const result = await setAppLockPin(pin);
       if (!result.ok) {
         setWebLockPinError(result.error);
-        setWebLockPinModal({ purpose, mode: 'setup', intent });
-        return;
+        setWebLockPinModal({ purpose, mode: 'setup', intent, pinLength: 4 });
+        return false;
       }
       await finishWebLockChange(purpose, intent);
-      return;
+      return true;
     }
 
     const verified = await authenticateAppUnlock(undefined, pin);
     if (!verified.success) {
-      setWebLockPinError(verified.error || 'Wrong code');
-      return;
+      const max = pinLength && pinLength >= 4 ? pinLength : 6;
+      if (pin.length >= max) setWebLockPinError(verified.error || 'Wrong code');
+      return false;
     }
     await finishWebLockChange(purpose, intent);
+    return true;
   };
 
   const tc = theme.listPrimaryText;
@@ -1677,7 +1684,7 @@ export default function ChatSettingsScreen() {
               }
               subtitle={
                 webLockPinModal?.mode === 'setup'
-                  ? 'Choose a 4–6 digit code to unlock ChatReel on this browser.'
+                  ? 'Choose a 4-digit code to unlock ChatReel on this browser.'
                   : webLockPinModal?.mode === 'confirm'
                     ? 'Enter the same code again.'
                     : webLockPinModal?.intent === 'disable'
@@ -1685,7 +1692,14 @@ export default function ChatSettingsScreen() {
                       : 'Verify your PIN to turn this lock on.'
               }
               error={webLockPinError}
-              onSubmit={(pin) => void onWebLockPinSubmit(pin)}
+              pinLength={
+                webLockPinModal?.mode === 'setup'
+                  ? 4
+                  : webLockPinModal?.mode === 'confirm'
+                    ? webLockPinModal.draft?.length ?? 4
+                    : webLockPinModal?.pinLength ?? null
+              }
+              onSubmit={onWebLockPinSubmit}
             />
             <TouchableOpacity
               style={styles.webLockCancel}

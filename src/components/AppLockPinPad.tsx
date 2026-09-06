@@ -16,32 +16,51 @@ type Props = {
   subtitle?: string;
   error?: string | null;
   busy?: boolean;
-  /** Called when the user enters 4–6 digits (auto at 6, or via Unlock at ≥4). */
-  onSubmit: (pin: string) => void | Promise<void>;
+  /**
+   * When set, auto-submits at this length (no Unlock button).
+   * When omitted, auto-tries from 4 digits up to 6 (for legacy unlock / setup).
+   */
+  pinLength?: number | null;
+  /**
+   * Return `false` when the code is wrong so the pad can keep accepting digits
+   * until max length. Return true/void on success.
+   */
+  onSubmit: (pin: string) => void | boolean | Promise<void | boolean>;
   light?: boolean;
 };
 
-/** Shared 4–6 digit PIN pad for web app lock. */
+/** Shared 4–6 digit PIN pad for web app/chat lock — auto-submits, no manual Unlock. */
 export function AppLockPinPad({
   title,
   subtitle,
   error,
   busy,
+  pinLength,
   onSubmit,
   light = false,
 }: Props) {
   const { width } = useWindowDimensions();
   const isDesktop = Platform.OS === 'web' && width >= MOBILE_BREAKPOINT;
   const [pin, setPin] = useState('');
+  const maxLen = pinLength && pinLength >= 4 && pinLength <= 6 ? pinLength : 6;
+  const autoAt = pinLength && pinLength >= 4 && pinLength <= 6 ? pinLength : null;
 
   const submit = useCallback(
     async (code: string) => {
       if (busy) return;
       if (code.length < 4) return;
-      await onSubmit(code);
-      setPin('');
+      const result = await onSubmit(code);
+      const ok = result !== false;
+      if (ok) {
+        setPin('');
+        return;
+      }
+      // Wrong code: keep digits if user may still be typing a longer PIN.
+      if (code.length >= maxLen) {
+        setPin('');
+      }
     },
-    [busy, onSubmit]
+    [busy, onSubmit, maxLen]
   );
 
   const onKey = (key: string) => {
@@ -52,9 +71,11 @@ export function AppLockPinPad({
       return;
     }
     setPin((p) => {
-      if (p.length >= 6) return p;
+      if (p.length >= maxLen) return p;
       const next = p + key;
-      if (next.length === 6) {
+      const shouldAuto =
+        autoAt != null ? next.length === autoAt : next.length >= 4 && next.length <= 6;
+      if (shouldAuto) {
         setTimeout(() => void submit(next), 40);
       }
       return next;
@@ -64,6 +85,7 @@ export function AppLockPinPad({
   const fg = light ? '#111' : '#fff';
   const muted = light ? '#667085' : 'rgba(255,255,255,0.72)';
   const keyBg = light ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.12)';
+  const dotCount = Math.max(autoAt ?? 4, pin.length || 4, 4);
 
   return (
     <View style={[styles.wrap, isDesktop && styles.wrapDesktop]}>
@@ -71,7 +93,7 @@ export function AppLockPinPad({
       {subtitle ? <Text style={[styles.subtitle, { color: muted }]}>{subtitle}</Text> : null}
 
       <View style={styles.dots}>
-        {Array.from({ length: Math.max(4, pin.length || 4) }).map((_, i) => (
+        {Array.from({ length: Math.min(dotCount, maxLen) }).map((_, i) => (
           <View
             key={i}
             style={[
@@ -106,19 +128,6 @@ export function AppLockPinPad({
           </TouchableOpacity>
         ))}
       </View>
-
-      {pin.length >= 4 && pin.length < 6 ? (
-        <TouchableOpacity
-          style={[styles.unlockBtn, light && styles.unlockBtnLight]}
-          onPress={() => void submit(pin)}
-          disabled={busy}
-          activeOpacity={0.85}
-        >
-          <Text style={[styles.unlockText, light && styles.unlockTextLight]}>Unlock</Text>
-        </TouchableOpacity>
-      ) : (
-        <View style={styles.unlockSpacer} />
-      )}
     </View>
   );
 }
@@ -184,20 +193,4 @@ const styles = StyleSheet.create({
   },
   keyText: { fontSize: 22, fontWeight: '700' },
   keyTextDesktop: { fontSize: 18 },
-  unlockBtn: {
-    marginTop: 8,
-    paddingHorizontal: 28,
-    paddingVertical: 12,
-    borderRadius: 24,
-    backgroundColor: 'rgba(255,255,255,0.18)',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.35)',
-  },
-  unlockBtnLight: {
-    backgroundColor: '#5c6bc0',
-    borderColor: '#5c6bc0',
-  },
-  unlockText: { color: '#fff', fontWeight: '700', fontSize: 15 },
-  unlockTextLight: { color: '#fff' },
-  unlockSpacer: { height: 44, marginTop: 8 },
 });

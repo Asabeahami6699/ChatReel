@@ -15,7 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useChatLock } from '../context/ChatLockContext';
 import { useChatSettings } from '../context/ChatSettingsContext';
 import { AppLockPinPad } from './AppLockPinPad';
-import { hasAppLockPin, setAppLockPin } from '../lib/appLock';
+import { getAppLockPinLength, hasAppLockPin, setAppLockPin } from '../lib/appLock';
 
 /**
  * Privacy gate for the Chats tab when Chat Lock scope is "all chats".
@@ -34,6 +34,7 @@ export function ChatLockGate() {
   const [pinError, setPinError] = useState<string | null>(null);
   const [needsPinSetup, setNeedsPinSetup] = useState(false);
   const [setupDraft, setSetupDraft] = useState<string | null>(null);
+  const [pinLength, setPinLength] = useState<number | null>(null);
   const isWeb = Platform.OS === 'web';
 
   useEffect(() => {
@@ -71,12 +72,18 @@ export function ChatLockGate() {
     if (!visible || !isWeb) {
       setNeedsPinSetup(false);
       setSetupDraft(null);
+      setPinLength(null);
       return;
     }
     let alive = true;
-    void hasAppLockPin().then((has) => {
-      if (alive) setNeedsPinSetup(!has);
-    });
+    void (async () => {
+      const has = await hasAppLockPin();
+      if (!alive) return;
+      setNeedsPinSetup(!has);
+      if (has) {
+        setPinLength(await getAppLockPinLength());
+      }
+    })();
     return () => {
       alive = false;
     };
@@ -87,6 +94,12 @@ export function ChatLockGate() {
       ? 'Confirm your new PIN to unlock chats.'
       : 'Chat lock is on for your account. Create a PIN for this browser.'
     : 'Enter your PIN to open Chats.';
+
+  const padLength = needsPinSetup
+    ? setupDraft
+      ? setupDraft.length
+      : 4
+    : pinLength;
 
   return (
     <Modal
@@ -136,32 +149,42 @@ export function ChatLockGate() {
               }
               error={pinError}
               busy={unlocking}
+              pinLength={padLength}
               onSubmit={async (pin) => {
                 setPinError(null);
                 if (needsPinSetup) {
                   if (!setupDraft) {
                     setSetupDraft(pin);
-                    return;
+                    return true;
                   }
                   if (pin !== setupDraft) {
                     setPinError('Codes do not match. Try again.');
                     setSetupDraft(null);
-                    return;
+                    return false;
                   }
                   const result = await setAppLockPin(pin);
                   if (!result.ok) {
                     setPinError(result.error);
                     setSetupDraft(null);
-                    return;
+                    return false;
                   }
                   setNeedsPinSetup(false);
                   setSetupDraft(null);
+                  setPinLength(pin.length);
                   const ok = await unlock(pin);
-                  if (!ok) setPinError('Could not unlock');
-                  return;
+                  if (!ok) {
+                    setPinError('Could not unlock');
+                    return false;
+                  }
+                  return true;
                 }
                 const ok = await unlock(pin);
-                if (!ok) setPinError('Wrong code');
+                if (!ok) {
+                  const max = padLength ?? 6;
+                  if (pin.length >= max) setPinError('Wrong code');
+                  return false;
+                }
+                return true;
               }}
             />
           ) : null}

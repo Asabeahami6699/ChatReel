@@ -12,7 +12,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppLockPinPad } from './AppLockPinPad';
-import { hasAppLockPin, setAppLockPin } from '../lib/appLock';
+import { getAppLockPinLength, hasAppLockPin, setAppLockPin } from '../lib/appLock';
 import { useChatLock } from '../context/ChatLockContext';
 import { useChatSettings } from '../context/ChatSettingsContext';
 import type { ChatListEntryKind } from '../lib/chatListHidden';
@@ -38,22 +38,29 @@ export function ChatRoomLockCover({ kind, chatId, chatName, onBack }: Props) {
   const [pinError, setPinError] = useState<string | null>(null);
   const [needsPinSetup, setNeedsPinSetup] = useState(false);
   const [setupDraft, setSetupDraft] = useState<string | null>(null);
+  const [pinLength, setPinLength] = useState<number | null>(null);
   const autoPromptedRef = React.useRef(false);
 
   useEffect(() => {
     if (!needsUnlock || !isWeb) {
       setNeedsPinSetup(false);
       setSetupDraft(null);
+      setPinLength(null);
       return;
     }
     let alive = true;
-    void hasAppLockPin().then((has) => {
-      if (alive) setNeedsPinSetup(!has);
-    });
+    void (async () => {
+      const has = await hasAppLockPin();
+      if (!alive) return;
+      setNeedsPinSetup(!has);
+      if (has) setPinLength(await getAppLockPinLength());
+    })();
     return () => {
       alive = false;
     };
   }, [needsUnlock, isWeb, chatId]);
+
+  const padLength = needsPinSetup ? (setupDraft ? setupDraft.length : 4) : pinLength;
 
   useEffect(() => {
     if (isWeb || !needsUnlock) return;
@@ -134,29 +141,36 @@ export function ChatRoomLockCover({ kind, chatId, chatName, onBack }: Props) {
               }
               error={pinError}
               busy={unlocking}
+              pinLength={padLength}
               onSubmit={async (pin) => {
                 setPinError(null);
                 if (needsPinSetup) {
                   if (!setupDraft) {
                     setSetupDraft(pin);
-                    return;
+                    return true;
                   }
                   if (pin !== setupDraft) {
                     setPinError('Codes do not match. Try again.');
                     setSetupDraft(null);
-                    return;
+                    return false;
                   }
                   const result = await setAppLockPin(pin);
                   if (!result.ok) {
                     setPinError(result.error);
                     setSetupDraft(null);
-                    return;
+                    return false;
                   }
                   setNeedsPinSetup(false);
                   setSetupDraft(null);
+                  setPinLength(pin.length);
                 }
                 const ok = await unlockChat(kind, chatId, pin);
-                if (!ok) setPinError('Wrong code');
+                if (!ok) {
+                  const max = padLength ?? 6;
+                  if (pin.length >= max) setPinError('Wrong code');
+                  return false;
+                }
+                return true;
               }}
             />
           ) : (
