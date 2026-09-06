@@ -16,6 +16,7 @@ import { useIsFocused, useNavigation } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import { api, ApiError } from '../../lib/api';
 import { useAuth } from '../../hooks/useAuth';
+import { useChatSettings } from '../../context/ChatSettingsContext';
 import { withPrivacyLockPause } from '../../lib/privacyLockPause';
 
 const isWeb = Platform.OS === 'web';
@@ -384,11 +385,21 @@ function VisionQRScanner({
 
 export default function QRScannerScreen() {
   const navigation = useNavigation<any>();
+  const { theme } = useChatSettings();
 
   if (isWeb) {
+    const primary = theme.primary || '#007AFF';
     return (
-      <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
-        <View style={styles.webHeader}>
+      <SafeAreaView
+        style={[styles.container, { backgroundColor: theme.listBg }]}
+        edges={['left', 'right', 'bottom']}
+      >
+        <View
+          style={[
+            styles.webHeader,
+            { backgroundColor: theme.listCardBg, borderBottomColor: theme.listBorder },
+          ]}
+        >
           <TouchableOpacity
             onPress={() => navigation.goBack()}
             style={styles.webBackBtn}
@@ -396,26 +407,31 @@ export default function QRScannerScreen() {
             accessibilityLabel="Go back"
             accessibilityRole="button"
           >
-            <Ionicons name="arrow-back" size={24} color="#fff" />
+            <Ionicons name="arrow-back" size={24} color={theme.listPrimaryText} />
           </TouchableOpacity>
-          <Text style={styles.webHeaderTitle}>Link a Device</Text>
+          <Text style={[styles.webHeaderTitle, { color: theme.listPrimaryText }]}>
+            Link a Device
+          </Text>
           <View style={styles.webBackBtn} />
         </View>
         <View style={styles.web}>
-          <Ionicons name="phone-portrait" size={80} color="#007AFF" />
-          <Text style={styles.webTitle}>Open on Mobile</Text>
-          <Text style={styles.webText}>
+          <Ionicons name="phone-portrait" size={80} color={primary} />
+          <Text style={[styles.webTitle, { color: primary }]}>Open on Mobile</Text>
+          <Text style={[styles.webText, { color: theme.listSecondaryText }]}>
             To sign in on this computer like WhatsApp Web: keep this page open, then on your phone
             open ChatReel → Link a Device and scan the QR on the login screen.
           </Text>
-          <TouchableOpacity style={styles.btn} onPress={() => navigation.goBack()}>
+          <TouchableOpacity
+            style={[styles.btn, { backgroundColor: primary }]}
+            onPress={() => navigation.goBack()}
+          >
             <Text style={styles.btnText}>Go back</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.btn, styles.btnOutline]}
+            style={[styles.btn, styles.btnOutline, { borderColor: primary }]}
             onPress={() => navigation.navigate('QRCode')}
           >
-            <Text style={[styles.btnText, { color: '#007AFF' }]}>Show My QR Code</Text>
+            <Text style={[styles.btnText, { color: primary }]}>Show My QR Code</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -435,6 +451,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingTop: 12,
     paddingBottom: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   webBackBtn: {
     width: 40,
@@ -443,13 +460,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   webHeaderTitle: {
-    color: '#fff',
     fontSize: 17,
     fontWeight: '600',
   },
   web: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 },
-  webTitle: { fontSize: 28, fontWeight: 'bold', color: '#007AFF', marginTop: 20 },
-  webText: { fontSize: 16, color: '#ccc', marginTop: 10, textAlign: 'center' },
+  webTitle: { fontSize: 28, fontWeight: 'bold', marginTop: 20 },
+  webText: { fontSize: 16, marginTop: 10, textAlign: 'center', lineHeight: 22, maxWidth: 420 },
   header: {
     position: 'absolute',
     top: 50,
