@@ -312,8 +312,8 @@ router.get(
     const messages = [...(data ?? [])].reverse().filter((m) => {
       // Time-based disappearing media: hide for everyone once expired.
       if (m.expires_at && new Date(m.expires_at).getTime() <= nowMs) return false;
-      // View-once media: hide from everyone (sender + recipient) once it's been opened.
-      if (m.view_once && m.viewed_at) return false;
+      // View-once stays in the thread after open as a "Viewed" placeholder
+      // (media already wiped via markViewed).
       return true;
     });
     let reactionMap: Record<string, { emoji: string; user_id: string }[]> = {};
@@ -939,7 +939,8 @@ router.post(
       .from('messages')
       .update({
         viewed_at: now,
-        deleted_at: now,
+        // Keep the row in the chat as a "Viewed" placeholder (WhatsApp-style).
+        // Only wipe media so it cannot be opened again.
         file_url: null,
         content: message.message_type === 'video' ? 'View once video' : 'View once photo',
       })
@@ -963,15 +964,15 @@ router.post(
               userA: full.sender_id as string,
               userB: full.receiver_id as string,
             });
-      // Broadcast so both clients drop the bubble immediately.
+      // Broadcast so both clients flip the bubble to "Viewed" and drop media.
       const evt = {
         type: 'message.updated',
         chat_key: chatKey,
         message: {
           ...full,
           viewed_at: full.viewed_at,
-          deleted_at: full.deleted_at,
           file_url: null,
+          local_file_uri: null,
           view_once: true,
         },
       };

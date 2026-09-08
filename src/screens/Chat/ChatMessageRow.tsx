@@ -194,7 +194,12 @@ export function ChatMessageRow({
   const meta = (
     <View style={styles.metaRow}>
       {msg.view_once && (
-        <Ionicons name="eye-outline" size={12} color={metaColor} style={styles.metaIcon} />
+        <Ionicons
+          name={msg.viewed_at ? 'eye-off-outline' : 'eye-outline'}
+          size={12}
+          color={metaColor}
+          style={styles.metaIcon}
+        />
       )}
       {!msg.view_once && !!msg.expires_at && (
         <Ionicons name="timer-outline" size={12} color={metaColor} style={styles.metaIcon} />
@@ -315,8 +320,10 @@ export function ChatMessageRow({
 
     if (msg.message_type === 'image') {
       const uploading = msg._status === 'sending' || msg._status === 'pending';
+      const isViewOnce = Boolean(msg.view_once);
+      const isViewed = isViewOnce && Boolean(msg.viewed_at);
       // While uploading, always show the real image + progress ring (even for view-once).
-      const showCover = Boolean(msg.view_once) && !uploading;
+      const showCover = isViewOnce && !uploading;
       const captionText = (msg.decrypted || msg.content || '').trim();
       const showCaption =
         !msg.view_once &&
@@ -325,15 +332,17 @@ export function ChatMessageRow({
         !/^[a-zA-Z0-9._-]+\.(jpe?g|png|gif|webp|heic|mp4|mov|mkv|pdf|docx?)$/i.test(
           captionText
         );
+      const canOpen = !isViewed && (Boolean(imageUri) || showCover);
 
       return (
         <Pressable
           onPress={() => {
-            if (imageUri || showCover) onOpenMedia?.(msg.id);
+            if (canOpen) onOpenMedia?.(msg.id);
           }}
           onLongPress={() => onLongPress?.(msg)}
           delayLongPress={280}
           style={isSearchHit ? styles.searchHit : undefined}
+          disabled={isViewed}
         >
           <View
             style={[
@@ -346,12 +355,16 @@ export function ChatMessageRow({
             {replyQuote}
             <View style={[styles.mediaImageFrame, showCover && styles.viewOnceFrame]}>
               {showCover ? (
-                <View style={[styles.viewOnceCover]}>
+                <View style={[styles.viewOnceCover, isViewed && styles.viewOnceCoverViewed]}>
                   <View style={styles.viewOnceIconRing}>
-                    <Ionicons name="eye-outline" size={12} color="#fff" />
+                    <Ionicons
+                      name={isViewed ? 'eye-off-outline' : 'eye-outline'}
+                      size={12}
+                      color="#fff"
+                    />
                   </View>
                   <Text style={styles.viewOnceCoverTitle} numberOfLines={1}>
-                    Once
+                    {isViewed ? 'Viewed' : 'Once'}
                   </Text>
                 </View>
               ) : (
@@ -377,6 +390,7 @@ export function ChatMessageRow({
                 <View style={styles.mediaCaptionMeta}>{meta}</View>
               </View>
             ) : null}
+            {showCover ? <View style={styles.viewOnceMeta}>{meta}</View> : null}
           </View>
           {reactionsBar}
         </Pressable>
@@ -454,7 +468,7 @@ export function ChatMessageRow({
               </View>
             )}
             {!!msg.content && (
-              <Text style={[styles.reelCaption, { color: textColor }]} numberOfLines={4}>
+              <Text style={[styles.reelCaption, { color: textColor }]} numberOfLines={2}>
                 {msg.content}
               </Text>
             )}
@@ -466,7 +480,9 @@ export function ChatMessageRow({
 
     if (msg.message_type === 'video') {
       const uploading = msg._status === 'sending' || msg._status === 'pending';
-      const showCover = Boolean(msg.view_once) && !uploading;
+      const isViewOnce = Boolean(msg.view_once);
+      const isViewed = isViewOnce && Boolean(msg.viewed_at);
+      const showCover = isViewOnce && !uploading;
       const captionText = (msg.decrypted || msg.content || '').trim();
       const showCaption =
         !msg.view_once &&
@@ -475,15 +491,17 @@ export function ChatMessageRow({
         !/^[a-zA-Z0-9._-]+\.(jpe?g|png|gif|webp|heic|mp4|mov|mkv|pdf|docx?)$/i.test(
           captionText
         );
+      const canOpen = !isViewed && (Boolean(imageUri) || showCover);
 
       return (
         <Pressable
           onPress={() => {
-            if (imageUri || showCover) onOpenMedia?.(msg.id);
+            if (canOpen) onOpenMedia?.(msg.id);
           }}
           onLongPress={() => onLongPress?.(msg)}
           delayLongPress={280}
           style={isSearchHit ? styles.searchHit : undefined}
+          disabled={isViewed}
         >
           <View
             style={[
@@ -496,12 +514,16 @@ export function ChatMessageRow({
             {replyQuote}
             <View style={[styles.mediaImageFrame, showCover && styles.viewOnceFrame]}>
               {showCover ? (
-                <View style={[styles.viewOnceCover]}>
+                <View style={[styles.viewOnceCover, isViewed && styles.viewOnceCoverViewed]}>
                   <View style={styles.viewOnceIconRing}>
-                    <Ionicons name="play-outline" size={12} color="#fff" />
+                    <Ionicons
+                      name={isViewed ? 'eye-off-outline' : 'play-outline'}
+                      size={12}
+                      color="#fff"
+                    />
                   </View>
                   <Text style={styles.viewOnceCoverTitle} numberOfLines={1}>
-                    Once
+                    {isViewed ? 'Viewed' : 'Once'}
                   </Text>
                 </View>
               ) : (
@@ -540,6 +562,7 @@ export function ChatMessageRow({
                 <View style={styles.mediaCaptionMeta}>{meta}</View>
               </View>
             ) : null}
+            {showCover ? <View style={styles.viewOnceMeta}>{meta}</View> : null}
           </View>
           {reactionsBar}
         </Pressable>
@@ -847,6 +870,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 2,
     borderRadius: 8,
   },
+  viewOnceCoverViewed: {
+    backgroundColor: '#1a1a1a',
+    opacity: 0.85,
+  },
+  viewOnceMeta: {
+    paddingTop: 2,
+    paddingHorizontal: 2,
+    alignItems: 'flex-end',
+  },
   viewOnceIconRing: {
     width: 18,
     height: 18,
@@ -927,13 +959,13 @@ const styles = StyleSheet.create({
   momentQuoteBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingTop: 8,
-    paddingBottom: 4,
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingTop: 6,
+    paddingBottom: 2,
   },
-  momentQuoteLabel: { fontSize: 12, fontWeight: '700' },
-  momentPreview: { width: 260, height: 140, backgroundColor: '#1a1a1a' },
+  momentQuoteLabel: { fontSize: 11, fontWeight: '700' },
+  momentPreview: { width: 168, height: 72, backgroundColor: '#1a1a1a' },
   replyQuote: {
     borderLeftWidth: 3,
     paddingLeft: 8,

@@ -77,6 +77,7 @@ export default function ReelCommentSheet({
     setDraft,
     setReplyTo,
     toggleLike,
+    reload,
   } = useReelComments(reelId);
 
   const replyTo = useMemo(
@@ -211,6 +212,13 @@ export default function ReelCommentSheet({
       ) : error && comments.length === 0 ? (
         <View style={styles.center}>
           <Text style={styles.errorText}>{error}</Text>
+          <TouchableOpacity
+            style={styles.retryBtn}
+            onPress={() => void reload(true)}
+            hitSlop={8}
+          >
+            <Text style={styles.retryBtnText}>Try again</Text>
+          </TouchableOpacity>
         </View>
       ) : rows.length === 0 ? (
         <View style={styles.center}>
@@ -409,6 +417,16 @@ const styles = StyleSheet.create({
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   emptyText: { color: '#aaa', marginTop: 12 },
   errorText: { color: '#ff6b6b', marginHorizontal: 24, textAlign: 'center' },
+  retryBtn: {
+    marginTop: 16,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 20,
+    backgroundColor: '#222',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#444',
+  },
+  retryBtnText: { color: '#fff', fontWeight: '600', fontSize: 14 },
   postErrorText: {
     color: '#ff6b6b',
     fontSize: 12,

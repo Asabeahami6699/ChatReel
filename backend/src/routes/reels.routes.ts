@@ -40,7 +40,8 @@ import {
   listActiveCampaigns,
 } from '../services/ads.service';
 
-const router = Router();
+const REEL_VIEW_SELECT =
+  'id, author_id, visibility, group_id, moderation_status, scheduled_publish_at';
 
 async function withSponsoredFeedAds<T extends { id: string }>(
   enriched: T[],
@@ -896,7 +897,7 @@ router.post(
 
     const { data: reel } = await supabaseAdmin
       .from('reels')
-      .select('id, author_id, visibility, scheduled_publish_at, moderation_status')
+      .select(REEL_VIEW_SELECT)
       .eq('id', comment.reel_id)
       .maybeSingle();
     if (!reel) return res.status(404).json({ error: 'Reel not found' });
@@ -1272,7 +1273,7 @@ router.post(
 
     const { data: reel, error: getErr } = await supabaseAdmin
       .from('reels')
-      .select('id, author_id, visibility')
+      .select(REEL_VIEW_SELECT)
       .eq('id', reelId)
       .maybeSingle();
 
@@ -1379,16 +1380,16 @@ router.get(
     const profileId = await getProfileIdByUserId(req.userId!);
     if (!profileId) return res.status(404).json({ error: 'Profile not found' });
 
-    // Visibility check
+    // Visibility check — must include group/moderation/schedule fields for canViewReel.
     const { data: reel } = await supabaseAdmin
       .from('reels')
-      .select('id, author_id, visibility')
+      .select(REEL_VIEW_SELECT)
       .eq('id', reelId)
       .maybeSingle();
     if (!reel) return res.status(404).json({ error: 'Reel not found' });
     const friendSet = await getAcceptedFriendIds(profileId);
     if (!(await canViewReel(reel as ReelRow, profileId, friendSet, req.userId!))) {
-      return res.status(403).json({ error: 'Not allowed' });
+      return res.status(403).json({ error: 'Not allowed to view comments on this reel' });
     }
 
     const limit = Math.min(Number(req.query.limit ?? 30), 100);
@@ -1473,13 +1474,13 @@ router.post(
 
     const { data: reel } = await supabaseAdmin
       .from('reels')
-      .select('id, author_id, visibility')
+      .select(REEL_VIEW_SELECT)
       .eq('id', reelId)
       .maybeSingle();
     if (!reel) return res.status(404).json({ error: 'Reel not found' });
     const friendSet = await getAcceptedFriendIds(profileId);
     if (!(await canViewReel(reel as ReelRow, profileId, friendSet, req.userId!))) {
-      return res.status(403).json({ error: 'Not allowed' });
+      return res.status(403).json({ error: 'Not allowed to comment on this reel' });
     }
 
     if (body.parent_id) {

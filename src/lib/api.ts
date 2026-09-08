@@ -366,7 +366,7 @@ export class ApiError extends Error {
   constructor(message: string, status: number, isNetworkError = false) {
     super(sanitizeApiErrorMessage(message, status));
     this.status = status;
-    this.isAuthError = status === 401 || status === 403;
+    this.isAuthError = status === 401;
     this.isNetworkError =
       isNetworkError ||
       status === 0 ||
@@ -401,14 +401,25 @@ export function sanitizeApiErrorMessage(message: string, status: number): string
   const lower = message.toLowerCase();
   if (
     status === 401 ||
-    status === 403 ||
     lower.includes('invalid or expired token') ||
     lower.includes('jwt') ||
     lower.includes('not authenticated') ||
     lower.includes('unauthorized') ||
+    lower.includes('missing or invalid authorization') ||
     (lower.includes('token') && (lower.includes('expired') || lower.includes('invalid')))
   ) {
-    return 'Something went wrong. Please try again.';
+    return 'Session expired. Sign in again and try once more.';
+  }
+  if (status === 403) {
+    if (
+      lower.includes('comment') ||
+      lower.includes('not allowed') ||
+      lower.includes('forbidden') ||
+      lower.includes('permission')
+    ) {
+      return message.length <= 140 ? message : 'You don’t have permission to do that.';
+    }
+    return 'You don’t have permission to do that.';
   }
   if (
     status === 0 ||
@@ -419,7 +430,8 @@ export function sanitizeApiErrorMessage(message: string, status: number): string
     lower.includes('network error') ||
     lower.includes('econnrefused') ||
     lower.includes('enotfound') ||
-    lower.includes('timeout')
+    lower.includes('timeout') ||
+    lower.includes('auth service unavailable')
   ) {
     return 'No internet. Check your connection and try again.';
   }

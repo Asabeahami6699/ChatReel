@@ -27,7 +27,7 @@ export function KeyboardStickyFooter({
   const insets = useSafeAreaInsets();
   const closed = closedOffset ?? insets.bottom;
 
-  if (Platform.OS === 'android') {
+  if (Platform.OS === 'android' || Platform.OS === 'web') {
     return <View style={[{ paddingBottom: closed }, style]}>{children}</View>;
   }
 

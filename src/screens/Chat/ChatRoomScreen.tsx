@@ -76,7 +76,9 @@ import { useActiveGroupCall } from '../../hooks/useActiveGroupCall';
 import { ChatSearchOverlay } from './ChatSearchOverlay';
 import { MessageActionSheet, type MessageAction } from './MessageActionSheet';
 import { ReplyPreviewBar } from './ReplyPreviewBar';
-import { MomentChatPreview } from './MomentChatPreview';
+import { MomentViewer } from '../Explore/MomentViewer';
+import { useCurrentProfileId } from '../../hooks/useCurrentProfileId';
+import type { MomentAuthorFeedDTO, MomentSlideDTO, ReelAuthorDTO } from '../../lib/api';
 import { isWithinMinutes, buildForwardPayload, isValidUuid, isWallpaperImageUri, resolveWallpaperColor } from './chatMessageUtils';
 import { ForwardToChatPicker, type ForwardTarget } from './ForwardToChatPicker';
 import { ReadReceiptSheet } from './ReadReceiptSheet';
@@ -215,7 +217,10 @@ export default function ChatRoomScreen() {
   const [remindMessage, setRemindMessage] = useState<Message | null>(null);
   const focusMessageHandledRef = useRef<string | null>(null);
   const [translations, setTranslations] = useState<Record<string, string>>({});
-  const [momentPreviewId, setMomentPreviewId] = useState<string | null>(null);
+  const [momentViewerAuthor, setMomentViewerAuthor] = useState<MomentAuthorFeedDTO | null>(null);
+  const [momentViewerSlideId, setMomentViewerSlideId] = useState<string | null>(null);
+  const [momentViewerOpening, setMomentViewerOpening] = useState(false);
+  const myProfileId = useCurrentProfileId();
   const [wallpaper, setWallpaper] = useState<string | null>(null);
   const [starredIds, setStarredIds] = useState<string[]>([]);
   const [chatMuted, setChatMuted] = useState(false);
@@ -906,13 +911,24 @@ export default function ChatRoomScreen() {
             const mergedPrev = prev.map((m) => {
               const fresh = serverById.get(m.id);
               if (!fresh) return m;
+              const viewedOnce = Boolean(
+                (fresh.view_once || m.view_once) && (fresh.viewed_at || m.viewed_at)
+              );
+              if (viewedOnce) {
+                consumedViewOnceIdsRef.current.add(m.id);
+              }
               return {
                 ...m,
                 ...fresh,
-                local_file_uri: m.local_file_uri ?? fresh.local_file_uri,
-                local_audio_uri: m.local_audio_uri ?? fresh.local_audio_uri,
-                file_url: fresh.file_url || m.file_url,
-                audio_url: fresh.audio_url || m.audio_url,
+                viewed_at: fresh.viewed_at ?? m.viewed_at,
+                local_file_uri: viewedOnce
+                  ? undefined
+                  : m.local_file_uri ?? fresh.local_file_uri,
+                local_audio_uri: viewedOnce
+                  ? undefined
+                  : m.local_audio_uri ?? fresh.local_audio_uri,
+                file_url: viewedOnce ? undefined : fresh.file_url || m.file_url,
+                audio_url: viewedOnce ? undefined : fresh.audio_url || m.audio_url,
                 decrypted: fresh.decrypted ?? m.decrypted,
                 delivered: Boolean(m.delivered || fresh.delivered),
                 is_read: Boolean(m.is_read || fresh.is_read),
@@ -1066,10 +1082,24 @@ export default function ChatRoomScreen() {
         const localReady = await decryptChatMessages(recentSlice, user.id);
         for (const m of localReady) {
           if (m.decrypted) rememberDecryptedText(m.id, m.decrypted);
+          if (m.view_once && m.viewed_at) {
+            consumedViewOnceIdsRef.current.add(m.id);
+          }
         }
-        if (localReady.length > 0) {
-          setMessages(localReady);
-          rememberChatThread(chatId, localReady);
+        const localPaint = localReady.map((m) =>
+          m.view_once && m.viewed_at
+            ? {
+                ...m,
+                file_url: undefined,
+                local_file_uri: undefined,
+                local_audio_uri: undefined,
+                audio_url: undefined,
+              }
+            : m
+        );
+        if (localPaint.length > 0) {
+          setMessages(localPaint);
+          rememberChatThread(chatId, localPaint);
           setHasMore(
             dedupedLocalMessages.length > recentSlice.length || isOnline
           );
@@ -1079,7 +1109,7 @@ export default function ChatRoomScreen() {
         if (isOnline) {
           await syncWithServer(dedupedLocalMessages, false);
         } else {
-          if (localReady.length === 0) setMessages([]);
+          if (localPaint.length === 0) setMessages([]);
           setHasMore(dedupedLocalMessages.length > recentSlice.length);
           setLoading(false);
           setInitialLoadComplete(true);
@@ -2521,20 +2551,26 @@ export default function ChatRoomScreen() {
       const normalized = normalizeRealtimeMessage(raw, chatId, chatType, user.id);
       if (!messageBelongsToChat(normalized)) return;
 
-      // View-once was opened / soft-deleted: remove for everyone.
+      // View-once was opened: keep the bubble, strip media, label as Viewed.
       if (
         (normalized.view_once && normalized.viewed_at) ||
         (normalized.view_once && (normalized as { deleted_at?: string | null }).deleted_at)
       ) {
         consumedViewOnceIdsRef.current.add(normalized.id);
         persistMessages((prev) =>
-          prev
-            .filter((m) => m.id !== normalized.id)
-            .map((m) =>
-              m.id === normalized.id
-                ? { ...m, file_url: undefined, local_file_uri: undefined, viewed_at: normalized.viewed_at }
-                : m
-            )
+          prev.map((m) =>
+            m.id === normalized.id
+              ? {
+                  ...m,
+                  ...normalized,
+                  viewed_at: normalized.viewed_at || m.viewed_at || new Date().toISOString(),
+                  file_url: undefined,
+                  local_file_uri: undefined,
+                  local_audio_uri: undefined,
+                  audio_url: undefined,
+                }
+              : m
+          )
         );
         return;
       }
@@ -2756,6 +2792,10 @@ export default function ChatRoomScreen() {
               decryptChanged
             ) {
               changed = true;
+              const viewedOnce = Boolean(
+                (fresh.view_once || m.view_once) && (fresh.viewed_at || m.viewed_at)
+              );
+              if (viewedOnce) consumedViewOnceIdsRef.current.add(m.id);
               return {
                 ...m,
                 ...fresh,
@@ -2766,8 +2806,14 @@ export default function ChatRoomScreen() {
                   Boolean(m.delivered || fresh.delivered) ||
                   (m.sender_id === user.id && !String(m.id).startsWith('temp-')),
                 viewed_at: fresh.viewed_at ?? m.viewed_at,
-                local_file_uri: m.local_file_uri ?? fresh.local_file_uri,
-                local_audio_uri: m.local_audio_uri ?? fresh.local_audio_uri,
+                local_file_uri: viewedOnce
+                  ? undefined
+                  : m.local_file_uri ?? fresh.local_file_uri,
+                local_audio_uri: viewedOnce
+                  ? undefined
+                  : m.local_audio_uri ?? fresh.local_audio_uri,
+                file_url: viewedOnce ? undefined : fresh.file_url || m.file_url,
+                audio_url: viewedOnce ? undefined : fresh.audio_url || m.audio_url,
                 _status: m._status === 'pending' || m._status === 'failed' ? m._status : m._status ?? 'sent',
               };
             }
@@ -3193,6 +3239,106 @@ export default function ChatRoomScreen() {
     setSharedMediaOpen(true);
   }, []);
 
+  const closeMomentViewer = useCallback(() => {
+    setMomentViewerAuthor(null);
+    setMomentViewerSlideId(null);
+  }, []);
+
+  const openMomentFromChat = useCallback(async (momentId: string) => {
+    if (!momentId || momentViewerOpening) return;
+    setMomentViewerOpening(true);
+    try {
+      // Prefer the live feed pack so the viewer matches Explore (same author ring).
+      try {
+        const { authors } = await api.moments.feed();
+        const packed = authors.find((a) => a.slides.some((s) => s.id === momentId));
+        if (packed) {
+          setMomentViewerAuthor(packed);
+          setMomentViewerSlideId(momentId);
+          void api.moments.view(momentId).catch(() => undefined);
+          return;
+        }
+      } catch {
+        /* fall through to single-moment fetch */
+      }
+
+      const { moment: raw, author: rawAuthor } = await api.moments.get(momentId);
+      if (!raw?.id) {
+        showAppToast('Moment unavailable or expired', { isError: true });
+        return;
+      }
+
+      const slide: MomentSlideDTO = {
+        id: String(raw.id),
+        media_url: (raw.media_url as string) ?? null,
+        media_type: (raw.media_type as MomentSlideDTO['media_type']) || 'image',
+        caption: (raw.caption as string) ?? null,
+        text_background: (raw.text_background as string) ?? null,
+        thumbnail_url: (raw.thumbnail_url as string) ?? null,
+        view_once: Boolean(raw.view_once),
+        expires_at: String(raw.expires_at ?? new Date().toISOString()),
+        duration_minutes: Number(raw.duration_minutes ?? 24),
+        created_at: String(raw.created_at ?? new Date().toISOString()),
+        viewed_by_me: true,
+        group_id: (raw.group_id as string) ?? null,
+        position: typeof raw.position === 'number' ? raw.position : 0,
+        view_count: typeof raw.view_count === 'number' ? raw.view_count : 0,
+        reel_id: (raw.reel_id as string) ?? null,
+        sound_id: (raw.sound_id as string) ?? null,
+        sound_start_sec:
+          typeof raw.sound_start_sec === 'number' ? raw.sound_start_sec : null,
+        original_audio_volume:
+          typeof raw.original_audio_volume === 'number'
+            ? raw.original_audio_volume
+            : null,
+        sound_volume:
+          typeof raw.sound_volume === 'number' ? raw.sound_volume : null,
+        filter_id: (raw.filter_id as string) ?? null,
+      };
+
+      const author: ReelAuthorDTO = {
+        id: String(rawAuthor?.id ?? raw.author_id ?? ''),
+        user_id: String(rawAuthor?.user_id ?? ''),
+        display_name: (rawAuthor?.display_name as string) ?? null,
+        email: (rawAuthor?.email as string) ?? null,
+        avatar_url: (rawAuthor?.avatar_url as string) ?? null,
+      };
+
+      const packed: MomentAuthorFeedDTO = {
+        author,
+        slides: [slide],
+        has_unseen: false,
+        latest_at: slide.created_at,
+      };
+      setMomentViewerAuthor(packed);
+      setMomentViewerSlideId(momentId);
+      void api.moments.view(momentId).catch(() => undefined);
+    } catch {
+      showAppToast('Moment unavailable or expired', { isError: true });
+    } finally {
+      setMomentViewerOpening(false);
+    }
+  }, [momentViewerOpening]);
+
+  const handleMomentSlideViewed = useCallback((_authorId: string, slideId: string) => {
+    void api.moments.view(slideId).catch(() => undefined);
+  }, []);
+
+  const handleMomentSlideDeleted = useCallback(
+    (_authorId: string, slideId: string) => {
+      setMomentViewerAuthor((prev) => {
+        if (!prev) return prev;
+        const nextSlides = prev.slides.filter((s) => s.id !== slideId);
+        if (nextSlides.length === 0) {
+          setMomentViewerSlideId(null);
+          return null;
+        }
+        return { ...prev, slides: nextSlides };
+      });
+    },
+    []
+  );
+
   const menuItems: MenuItem[] = useMemo(() => {
     const items: MenuItem[] = [
       {
@@ -3287,8 +3433,22 @@ export default function ChatRoomScreen() {
       const msg = replyLookup.get(messageId);
       if (!msg) return;
 
+      // WhatsApp-style: once opened by the recipient, nobody can open it again.
+      if (
+        msg.view_once &&
+        (msg.viewed_at || consumedViewOnceIdsRef.current.has(msg.id))
+      ) {
+        showAppToast('View once media was already opened');
+        return;
+      }
+
       const uri = getImageUri(msg);
-      if (!uri) return;
+      if (!uri) {
+        if (msg.view_once) {
+          showAppToast('View once media was already opened');
+        }
+        return;
+      }
 
       const captionText = (msg.decrypted || msg.content || '').trim();
       const showCaption =
@@ -3309,21 +3469,29 @@ export default function ChatRoomScreen() {
         autoCloseSec: msg.view_once_auto_close_sec ?? null,
       };
 
-      // Freeze a session copy — never strip URI before the viewer mounts (crash fix).
-      let items = chatMediaItems.map((item) =>
-        item.id === messageId
-          ? {
-              ...item,
-              uri,
-              caption: snapshotItem.caption,
-              autoCloseSec: snapshotItem.autoCloseSec,
-            }
-          : item
-      );
-      let idx = items.findIndex((item) => item.id === messageId);
-      if (idx < 0) {
+      // View-once opens alone (no album swipe) so capture blocking stays scoped.
+      let items: ChatMediaItem[];
+      let idx: number;
+      if (msg.view_once) {
         items = [snapshotItem];
         idx = 0;
+      } else {
+        items = chatMediaItems.map((item) =>
+          item.id === messageId
+            ? {
+                ...item,
+                uri,
+                caption: snapshotItem.caption,
+                viewOnce: false,
+                autoCloseSec: snapshotItem.autoCloseSec,
+              }
+            : item
+        );
+        idx = items.findIndex((item) => item.id === messageId);
+        if (idx < 0) {
+          items = [snapshotItem];
+          idx = 0;
+        }
       }
 
       let consumeId: string | null = null;
@@ -3346,20 +3514,21 @@ export default function ChatRoomScreen() {
     setMediaViewer((prev) => {
       const consumed = prev.consumeId;
       if (consumed) {
-        // Strip + remove only after the viewer closes.
+        consumedViewOnceIdsRef.current.add(consumed);
+        // Keep the bubble — strip media and mark Viewed so it can't reopen.
         persistMessages((list) =>
-          list
-            .map((m) =>
-              m.id === consumed
-                ? {
-                    ...m,
-                    viewed_at: m.viewed_at || new Date().toISOString(),
-                    file_url: undefined,
-                    local_file_uri: undefined,
-                  }
-                : m
-            )
-            .filter((m) => m.id !== consumed)
+          list.map((m) =>
+            m.id === consumed
+              ? {
+                  ...m,
+                  viewed_at: m.viewed_at || new Date().toISOString(),
+                  file_url: undefined,
+                  local_file_uri: undefined,
+                  local_audio_uri: undefined,
+                  audio_url: undefined,
+                }
+              : m
+          )
         );
       }
       return { visible: false, index: 0, items: [], consumeId: null };
@@ -3455,7 +3624,9 @@ export default function ChatRoomScreen() {
         getImageUri={getImageUri}
         onOpenMedia={openMediaViewer}
         onOpenReel={navigateToReelPreview}
-        onOpenMoment={(id) => setMomentPreviewId(id)}
+        onOpenMoment={(id) => {
+          void openMomentFromChat(id);
+        }}
         onLongPress={(m) => setActionMessage(m)}
         onRetry={retrySingleMessage}
         replyTo={replyParent}
@@ -3933,10 +4104,14 @@ export default function ChatRoomScreen() {
         }}
       />
 
-      <MomentChatPreview
-        momentId={momentPreviewId}
-        visible={!!momentPreviewId}
-        onClose={() => setMomentPreviewId(null)}
+      <MomentViewer
+        visible={!!momentViewerAuthor}
+        author={momentViewerAuthor}
+        myProfileId={myProfileId}
+        initialSlideId={momentViewerSlideId}
+        onClose={closeMomentViewer}
+        onSlideViewed={handleMomentSlideViewed}
+        onSlideDeleted={handleMomentSlideDeleted}
       />
 
       <ForwardToChatPicker

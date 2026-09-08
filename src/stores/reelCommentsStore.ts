@@ -86,7 +86,12 @@ export const useReelCommentsStore = create<ReelCommentsStore>((set, get) => ({
     } catch (err) {
       const message =
         err instanceof ApiError ? err.message : (err as Error).message ?? 'Failed to load';
-      get().patchSlice(reelId, { loading: false, error: message });
+      const prev = get().getSlice(reelId);
+      get().patchSlice(reelId, {
+        loading: false,
+        // Keep any comments already on screen; only surface the error when empty.
+        error: prev.comments.length > 0 ? null : message,
+      });
     }
   },
 

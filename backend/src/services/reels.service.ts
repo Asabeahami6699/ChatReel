@@ -113,7 +113,12 @@ export async function getAcceptedFriendIds(profileId: string): Promise<Set<strin
     .eq('status', 'accepted')
     .or(`user_id.eq.${profileId},friend_id.eq.${profileId}`);
 
-  if (error) throw new Error(`friendships lookup failed: ${error.message}`);
+  if (error) {
+    // Don't fail the whole request (comments/likes/feed) when friendships briefly
+    // can't be read — treat as no friends and let visibility fall through.
+    console.warn('[reels] friendships lookup failed:', error.message);
+    return new Set();
+  }
 
   const set = new Set<string>();
   for (const row of data ?? []) {

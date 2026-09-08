@@ -33,7 +33,7 @@ import {
   useReelSoundPlayback,
 } from '../../hooks/useReelSoundPlayback';
 import { dedupeMomentSlides } from '../../lib/momentSlides';
-import { navigateToChat, navigateToReelPreview } from '../../navigation/navigateToChat';
+import { navigateToReelPreview } from '../../navigation/navigateToChat';
 import { MomentViewersSheet } from './MomentViewersSheet';
 import { allowViewOnceCapture, preventViewOnceCapture } from '../../lib/screenCaptureGuard';
 import { showAppToast } from '../../lib/appToast';
@@ -64,6 +64,8 @@ type Props = {
   onAdvanceAuthor?: () => void;
   onSlideViewed: (authorId: string, slideId: string) => void;
   onSlideDeleted?: (authorId: string, slideId: string) => void;
+  /** Open on this slide when the viewer becomes visible (e.g. from a chat moment ref). */
+  initialSlideId?: string | null;
 };
 
 function authorName(author: MomentAuthorFeedDTO['author']): string {
@@ -107,6 +109,7 @@ export function MomentViewer({
   onAdvanceAuthor,
   onSlideViewed,
   onSlideDeleted,
+  initialSlideId = null,
 }: Props) {
   const insets = useSafeAreaInsets();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
@@ -152,11 +155,15 @@ export function MomentViewer({
 
   useEffect(() => {
     if (!guardViewOnce) return;
-    void preventViewOnceCapture();
+    void preventViewOnceCapture({
+      onScreenshot: () => {
+        onClose();
+      },
+    });
     return () => {
       void allowViewOnceCapture();
     };
-  }, [guardViewOnce]);
+  }, [guardViewOnce, onClose]);
 
   const frozen =
     activityOpen ||
@@ -227,7 +234,11 @@ export function MomentViewer({
 
   useEffect(() => {
     if (!visible || !author) return;
-    setSlideIndex(0);
+    const slidesForAuthor = dedupeMomentSlides(author.slides ?? []);
+    const startIdx = initialSlideId
+      ? slidesForAuthor.findIndex((s) => s.id === initialSlideId)
+      : 0;
+    setSlideIndex(startIdx >= 0 ? startIdx : 0);
     setProgress(0);
     setPaused(false);
     setHolding(false);
@@ -235,7 +246,7 @@ export function MomentViewer({
     setVideoDurationSec(IMAGE_DURATION_MS / 1000);
     imageElapsedRef.current = 0;
     imageStartRef.current = Date.now();
-  }, [visible, author?.author.id]);
+  }, [visible, author?.author.id, initialSlideId]);
 
   useEffect(() => {
     setProgress(0);
@@ -317,14 +328,9 @@ export function MomentViewer({
       Keyboard.dismiss();
       setComposerMode(null);
       setComposerFocused(false);
+      setPaused(false);
       showAppToast(`Sent to ${name}`);
-      navigateToChat({
-        chatId: author.author.user_id,
-        chatType: 'individual',
-        chatName: name,
-        avatarUrl: author.author.avatar_url ?? undefined,
-      });
-      onClose();
+      // Stay on the moment viewer — don't jump into chat after a reply.
     } catch {
       Alert.alert('Reply', 'Could not send your reply. Try again.');
     } finally {

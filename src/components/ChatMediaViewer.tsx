@@ -221,13 +221,51 @@ export function ChatMediaViewer({ items, initialIndex, visible, onClose }: Props
     (document.activeElement as HTMLElement | null)?.blur?.();
   }, [visible]);
 
-  // Block screenshots / screen recording while any view-once item is open.
-  const guardViewOnce = visible && items.some((item) => item.viewOnce);
+  const currentForGuard = items[index] ?? items[initialIndex] ?? items[0];
+  // Only lock capture while the visible slide is view-once (not the whole album).
+  const guardViewOnce = Boolean(visible && currentForGuard?.viewOnce);
+  const [privacyBlank, setPrivacyBlank] = useState(false);
+
   useEffect(() => {
-    if (!guardViewOnce) return;
-    void preventViewOnceCapture();
+    if (!guardViewOnce) {
+      setPrivacyBlank(false);
+      return;
+    }
+    void preventViewOnceCapture({
+      onScreenshot: () => {
+        onClose();
+      },
+    });
     return () => {
       void allowViewOnceCapture();
+    };
+  }, [guardViewOnce, onClose]);
+
+  // Web has no FLAG_SECURE — blank media when the tab/window loses focus.
+  useEffect(() => {
+    if (!guardViewOnce || Platform.OS !== 'web' || typeof document === 'undefined') {
+      return;
+    }
+    const sync = () => {
+      const hidden =
+        document.visibilityState !== 'visible' ||
+        (typeof document.hasFocus === 'function' && !document.hasFocus());
+      setPrivacyBlank(hidden);
+    };
+    const blockContext = (e: Event) => {
+      e.preventDefault();
+    };
+    sync();
+    document.addEventListener('visibilitychange', sync);
+    window.addEventListener('blur', sync);
+    window.addEventListener('focus', sync);
+    document.addEventListener('contextmenu', blockContext);
+    return () => {
+      document.removeEventListener('visibilitychange', sync);
+      window.removeEventListener('blur', sync);
+      window.removeEventListener('focus', sync);
+      document.removeEventListener('contextmenu', blockContext);
+      setPrivacyBlank(false);
     };
   }, [guardViewOnce]);
 
@@ -266,14 +304,19 @@ export function ChatMediaViewer({ items, initialIndex, visible, onClose }: Props
   const renderItem = useCallback(
     ({ item, index: itemIndex }: { item: ChatMediaItem; index: number }) => (
       <View style={styles.page}>
-        {item.type === 'image' ? (
+        {privacyBlank ? (
+          <View style={styles.privacyBlank}>
+            <Ionicons name="eye-off-outline" size={40} color="#fff" />
+            <Text style={styles.privacyBlankText}>Hidden for privacy</Text>
+          </View>
+        ) : item.type === 'image' ? (
           <MediaImageSlide uri={item.uri} onZoomChange={setZoomed} />
         ) : (
           <MediaVideoSlide uri={item.uri} active={itemIndex === index} />
         )}
       </View>
     ),
-    [index]
+    [index, privacyBlank]
   );
 
   if (!visible || items.length === 0) return null;
@@ -343,7 +386,7 @@ export function ChatMediaViewer({ items, initialIndex, visible, onClose }: Props
             ) : null}
             {current.viewOnce ? (
               <Text style={styles.footerHint}>
-                View once · screenshots blocked
+                View once · screenshots & recording blocked
                 {closeInSec != null
                   ? ` · closes in ${closeInSec}s`
                   : current.autoCloseSec
@@ -370,6 +413,20 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: '#000',
+  },
+  privacyBlank: {
+    flex: 1,
+    width: SCREEN_W,
+    height: SCREEN_H,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#000',
+    gap: 12,
+  },
+  privacyBlankText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '600',
   },
   list: {
     position: 'absolute',
