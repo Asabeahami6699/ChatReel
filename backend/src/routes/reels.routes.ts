@@ -43,6 +43,8 @@ import {
 const REEL_VIEW_SELECT =
   'id, author_id, visibility, group_id, moderation_status, scheduled_publish_at';
 
+const router = Router();
+
 async function withSponsoredFeedAds<T extends { id: string }>(
   enriched: T[],
   excludeIds: Set<string>
