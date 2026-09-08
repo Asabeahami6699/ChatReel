@@ -46,7 +46,7 @@ export default function App() {
   }
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <KeyboardProvider>
+      <KeyboardProvider statusBarTranslucent navigationBarTranslucent>
         <SafeAreaProvider>
         <AuthProvider>
           <ChatSettingsProvider>

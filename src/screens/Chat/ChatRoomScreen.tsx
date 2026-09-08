@@ -22,7 +22,6 @@ import {
 } from 'react-native';
 import { useAuth } from '../../hooks/useAuth';
 import { api, ApiError } from '../../lib/api';
-import { useResizeMode } from 'react-native-keyboard-controller';
 import { KeyboardStickyFooter } from '../../components/KeyboardStickyFooter';
 import { isSelfNotesChat } from '../../lib/selfNotesChat';
 import { cancelChatThreadsPrefetch } from '../../lib/chatThreadsPrefetch';
@@ -162,7 +161,6 @@ export default function ChatRoomScreen() {
   const { theme } = useChatSettings();
   const roomKind = chatType === 'group' ? 'group' : 'individual';
   const isSelfNotes = chatType === 'individual' && isSelfNotesChat(chatId, user?.id);
-  useResizeMode();
 
   const cachedThread = chatId ? recallChatThread<Message>(chatId) : null;
   const [messages, setMessages] = useState<Message[]>(() =>
@@ -3873,7 +3871,13 @@ export default function ChatRoomScreen() {
             <TouchableOpacity
               style={[
                 styles.scrollFab,
-                { bottom: 76 + insets.bottom + (isKeyboardVisible ? 12 : 0) },
+                {
+                  bottom:
+                    76 +
+                    (isKeyboardVisible
+                      ? Math.max(keyboardHeight, 0) + 12
+                      : insets.bottom),
+                },
               ]}
               onPress={scrollToBottomAndStick}
               activeOpacity={0.85}

@@ -1276,8 +1276,9 @@ export default function ReelsScreen() {
         style={[
           styles.topBarWrap,
           {
-            // Parent SafeArea already clears the notch; keep a small inset + scrim.
-            paddingTop: usePhoneFrame ? 16 : 10,
+            // Phone pulls content under the status bar (marginTop: -insets.top).
+            // Top controls must re-apply the safe inset or they sit under the notch.
+            paddingTop: usePhoneFrame ? 16 : insets.top + 8,
           },
           usePhoneFrame && styles.topBarWrapDesktop,
         ]}

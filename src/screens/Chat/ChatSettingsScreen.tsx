@@ -1831,7 +1831,7 @@ export default function ChatSettingsScreen() {
         {
           icon: 'moon-outline',
           title: 'Dark & Night',
-          body: 'Appearance → Dark for classic black UI, or Night for a deep navy dark theme.',
+          body: 'Appearance → ChatReel Blue or Gray for light UI, Dark for classic black, or Night for a deep navy dark theme.',
         },
         {
           icon: 'color-palette-outline',
