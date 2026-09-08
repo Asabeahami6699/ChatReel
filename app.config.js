@@ -226,7 +226,6 @@ module.exports = {
     ],
     'expo-sqlite',
     '@react-native-community/datetimepicker',
-    'expo-screen-capture',
   ],
   extra: {
     eas: {
