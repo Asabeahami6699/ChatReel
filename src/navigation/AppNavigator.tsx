@@ -58,6 +58,7 @@ import { IncomingCallOverlay } from '../components/IncomingCallOverlay';
 import { FloatingCallOverlay } from '../components/FloatingCallOverlay';
 import { ActiveCallLayer } from '../components/ActiveCallLayer';
 import { useChatSettings } from '../context/ChatSettingsContext';
+import { useAppChrome } from '../context/AppChromeContext';
 import { ReelsMainTabFocusContext } from '../context/ReelsMainTabFocusContext';
 import { blurActiveElementOnWeb } from '../lib/webFocus';
 
@@ -69,25 +70,48 @@ export function ThemedPhoneTabBar({
   theme,
   bottomInset,
   hidden,
+  /** When the icon bar is hidden (e.g. Settings), still paint a themed inset strip. */
+  keepBottomInset = false,
   ...props
 }: MaterialTopTabBarProps & {
   theme: ChatThemeTokens;
   bottomInset: number;
   hidden?: boolean;
+  keepBottomInset?: boolean;
 }) {
-  if (hidden) return null;
+  const barBg = theme.listCardBg;
+  const pad = Math.max(bottomInset, Platform.OS === 'android' ? 8 : 0);
+
+  if (hidden) {
+    // Reels stays fully immersive (no strip). Other stacks still need a themed
+    // home-indicator fill so Appearance → Dark/Night doesn't flash white.
+    if (!keepBottomInset || pad <= 0) return null;
+    return <View style={{ height: pad, backgroundColor: barBg }} />;
+  }
+
   return (
     <View
       style={[
         styles.phoneTabBarShell,
         {
-          backgroundColor: theme.listCardBg,
+          backgroundColor: barBg,
           borderTopColor: theme.listBorder,
-          paddingBottom: Math.max(bottomInset, Platform.OS === 'android' ? 8 : 0),
+          paddingBottom: pad,
         },
       ]}
     >
-      <MaterialTopTabBar {...props} />
+      <MaterialTopTabBar
+        {...props}
+        style={[
+          props.style,
+          {
+            backgroundColor: barBg,
+            elevation: 0,
+            shadowOpacity: 0,
+            borderTopWidth: 0,
+          },
+        ]}
+      />
     </View>
   );
 }
@@ -281,6 +305,7 @@ const MainTabNavigator = () => {
             theme={theme}
             bottomInset={insets.bottom}
             hidden={hideTabBar}
+            keepBottomInset={hideTabBar && currentTab !== 'Reels'}
           />
         );
       }}
@@ -558,10 +583,10 @@ function MainShell() {
 export const AppNavigator = () => {
   const { width } = useWindowDimensions();
   const { theme } = useChatSettings();
+  const chrome = useAppChrome();
   const isWebDesktop = Platform.OS === 'web' && width >= MOBILE_BREAKPOINT;
-  // WhatsApp/Telegram-style: themed shell under the status bar. Use header
-  // surface (not pure white) so light themes keep dark status icons readable.
-  const shellBg = theme.listHeaderBg;
+  // Prefer chrome override (e.g. Reels immersive black) so status icons stay readable.
+  const shellBg = chrome.topBg || theme.listHeaderBg;
 
   return (
     <SafeAreaView
@@ -572,7 +597,7 @@ export const AppNavigator = () => {
       edges={isWebDesktop ? undefined : ['top', 'left', 'right']}
     >
       <StatusBar
-        barStyle={theme.isDark ? 'light-content' : 'dark-content'}
+        barStyle={chrome.statusBarStyle}
         backgroundColor={shellBg}
         translucent={false}
       />

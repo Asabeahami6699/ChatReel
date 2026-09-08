@@ -104,7 +104,7 @@ router.post(
 );
 
 /**
- * List active (non-revoked) devices for this account.
+ * List active (non-revoked) login devices + QR-linked account pairings.
  */
 router.get(
   '/devices',
@@ -112,11 +112,12 @@ router.get(
   asyncHandler(async (req: AuthedRequest, res) => {
     const installationId =
       typeof req.query.installation_id === 'string' ? req.query.installation_id : null;
+    const userId = req.userId!;
 
     const { data, error } = await supabaseAdmin
       .from('account_trusted_devices')
       .select(DEVICE_SELECT)
-      .eq('user_id', req.userId!)
+      .eq('user_id', userId)
       .is('revoked_at', null)
       .order('last_seen_at', { ascending: false });
 
@@ -125,9 +126,85 @@ router.get(
     const devices = ((data ?? []) as TrustedDeviceRow[]).map((d) => ({
       ...d,
       is_current: Boolean(installationId && d.installation_id === installationId),
+      kind: 'session' as const,
     }));
 
-    return res.json({ devices });
+    const { data: links, error: linkErr } = await supabaseAdmin
+      .from('linked_devices')
+      .select('id, user_id, linked_user_id, linked_at')
+      .or(`user_id.eq.${userId},linked_user_id.eq.${userId}`)
+      .order('linked_at', { ascending: false });
+
+    if (linkErr) {
+      // Table missing shouldn't break the sessions list.
+      console.warn('[sessions] linked_devices list failed:', linkErr.message);
+      return res.json({ devices, linked: [] });
+    }
+
+    const peerIds = Array.from(
+      new Set(
+        (links ?? []).map((row) =>
+          row.user_id === userId ? row.linked_user_id : row.user_id
+        )
+      )
+    );
+
+    let profileByUser = new Map<string, { display_name: string | null; avatar_url: string | null }>();
+    if (peerIds.length > 0) {
+      const { data: profiles } = await supabaseAdmin
+        .from('profiles')
+        .select('user_id, display_name, avatar_url')
+        .in('user_id', peerIds);
+      profileByUser = new Map(
+        (profiles ?? []).map((p) => [
+          p.user_id as string,
+          {
+            display_name: (p.display_name as string | null) ?? null,
+            avatar_url: (p.avatar_url as string | null) ?? null,
+          },
+        ])
+      );
+    }
+
+    const linked = (links ?? []).map((row) => {
+      const peerId = row.user_id === userId ? row.linked_user_id : row.user_id;
+      const profile = profileByUser.get(peerId);
+      return {
+        id: row.id as string,
+        peer_user_id: peerId as string,
+        label: profile?.display_name?.trim() || 'Linked account',
+        avatar_url: profile?.avatar_url ?? null,
+        linked_at: row.linked_at as string,
+        kind: 'linked' as const,
+      };
+    });
+
+    return res.json({ devices, linked });
+  })
+);
+
+/**
+ * Remove a QR account-link pairing.
+ */
+router.delete(
+  '/linked/:id',
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const id = z.string().uuid().parse(req.params.id);
+    const userId = req.userId!;
+
+    const { data, error } = await supabaseAdmin
+      .from('linked_devices')
+      .delete()
+      .eq('id', id)
+      .or(`user_id.eq.${userId},linked_user_id.eq.${userId}`)
+      .select('id')
+      .maybeSingle();
+
+    if (error) return res.status(500).json({ error: error.message });
+    if (!data) return res.status(404).json({ error: 'Linked device not found' });
+
+    return res.json({ ok: true });
   })
 );
 

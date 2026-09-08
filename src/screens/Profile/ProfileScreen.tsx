@@ -10,6 +10,7 @@ import {
   Image,
   StyleSheet,
   Animated,
+  Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardSafeScreen } from '../../components/KeyboardSafeScreen';
@@ -72,12 +73,12 @@ const AvatarPreview = ({
     <View style={styles.avatarContainer}>
       <TouchableOpacity onPress={onPress} disabled={loading} activeOpacity={0.8}>
         <Animated.View style={[styles.avatarWrapper, { transform: [{ scale: scaleAnim }] }]}>
-          <View style={[styles.gradientBorder, { backgroundColor: theme.listCardBg }]}>
+          <View style={[styles.gradientBorder, { backgroundColor: theme.listCardBg, borderColor: theme.primary }]}>
             {uri ? (
               <Image source={{ uri }} style={styles.avatar} resizeMode="cover" />
             ) : (
-              <View style={[styles.avatarPlaceholder, { backgroundColor: theme.inputBarBg }]}>
-                <Text style={styles.avatarText}>👤</Text>
+              <View style={[styles.avatarPlaceholder, { backgroundColor: theme.inputFieldBg }]}>
+                <Ionicons name="person" size={36} color={theme.listSecondaryText} />
               </View>
             )}
           </View>
@@ -85,15 +86,25 @@ const AvatarPreview = ({
       </TouchableOpacity>
 
       <TouchableOpacity
-        style={[styles.changeAvatarBtn, loading && styles.disabledBtn]}
+        style={[
+          styles.changeAvatarBtn,
+          { backgroundColor: theme.searchBg, borderColor: theme.listBorder },
+          loading && styles.disabledBtn,
+        ]}
         onPress={() => {
           pulse();
           onPress();
         }}
         disabled={loading}
       >
-        <Text style={[styles.changeAvatarText, loading && styles.disabledText]}>
-          {loading ? 'Uploading...' : 'Change Avatar'}
+        <Text
+          style={[
+            styles.changeAvatarText,
+            { color: theme.primary },
+            loading && styles.disabledText,
+          ]}
+        >
+          {loading ? 'Uploading...' : 'Change photo'}
         </Text>
       </TouchableOpacity>
     </View>
@@ -368,32 +379,95 @@ const ProfileScreen = ({ navigation }: { navigation: any }) => {
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.listBg }}>
-      {/* === Header with Back Button === */}
-      <View style={[styles.header, { backgroundColor: theme.headerBg }]}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={28} color="#fff" />
+      <View
+        style={[
+          styles.header,
+          {
+            backgroundColor: theme.headerBg,
+            paddingTop: insets.top + 8,
+          },
+        ]}
+      >
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton} hitSlop={10}>
+          <Ionicons name="arrow-back" size={24} color={theme.headerText} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Edit Profile</Text>
+        <Text style={[styles.headerTitle, { color: theme.headerText }]}>Edit Profile</Text>
         <View style={{ width: 40 }} />
       </View>
 
       <KeyboardSafeScreen contentContainerStyle={styles.scrollContainer} bottomOffset={100}>
-        {/* === Profile Card === */}
+        <View style={styles.hero}>
+          <AvatarPreview uri={avatarUrl} onPress={uploadAvatar} loading={uploadingAvatar} />
+          <Text style={[styles.heroHint, { color: theme.listSecondaryText }]}>
+            This is how you appear in chats and reels
+          </Text>
+        </View>
+
         <View
           style={[
             styles.card,
             {
               backgroundColor: theme.listCardBg,
               borderColor: theme.listBorder,
-              borderWidth: theme.isDark ? 1 : 0,
             },
           ]}
         >
-          <AvatarPreview uri={avatarUrl} onPress={uploadAvatar} loading={uploadingAvatar} />
+          <Text style={[styles.sectionTitle, { color: theme.listSecondaryText }]}>About you</Text>
+          <FormField
+            label="Display Name"
+            control={control}
+            name="display_name"
+            error={errors.display_name}
+            placeholder="Your name"
+            labelColor={theme.listPrimaryText}
+            inputBg={theme.inputFieldBg}
+            inputColor={theme.listPrimaryText}
+            borderColor={theme.listBorder}
+            placeholderColor={theme.searchPlaceholder}
+            accent={theme.primary}
+          />
+          <FormField
+            label="Email"
+            control={control}
+            name="email"
+            error={errors.email}
+            placeholder="you@example.com"
+            keyboardType="email-address"
+            autoCapitalize="none"
+            labelColor={theme.listPrimaryText}
+            inputBg={theme.inputFieldBg}
+            inputColor={theme.listPrimaryText}
+            borderColor={theme.listBorder}
+            placeholderColor={theme.searchPlaceholder}
+            accent={theme.primary}
+          />
+          <FormField
+            label="Bio"
+            control={control}
+            name="bio"
+            error={errors.bio}
+            placeholder="A short line about you"
+            multiline
+            labelColor={theme.listPrimaryText}
+            inputBg={theme.inputFieldBg}
+            inputColor={theme.listPrimaryText}
+            borderColor={theme.listBorder}
+            placeholderColor={theme.searchPlaceholder}
+            accent={theme.primary}
+          />
+        </View>
 
-          <FormField label="Display Name" control={control} name="display_name" error={errors.display_name} placeholder="John Doe" labelColor={theme.listPrimaryText} inputBg={theme.searchBg} inputColor={theme.listPrimaryText} borderColor={theme.listBorder} />
-          <FormField label="Email" control={control} name="email" error={errors.email} placeholder="john@example.com" keyboardType="email-address" labelColor={theme.listPrimaryText} inputBg={theme.searchBg} inputColor={theme.listPrimaryText} borderColor={theme.listBorder} />
-          <FormField label="Bio" control={control} name="bio" error={errors.bio} placeholder="Tell us about yourself..." multiline labelColor={theme.listPrimaryText} inputBg={theme.searchBg} inputColor={theme.listPrimaryText} borderColor={theme.listBorder} />
+        <View
+          style={[
+            styles.card,
+            {
+              backgroundColor: theme.listCardBg,
+              borderColor: theme.listBorder,
+              marginTop: 14,
+            },
+          ]}
+        >
+          <Text style={[styles.sectionTitle, { color: theme.listSecondaryText }]}>Location</Text>
           <FormSelectField
             label="Country"
             control={control}
@@ -402,7 +476,19 @@ const ProfileScreen = ({ navigation }: { navigation: any }) => {
             placeholder="Select country"
             error={errors.country}
           />
-          <FormField label="Region" control={control} name="region" error={errors.region} placeholder="California" labelColor={theme.listPrimaryText} inputBg={theme.searchBg} inputColor={theme.listPrimaryText} borderColor={theme.listBorder} />
+          <FormField
+            label="Region"
+            control={control}
+            name="region"
+            error={errors.region}
+            placeholder="State or region"
+            labelColor={theme.listPrimaryText}
+            inputBg={theme.inputFieldBg}
+            inputColor={theme.listPrimaryText}
+            borderColor={theme.listBorder}
+            placeholderColor={theme.searchPlaceholder}
+            accent={theme.primary}
+          />
           <FormSelectField
             label="Language"
             control={control}
@@ -412,12 +498,26 @@ const ProfileScreen = ({ navigation }: { navigation: any }) => {
             error={errors.language}
           />
 
-          {/* === Status === */}
           <View style={styles.field}>
             <Text style={[styles.label, { color: theme.listPrimaryText }]}>Status</Text>
-            <View style={[styles.statusBadge, theme.isDark && { backgroundColor: '#111' }]}>
-              <View style={[styles.statusDot, currentAppStatus === 'Online' ? styles.onlineDot : styles.offlineDot]} />
-              <Text style={[styles.statusBadgeText, { color: theme.listPrimaryText }]}>{currentAppStatus}</Text>
+            <View
+              style={[
+                styles.statusBadge,
+                {
+                  backgroundColor: theme.isDark ? theme.inputFieldBg : theme.searchBg,
+                  borderColor: theme.listBorder,
+                },
+              ]}
+            >
+              <View
+                style={[
+                  styles.statusDot,
+                  currentAppStatus === 'Online' ? styles.onlineDot : styles.offlineDot,
+                ]}
+              />
+              <Text style={[styles.statusBadgeText, { color: theme.listPrimaryText }]}>
+                {currentAppStatus}
+              </Text>
               {currentAppStatus === 'Online' && <StatusPulseDot />}
             </View>
           </View>
@@ -425,9 +525,18 @@ const ProfileScreen = ({ navigation }: { navigation: any }) => {
       </KeyboardSafeScreen>
 
       <KeyboardStickyFooter>
-        <View style={styles.floatingButtonContainer}>
+        <View
+          style={[
+            styles.floatingButtonContainer,
+            { paddingBottom: Math.max(insets.bottom, 12) },
+          ]}
+        >
           <TouchableOpacity
-            style={[styles.saveBtn, saving && styles.saveBtnDisabled]}
+            style={[
+              styles.saveBtn,
+              { backgroundColor: theme.primary },
+              saving && styles.saveBtnDisabled,
+            ]}
             onPress={handleSubmit(onSubmit)}
             disabled={saving}
           >
@@ -456,6 +565,8 @@ const FormField = ({
   inputBg,
   inputColor,
   borderColor,
+  placeholderColor,
+  accent,
   ...props
 }: {
   label: string;
@@ -466,6 +577,8 @@ const FormField = ({
   inputBg?: string;
   inputColor?: string;
   borderColor?: string;
+  placeholderColor?: string;
+  accent?: string;
   [key: string]: any;
 }) => {
   const [focused, setFocused] = useState(false);
@@ -479,15 +592,16 @@ const FormField = ({
         render={({ field }) => (
           <TextInput
             {...props}
-            placeholderTextColor={inputColor ? `${inputColor}99` : '#999'}
+            placeholderTextColor={placeholderColor || '#999'}
+            underlineColorAndroid="transparent"
             style={[
               styles.input,
               inputBg ? { backgroundColor: inputBg } : null,
               inputColor ? { color: inputColor } : null,
               borderColor ? { borderColor } : null,
               error && styles.inputError,
-              focused && styles.inputFocused,
-              focused && inputBg ? { backgroundColor: inputBg } : null,
+              focused && accent ? { borderColor: accent } : null,
+              props.multiline ? styles.inputMultiline : null,
             ]}
             value={field.value}
             onChangeText={field.onChange}
@@ -504,116 +618,111 @@ const FormField = ({
   );
 };
 
-// === Styles ===
 const styles = StyleSheet.create({
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingTop: 10,
-    paddingBottom: 16,
-    elevation: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
+    paddingHorizontal: 12,
+    paddingBottom: 14,
   },
   backButton: {
-    padding: 8,
+    width: 40,
+    height: 40,
     borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.16)',
   },
   headerTitle: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '700',
-    color: '#fff',
-    letterSpacing: 0.5,
+    letterSpacing: 0.2,
   },
   scrollContainer: {
-    padding: 20,
-    paddingBottom: 100,
+    padding: 16,
+    paddingBottom: 120,
+  },
+  hero: {
+    alignItems: 'center',
+    marginBottom: 8,
+    paddingTop: 8,
+  },
+  heroHint: {
+    fontSize: 13,
+    textAlign: 'center',
+    marginTop: 4,
+    marginBottom: 8,
   },
   card: {
-    borderRadius: 20,
-    padding: 24,
-    elevation: 6,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
+    borderRadius: 16,
+    padding: 18,
+    borderWidth: StyleSheet.hairlineWidth,
   },
-  avatarContainer: { alignItems: 'center', marginBottom: 24 },
+  sectionTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    marginBottom: 14,
+  },
+  avatarContainer: { alignItems: 'center', marginBottom: 8 },
   avatarWrapper: {
     position: 'relative',
   },
   gradientBorder: {
-    width: 70,
-    height: 70,
-    borderRadius: 55,
-    padding: 4,
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    padding: 3,
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 3,
-    borderColor: '#0066cc',
-    elevation: 4,
-    shadowColor: '#0066cc',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
+    borderWidth: 2,
   },
   avatar: {
-    width: 60,
-    height: 60,
-    borderRadius: 50,
+    width: 88,
+    height: 88,
+    borderRadius: 44,
   },
   avatarPlaceholder: {
-    width: 60,
-    height: 60,
-    borderRadius: 50,
+    width: 88,
+    height: 88,
+    borderRadius: 44,
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  avatarText: {
-    fontSize: 42,
   },
   changeAvatarBtn: {
     marginTop: 12,
     paddingHorizontal: 16,
     paddingVertical: 8,
-    backgroundColor: '#e3f2fd',
     borderRadius: 20,
-    elevation: 2,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   changeAvatarText: {
-    color: '#0066cc',
     fontWeight: '600',
     fontSize: 14,
   },
   disabledBtn: { opacity: 0.6 },
-  disabledText: { color: '#999' },
-  field: { marginBottom: 18 },
+  disabledText: { opacity: 0.7 },
+  field: { marginBottom: 16 },
   label: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     marginBottom: 8,
-    letterSpacing: 0.3,
   },
   input: {
-    borderWidth: 1.5,
-    borderColor: '#ddd',
+    borderWidth: 1,
     borderRadius: 12,
-    padding: 14,
+    paddingHorizontal: 14,
+    paddingVertical: Platform.OS === 'ios' ? 14 : 12,
     fontSize: 16,
+    minHeight: 48,
   },
-  inputFocused: {
-    borderColor: '#0066cc',
-    elevation: 3,
-    shadowColor: '#0066cc',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
+  inputMultiline: {
+    minHeight: 96,
+    textAlignVertical: 'top',
+    paddingTop: 12,
   },
   inputError: {
     borderColor: '#d32f2f',
@@ -628,19 +737,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 10,
-    paddingHorizontal: 16,
-    backgroundColor: '#f0f7ff',
-    borderRadius: 25,
+    paddingHorizontal: 14,
+    borderRadius: 20,
     alignSelf: 'flex-start',
-    borderWidth: 1,
-    borderColor: '#b3e0ff',
+    borderWidth: StyleSheet.hairlineWidth,
     position: 'relative',
     overflow: 'hidden',
   },
   statusDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
     marginRight: 10,
   },
   onlineDot: {
@@ -651,11 +758,11 @@ const styles = StyleSheet.create({
   },
   pulseDot: {
     position: 'absolute',
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
     backgroundColor: '#4CAF50',
-    left: 16,
+    left: 14,
   },
   statusBadgeText: {
     fontSize: 14,
@@ -663,22 +770,16 @@ const styles = StyleSheet.create({
   },
   floatingButtonContainer: {
     paddingHorizontal: 20,
-    paddingVertical: 12,
+    paddingTop: 10,
     alignItems: 'center',
   },
   saveBtn: {
     flexDirection: 'row',
-    backgroundColor: '#0066cc',
-    paddingVertical: 16,
-    paddingHorizontal: 32,
-    borderRadius: 30,
+    paddingVertical: 15,
+    paddingHorizontal: 28,
+    borderRadius: 28,
     alignItems: 'center',
     justifyContent: 'center',
-    elevation: 8,
-    shadowColor: '#0066cc',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
     minWidth: 200,
   },
   saveBtnDisabled: {
@@ -688,7 +789,6 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '700',
     fontSize: 16,
-    letterSpacing: 0.5,
   },
 });
 

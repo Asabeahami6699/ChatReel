@@ -1,78 +1,62 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   FlatList,
-  Alert,
   Image,
   Platform,
   ActivityIndicator,
   TouchableOpacity,
-  Animated,
-  Easing,
   Pressable,
+  TextInput,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { TextInput } from 'react-native-paper';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useIsFocused, useNavigation } from '@react-navigation/native';
 import { api } from '../../lib/api';
 import { useAuth } from '../../hooks/useAuth';
 import { useCurrentProfileId } from '../../hooks/useCurrentProfileId';
 import { useFriendshipsRealtime } from '../../hooks/useFriendshipsRealtime';
 import { notifyFriendshipsListenersImmediate } from '../../lib/friendshipsRealtime';
 import { useChatSettings } from '../../context/ChatSettingsContext';
+import { useAppChrome } from '../../context/AppChromeContext';
+import { showAppToast } from '../../lib/appToast';
+import {
+  getAddFriendPrefetchCache,
+  prefetchAddFriend,
+  upsertAddFriendFriendships,
+  type AddFriendFriendship,
+  type AddFriendProfile,
+  type SuggestionSection,
+  type SuggestionType,
+} from '../../lib/addFriendPrefetch';
 
-interface Profile {
-  id: string;
-  user_id: string;
-  display_name: string;
-  email: string;
-  avatar_url?: string;
-  region?: string;
-  country?: string;
-  mutual_friends_count?: number;
-  reason?: string;
-}
-
-interface Friendship {
-  id: string;
-  user_id: string;
-  friend_id: string;
-  status: 'pending' | 'accepted' | 'blocked';
-}
-
-type SuggestionType = 'mutual_friends' | 'location' | 'new_users';
-
-const LIGHT_C = {
-  primary: '#007AFF',
-  primaryDark: '#1e73ce',
-  primarySoft: '#e8f2ff',
-  bg: '#f4f8fc',
-  surface: '#ffffff',
-  border: '#e2eaf3',
-  text: '#1c1c1e',
-  muted: '#6b7280',
+const SECTION_META: Record<
+  SuggestionType,
+  { icon: keyof typeof Ionicons.glyphMap; color: string }
+> = {
+  mutual_friends: { icon: 'people', color: '#0ea5e9' },
+  location: { icon: 'location', color: '#22c55e' },
+  new_users: { icon: 'sparkles', color: '#f59e0b' },
 };
 
-/** Defaults for StyleSheet; screens override with theme via inline styles. */
-const C = LIGHT_C;
-
-const SECTION_META: Record<SuggestionType, { icon: keyof typeof Ionicons.glyphMap; color: string }> = {
-  mutual_friends: { icon: 'people', color: '#007AFF' },
-  location: { icon: 'location', color: '#34c759' },
-  new_users: { icon: 'sparkles', color: '#af52de' },
-};
-
-function ProfileAvatar({ uri, name }: { uri?: string; name: string }) {
+function ProfileAvatar({
+  uri,
+  name,
+  primary,
+}: {
+  uri?: string;
+  name: string;
+  primary: string;
+}) {
   const [error, setError] = useState(false);
   const letter = (name || '?').charAt(0).toUpperCase();
 
   if (!uri || error) {
     return (
-      <View style={styles.avatarFallback}>
+      <View style={[styles.avatar, { backgroundColor: primary }]}>
         <Text style={styles.avatarLetter}>{letter}</Text>
       </View>
     );
@@ -84,44 +68,45 @@ function ProfileAvatar({ uri, name }: { uri?: string; name: string }) {
 export default function AddFriendsListScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const isFocused = useIsFocused();
   const { user } = useAuth();
   const { theme } = useChatSettings();
-  const C = useMemo(
-    () =>
-      theme.isDark
-        ? {
-            primary: theme.primary,
-            primaryDark: theme.accent,
-            primarySoft: '#1a2a3a',
-            bg: theme.listBg,
-            surface: theme.listCardBg,
-            border: theme.listBorder,
-            text: theme.listPrimaryText,
-            muted: theme.listSecondaryText,
-          }
-        : LIGHT_C,
-    [theme]
-  );
-
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchExpanded, setSearchExpanded] = useState(false);
-  const searchAnim = useRef(new Animated.Value(0)).current;
-  const searchInputRef = useRef<React.ComponentRef<typeof TextInput>>(null);
-
-  const [profiles, setProfiles] = useState<Profile[]>([]);
-  const [suggestions, setSuggestions] = useState<
-    { type: SuggestionType; data: Profile[]; title: string }[]
-  >([]);
-  const [friendships, setFriendships] = useState<Friendship[]>([]);
+  const { setChrome, resetChrome } = useAppChrome();
   const currentProfileId = useCurrentProfileId();
+  const [searchFocused, setSearchFocused] = useState(false);
+
+  const cached = getAddFriendPrefetchCache({ allowStale: true });
+  const [suggestions, setSuggestions] = useState<SuggestionSection[]>(
+    () => cached?.suggestions ?? []
+  );
+  const [friendships, setFriendships] = useState<AddFriendFriendship[]>(
+    () => cached?.friendships ?? []
+  );
+  const [profiles, setProfiles] = useState<AddFriendProfile[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
-  const [loadingSuggestions, setLoadingSuggestions] = useState(true);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(
+    () => !(cached?.suggestions && cached.suggestions.length > 0)
+  );
+  const [sendingId, setSendingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isFocused) return;
+    setChrome({
+      topBg: theme.listHeaderBg,
+      statusBarStyle: theme.isDark ? 'light-content' : 'dark-content',
+      immersive: false,
+    });
+    return () => resetChrome();
+  }, [isFocused, theme.listHeaderBg, theme.isDark, setChrome, resetChrome]);
 
   const loadFriendships = useCallback(async () => {
     if (!currentProfileId) return;
     try {
       const { friendships: data } = await api.friendships.list();
-      setFriendships((data as Friendship[]) || []);
+      const rows = (data as AddFriendFriendship[]) || [];
+      setFriendships(rows);
+      upsertAddFriendFriendships(rows);
     } catch {
       /* ignore */
     }
@@ -129,33 +114,20 @@ export default function AddFriendsListScreen() {
 
   const refreshSuggestions = useCallback(async () => {
     if (!currentProfileId || !user?.id) return;
-    setLoadingSuggestions(true);
+    const hadCache = (getAddFriendPrefetchCache({ allowStale: true })?.suggestions.length ?? 0) > 0;
+    if (!hadCache) setLoadingSuggestions(true);
     try {
-      const { mutual, location, new_users } = await api.profiles.suggestions();
-      const allSuggestions = [
-        {
-          type: 'mutual_friends' as SuggestionType,
-          data: mutual as Profile[],
-          title: 'People you may know',
-        },
-        { type: 'location' as SuggestionType, data: location as Profile[], title: 'Near you' },
-        {
-          type: 'new_users' as SuggestionType,
-          data: new_users as Profile[],
-          title: 'New on ChatReel',
-        },
-      ].filter((section) => section.data.length > 0);
-      setSuggestions(allSuggestions);
-    } catch (error) {
-      console.error('Suggestions error:', error);
+      const next = await prefetchAddFriend();
+      if (next) {
+        setSuggestions(next.suggestions);
+        setFriendships(next.friendships);
+      }
+    } catch {
+      /* keep cache */
     } finally {
       setLoadingSuggestions(false);
     }
   }, [currentProfileId, user?.id]);
-
-  useEffect(() => {
-    void loadFriendships();
-  }, [loadFriendships]);
 
   useEffect(() => {
     void refreshSuggestions();
@@ -176,47 +148,18 @@ export default function AddFriendsListScreen() {
       setLoading(true);
       try {
         const { profiles: data } = await api.profiles.search(searchQuery);
-        setProfiles((data as Profile[]) || []);
-      } catch (err) {
-        console.error('Search error:', err);
-        Alert.alert('Error', 'Failed to search users');
+        setProfiles((data as AddFriendProfile[]) || []);
+      } catch {
+        showAppToast('Failed to search users', { isError: true });
       } finally {
         setLoading(false);
       }
-    }, 400);
+    }, 350);
 
     return () => clearTimeout(timeoutId);
   }, [searchQuery, user?.id]);
 
-  const openSearch = useCallback(() => {
-    setSearchExpanded(true);
-    Animated.timing(searchAnim, {
-      toValue: 1,
-      duration: 280,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: false,
-    }).start(() => {
-      searchInputRef.current?.focus();
-    });
-  }, [searchAnim]);
-
-  const closeSearch = useCallback(() => {
-    searchInputRef.current?.blur();
-    Animated.timing(searchAnim, {
-      toValue: 0,
-      duration: 220,
-      easing: Easing.in(Easing.cubic),
-      useNativeDriver: false,
-    }).start(({ finished }) => {
-      if (finished) {
-        setSearchExpanded(false);
-        setSearchQuery('');
-        setProfiles([]);
-      }
-    });
-  }, [searchAnim]);
-
-  const getFriendshipStatus = (targetProfileId: string): Friendship['status'] | null => {
+  const getFriendshipStatus = (targetProfileId: string): AddFriendFriendship['status'] | null => {
     const found = friendships.find(
       (f) =>
         (f.user_id === currentProfileId && f.friend_id === targetProfileId) ||
@@ -227,34 +170,38 @@ export default function AddFriendsListScreen() {
 
   const handleAddFriend = async (targetProfileId: string) => {
     if (!currentProfileId) {
-      Alert.alert('Error', 'Profile not loaded yet.');
+      showAppToast('Profile not loaded yet', { isError: true });
       return;
     }
-
     if (targetProfileId === currentProfileId) {
-      Alert.alert('Error', "You can't add yourself!");
+      showAppToast("You can't add yourself", { isError: true });
       return;
     }
-
     const status = getFriendshipStatus(targetProfileId);
     if (status === 'pending') {
-      Alert.alert('Info', 'Request already pending.');
+      showAppToast('Request already pending');
       return;
     }
     if (status === 'accepted') {
-      Alert.alert('Info', 'You are already friends.');
+      showAppToast('You are already friends');
       return;
     }
 
+    setSendingId(targetProfileId);
     try {
       const { friendship: data } = await api.friendships.request(targetProfileId);
-      setFriendships((prev) => [...prev, data as Friendship]);
+      setFriendships((prev) => {
+        const next = [...prev, data as AddFriendFriendship];
+        upsertAddFriendFriendships(next);
+        return next;
+      });
       notifyFriendshipsListenersImmediate();
-      Alert.alert('Success', 'Friend request sent!');
+      showAppToast('Friend request sent');
     } catch (err: unknown) {
-      console.error('Add friend error:', err);
       const message = err instanceof Error ? err.message : 'Failed to send request';
-      Alert.alert('Error', message);
+      showAppToast(message, { isError: true });
+    } finally {
+      setSendingId(null);
     }
   };
 
@@ -263,7 +210,12 @@ export default function AddFriendsListScreen() {
 
     if (status === 'accepted') {
       return (
-        <View style={[styles.statusPill, styles.friendsPill]}>
+        <View
+          style={[
+            styles.statusPill,
+            { backgroundColor: theme.isDark ? 'rgba(34,197,94,0.16)' : '#e8f5e9' },
+          ]}
+        >
           <Ionicons name="checkmark-circle" size={14} color="#2e7d32" />
           <Text style={styles.friendsPillText}>Friends</Text>
         </View>
@@ -272,45 +224,53 @@ export default function AddFriendsListScreen() {
 
     if (status === 'pending') {
       return (
-        <View style={[styles.statusPill, styles.pendingPill]}>
+        <View
+          style={[
+            styles.statusPill,
+            { backgroundColor: theme.isDark ? 'rgba(245,158,11,0.16)' : '#fff3e0' },
+          ]}
+        >
           <Ionicons name="time-outline" size={14} color="#e65100" />
           <Text style={styles.pendingPillText}>Pending</Text>
         </View>
       );
     }
 
+    const busy = sendingId === profileId;
     return (
       <TouchableOpacity
-        style={styles.addBtn}
+        style={[styles.addBtn, { backgroundColor: theme.primary }]}
         onPress={() => void handleAddFriend(profileId)}
         activeOpacity={0.85}
+        disabled={busy}
       >
-        <Ionicons name="person-add" size={16} color="#fff" />
-        <Text style={styles.addBtnText}>Add</Text>
+        {busy ? (
+          <ActivityIndicator size="small" color="#fff" />
+        ) : (
+          <>
+            <Ionicons name="person-add" size={15} color="#fff" />
+            <Text style={styles.addBtnText}>Add</Text>
+          </>
+        )}
       </TouchableOpacity>
     );
   };
 
-  const renderUser = ({ item }: { item: Profile }) => {
+  const renderUser = (item: AddFriendProfile) => {
     const displayName = item.display_name?.trim() || item.email?.split('@')[0] || 'User';
 
     return (
-      <View
-        style={[
-          styles.userCard,
-          { backgroundColor: C.surface, borderColor: C.border },
-        ]}
-      >
-        <ProfileAvatar uri={item.avatar_url} name={displayName} />
-        <View style={styles.userInfo}>
-          <Text style={[styles.userName, { color: C.text }]} numberOfLines={1}>
+      <View style={styles.row}>
+        <ProfileAvatar uri={item.avatar_url} name={displayName} primary={theme.primary} />
+        <View style={styles.rowText}>
+          <Text style={[styles.userName, { color: theme.listPrimaryText }]} numberOfLines={1}>
             {displayName}
           </Text>
-          <Text style={[styles.userEmail, { color: C.muted }]} numberOfLines={1}>
+          <Text style={[styles.userEmail, { color: theme.listSecondaryText }]} numberOfLines={1}>
             {item.email}
           </Text>
           {item.reason ? (
-            <Text style={[styles.reasonText, { color: C.primary }]} numberOfLines={1}>
+            <Text style={[styles.reasonText, { color: theme.primary }]} numberOfLines={1}>
               {item.reason}
             </Text>
           ) : null}
@@ -326,186 +286,204 @@ export default function AddFriendsListScreen() {
     );
   };
 
-  const renderSuggestionSection = ({
-    item,
-  }: {
-    item: { type: SuggestionType; data: Profile[]; title: string };
-  }) => {
-    const meta = SECTION_META[item.type];
-    return (
-      <View style={styles.section}>
-        <View style={styles.sectionHead}>
-          <View style={[styles.sectionIcon, { backgroundColor: `${meta.color}18` }]}>
-            <Ionicons name={meta.icon} size={16} color={meta.color} />
-          </View>
-          <Text style={[styles.sectionTitle, { color: C.text }]}>{item.title}</Text>
-          <Text style={[styles.sectionCount, { color: C.muted, backgroundColor: C.primarySoft }]}>
-            {item.data.length}
-          </Text>
-        </View>
-        {item.data.map((profile) => (
-          <React.Fragment key={`${item.type}-${profile.id}`}>
-            {renderUser({ item: profile })}
-          </React.Fragment>
-        ))}
-      </View>
-    );
-  };
-
   const isSearching = searchQuery.trim().length > 0;
-  const showResults = searchExpanded || isSearching;
 
-  const listHeader = (
-    <View style={styles.listHeader}>
-      {showResults ? (
-        <Text style={[styles.resultsLabel, { color: C.muted }]}>
-          {loading ? 'Searching…' : `${profiles.length} result${profiles.length === 1 ? '' : 's'}`}
-        </Text>
-      ) : (
-        <Text style={[styles.resultsLabel, { color: C.muted }]}>Suggested for you</Text>
-      )}
-    </View>
-  );
+  const listData = useMemo(() => {
+    if (isSearching) {
+      return profiles.map((p) => ({ kind: 'user' as const, key: `s-${p.id}`, profile: p }));
+    }
+    const rows: Array<
+      | { kind: 'header'; key: string; title: string; type: SuggestionType; count: number }
+      | { kind: 'user'; key: string; profile: AddFriendProfile }
+    > = [];
+    for (const section of suggestions) {
+      rows.push({
+        kind: 'header',
+        key: `h-${section.type}`,
+        title: section.title,
+        type: section.type,
+        count: section.data.length,
+      });
+      for (const p of section.data) {
+        rows.push({ kind: 'user', key: `${section.type}-${p.id}`, profile: p });
+      }
+    }
+    return rows;
+  }, [isSearching, profiles, suggestions]);
+
+  const searchActive = searchFocused || searchQuery.length > 0;
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: C.bg }]} edges={['left', 'right', 'bottom']}>
-      <LinearGradient
-        colors={['#0d47a1', '#1976d2', '#42a5f5']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={[styles.hero, { marginTop: -insets.top, paddingTop: insets.top + 8 }]}
+    <SafeAreaView
+      style={[styles.container, { backgroundColor: theme.listBg }]}
+      edges={['left', 'right', 'bottom']}
+    >
+      <View
+        style={[
+          styles.header,
+          {
+            backgroundColor: theme.listHeaderBg,
+            marginTop: -insets.top,
+            paddingTop: insets.top + 8,
+            borderBottomColor: theme.listBorder,
+          },
+        ]}
       >
-        <View style={styles.heroTop}>
+        <View style={styles.headerTop}>
           <TouchableOpacity
-            style={styles.backBtn}
+            style={[styles.backBtn, { backgroundColor: theme.searchBg }]}
             onPress={() => navigation.goBack()}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            hitSlop={8}
           >
-            <Ionicons name="arrow-back" size={22} color="#fff" />
+            <Ionicons name="arrow-back" size={22} color={theme.listHeaderText} />
           </TouchableOpacity>
-          <View style={styles.heroText}>
-            <Text style={styles.heroTitle}>Find Friends</Text>
-            <Text style={styles.heroSub}>Search or discover people to connect with</Text>
+          <View style={styles.headerText}>
+            <Text style={[styles.title, { color: theme.listHeaderText }]}>Add friends</Text>
+            <Text style={[styles.subtitle, { color: theme.listSecondaryText }]}>
+              Search people or pick a suggestion
+            </Text>
           </View>
         </View>
 
-        <View style={styles.searchRow}>
-          {!searchExpanded ? (
-            <TouchableOpacity
-              style={[styles.searchCollapsed, { backgroundColor: C.surface }]}
-              onPress={openSearch}
-              activeOpacity={0.9}
-            >
-              <Ionicons name="search" size={20} color={C.muted} />
-              <Text style={[styles.searchPlaceholder, { color: C.muted }]}>Search by name or email</Text>
-            </TouchableOpacity>
-          ) : null}
-
-          <Animated.View
-            pointerEvents={searchExpanded ? 'auto' : 'none'}
+        <View
+          style={[
+            styles.searchShell,
+            {
+              backgroundColor: theme.isDark ? theme.listCardBg : '#fff',
+              borderColor: searchActive ? theme.primary : 'transparent',
+              shadowOpacity: theme.isDark ? 0 : searchActive ? 0.12 : 0.06,
+              elevation: theme.isDark ? 0 : searchActive ? 4 : 2,
+            },
+          ]}
+        >
+          <View
             style={[
-              styles.searchExpandedWrap,
+              styles.searchIconCap,
               {
-                flex: searchAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 1] }),
-                opacity: searchAnim.interpolate({
-                  inputRange: [0, 0.35, 1],
-                  outputRange: [0, 0.5, 1],
-                }),
-                transform: [
-                  {
-                    scaleX: searchAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0.92, 1],
-                    }),
-                  },
-                ],
+                backgroundColor: searchActive
+                  ? theme.isDark
+                    ? `${theme.primary}33`
+                    : `${theme.primary}18`
+                  : theme.searchBg,
               },
             ]}
           >
-            {searchExpanded ? (
-              <View style={[styles.searchInputShell, { backgroundColor: C.surface }]}>
-                <TextInput
-                  ref={searchInputRef}
-                  mode="flat"
-                  placeholder="Search by name or email"
-                  value={searchQuery}
-                  onChangeText={setSearchQuery}
-                  style={styles.searchInput}
-                  underlineColor="transparent"
-                  theme={{ colors: { text: C.text, background: 'transparent' } }}
-                  left={<TextInput.Icon icon="magnify" color={C.muted} />}
-                  right={
-                    searchQuery.length > 0 ? (
-                      <TextInput.Icon icon="close" color={C.muted} onPress={() => setSearchQuery('')} />
-                    ) : undefined
-                  }
-                  returnKeyType="search"
-                />
-              </View>
-            ) : null}
-          </Animated.View>
-
-          {searchExpanded ? (
-            <Pressable style={styles.searchCloseBtn} onPress={closeSearch}>
-              <Ionicons name="close" size={22} color="#fff" />
-            </Pressable>
+            <Ionicons
+              name="search"
+              size={16}
+              color={searchActive ? theme.primary : theme.searchPlaceholder}
+            />
+          </View>
+          <TextInput
+            style={[styles.searchInput, { color: theme.searchText }]}
+            placeholder="Name, email, or @handle"
+            placeholderTextColor={theme.searchPlaceholder}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            onFocus={() => setSearchFocused(true)}
+            onBlur={() => setSearchFocused(false)}
+            autoCapitalize="none"
+            autoCorrect={false}
+            returnKeyType="search"
+            clearButtonMode="never"
+          />
+          {loading && isSearching ? (
+            <ActivityIndicator size="small" color={theme.primary} style={styles.searchSpinner} />
           ) : null}
+          {searchQuery.length > 0 ? (
+            <Pressable
+              style={[styles.clearChip, { backgroundColor: theme.searchBg }]}
+              onPress={() => setSearchQuery('')}
+              hitSlop={6}
+            >
+              <Ionicons name="close" size={14} color={theme.listSecondaryText} />
+            </Pressable>
+          ) : (
+            <Text style={[styles.searchHint, { color: theme.searchPlaceholder }]}>Find</Text>
+          )}
         </View>
-      </LinearGradient>
+      </View>
 
-      {loading && showResults ? (
-        <ActivityIndicator color={C.primary} style={styles.inlineLoader} />
-      ) : null}
-
-      {showResults ? (
-        <FlatList
-          data={profiles}
-          renderItem={renderUser}
-          keyExtractor={(item) => `search-${item.id}`}
-          ListHeaderComponent={listHeader}
-          ListEmptyComponent={
-            !loading ? (
-              <View style={styles.emptyBox}>
-                <Ionicons name="search-outline" size={40} color={C.muted} />
-                <Text style={[styles.emptyTitle, { color: C.text }]}>No users found</Text>
-                <Text style={[styles.emptySub, { color: C.muted }]}>Try a different name or email</Text>
-              </View>
-            ) : null
-          }
-          contentContainerStyle={styles.listContent}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        />
-      ) : (
-        <FlatList
-          data={suggestions}
-          renderItem={renderSuggestionSection}
-          keyExtractor={(item) => item.type}
-          ListHeaderComponent={listHeader}
-          ListEmptyComponent={
-            loadingSuggestions ? (
-              <View style={styles.emptyBox}>
-                <ActivityIndicator size="large" color={C.primary} />
-                <Text style={[styles.emptySub, { color: C.muted }]}>Loading suggestions…</Text>
-              </View>
-            ) : (
-              <View style={styles.emptyBox}>
-                <Ionicons name="people-outline" size={40} color={C.muted} />
-                <Text style={[styles.emptyTitle, { color: C.text }]}>No suggestions yet</Text>
-                <Text style={[styles.emptySub, { color: C.muted }]}>
-                  Tap search above to find friends by name or email
+      <FlatList
+        data={listData}
+        keyExtractor={(item) => item.key}
+        renderItem={({ item }) => {
+          if (item.kind === 'header') {
+            const meta = SECTION_META[item.type];
+            return (
+              <View style={styles.sectionHead}>
+                <View style={[styles.sectionIcon, { backgroundColor: `${meta.color}22` }]}>
+                  <Ionicons name={meta.icon} size={15} color={meta.color} />
+                </View>
+                <Text style={[styles.sectionTitle, { color: theme.listPrimaryText }]}>
+                  {item.title}
                 </Text>
-                <TouchableOpacity style={styles.emptySearchBtn} onPress={openSearch}>
-                  <Ionicons name="search" size={18} color="#fff" />
-                  <Text style={styles.emptySearchBtnText}>Search people</Text>
-                </TouchableOpacity>
+                <Text
+                  style={[
+                    styles.sectionCount,
+                    { color: theme.listSecondaryText, backgroundColor: theme.searchBg },
+                  ]}
+                >
+                  {item.count}
+                </Text>
               </View>
-            )
+            );
           }
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
-        />
-      )}
+          return renderUser(item.profile);
+        }}
+        ItemSeparatorComponent={() =>
+          !isSearching ? (
+            <View style={[styles.separator, { backgroundColor: theme.listBorder }]} />
+          ) : null
+        }
+        ListHeaderComponent={
+          <Text style={[styles.resultsLabel, { color: theme.sectionLabel }]}>
+            {isSearching
+              ? loading
+                ? 'Searching…'
+                : `${profiles.length} result${profiles.length === 1 ? '' : 's'}`
+              : 'Suggested for you'}
+          </Text>
+        }
+        ListEmptyComponent={
+          isSearching && !loading ? (
+            <View style={styles.emptyBox}>
+              <View style={[styles.emptyOrb, { backgroundColor: theme.searchBg }]}>
+                <Ionicons name="search-outline" size={32} color={theme.listSecondaryText} />
+              </View>
+              <Text style={[styles.emptyTitle, { color: theme.listPrimaryText }]}>No users found</Text>
+              <Text style={[styles.emptySub, { color: theme.listSecondaryText }]}>
+                Try a different name or email
+              </Text>
+            </View>
+          ) : !isSearching && loadingSuggestions ? (
+            <View style={styles.emptyBox}>
+              <ActivityIndicator size="large" color={theme.primary} />
+              <Text style={[styles.emptySub, { color: theme.listSecondaryText }]}>
+                Loading suggestions…
+              </Text>
+            </View>
+          ) : !isSearching ? (
+            <View style={styles.emptyBox}>
+              <LinearGradient
+                colors={[`${theme.primary}28`, `${theme.accent}14`]}
+                style={styles.emptyOrb}
+              >
+                <Ionicons name="people-outline" size={32} color={theme.primary} />
+              </LinearGradient>
+              <Text style={[styles.emptyTitle, { color: theme.listPrimaryText }]}>
+                No suggestions yet
+              </Text>
+              <Text style={[styles.emptySub, { color: theme.listSecondaryText }]}>
+                Search above to find friends by name or email
+              </Text>
+            </View>
+          ) : null
+        }
+        contentContainerStyle={[styles.listContent, { paddingBottom: insets.bottom + 28 }]}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      />
     </SafeAreaView>
   );
 }
@@ -513,198 +491,146 @@ export default function AddFriendsListScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: C.bg,
     alignSelf: Platform.OS === 'web' ? 'center' : 'stretch',
     width: Platform.OS === 'web' ? 420 : '100%',
     maxWidth: '100%',
   },
-  hero: {
+  header: {
     paddingHorizontal: 16,
-    paddingBottom: 18,
-    borderBottomLeftRadius: 22,
-    borderBottomRightRadius: 22,
+    paddingBottom: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  heroTop: {
+  headerTop: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 16,
-    gap: 10,
+    gap: 12,
+    marginBottom: 14,
   },
   backBtn: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.18)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  heroText: { flex: 1 },
-  heroTitle: {
-    fontSize: 24,
+  headerText: { flex: 1 },
+  title: {
+    fontSize: 28,
     fontWeight: '800',
-    color: '#fff',
+    letterSpacing: -0.6,
   },
-  heroSub: {
+  subtitle: {
     fontSize: 13,
-    color: 'rgba(255,255,255,0.85)',
+    fontWeight: '500',
     marginTop: 2,
   },
-  searchRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  searchCollapsed: {
-    flex: 1,
+  searchShell: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    backgroundColor: '#fff',
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 3,
+    borderRadius: 22,
+    borderWidth: 1.5,
+    paddingLeft: 6,
+    paddingRight: 10,
+    paddingVertical: 6,
+    shadowColor: '#0f172a',
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
   },
-  searchPlaceholder: {
-    fontSize: 15,
-    color: C.muted,
-    flex: 1,
-  },
-  searchExpandedWrap: {
-    overflow: 'hidden',
-    minWidth: 0,
-  },
-  searchInputShell: {
-    backgroundColor: '#fff',
-    borderRadius: 14,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  searchInput: {
-    height: 46,
-    backgroundColor: 'transparent',
-    fontSize: 15,
-  },
-  searchCloseBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+  searchIconCap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.2)',
   },
-  inlineLoader: {
-    marginTop: 12,
+  searchInput: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '500',
+    letterSpacing: -0.2,
+    paddingVertical: Platform.OS === 'android' ? 8 : 6,
+  },
+  searchSpinner: { marginRight: 2 },
+  clearChip: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  searchHint: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+    opacity: 0.7,
   },
   listContent: {
-    paddingHorizontal: 14,
-    paddingBottom: 32,
-  },
-  listHeader: {
-    paddingTop: 16,
-    paddingBottom: 8,
+    paddingHorizontal: 16,
+    flexGrow: 1,
   },
   resultsLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: C.muted,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.6,
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  section: {
-    marginBottom: 8,
+    paddingTop: 16,
+    paddingBottom: 8,
   },
   sectionHead: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginBottom: 8,
-    marginTop: 4,
+    marginTop: 12,
+    marginBottom: 4,
   },
   sectionIcon: {
     width: 28,
     height: 28,
-    borderRadius: 8,
+    borderRadius: 9,
     alignItems: 'center',
     justifyContent: 'center',
   },
   sectionTitle: {
     flex: 1,
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
-    color: C.text,
   },
   sectionCount: {
     fontSize: 12,
     fontWeight: '700',
-    color: C.muted,
-    backgroundColor: C.primarySoft,
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 10,
     overflow: 'hidden',
   },
-  userCard: {
+  row: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: C.surface,
-    borderRadius: 16,
-    padding: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: C.border,
+    paddingVertical: 12,
     gap: 12,
-    shadowColor: C.primaryDark,
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 1,
+  },
+  separator: {
+    height: StyleSheet.hairlineWidth,
+    marginLeft: 64,
   },
   avatar: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-  },
-  avatarFallback: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: C.primary,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
   },
   avatarLetter: {
     color: '#fff',
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '800',
   },
-  userInfo: {
-    flex: 1,
-    minWidth: 0,
-  },
-  userName: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: C.text,
-  },
-  userEmail: {
-    fontSize: 13,
-    color: C.muted,
-    marginTop: 2,
-  },
-  reasonText: {
-    fontSize: 12,
-    color: C.primary,
-    marginTop: 3,
-    fontWeight: '500',
-  },
+  rowText: { flex: 1, minWidth: 0 },
+  userName: { fontSize: 16, fontWeight: '700', letterSpacing: -0.2 },
+  userEmail: { fontSize: 13, marginTop: 2 },
+  reasonText: { fontSize: 12, marginTop: 3, fontWeight: '600' },
   mutualText: {
     fontSize: 12,
     color: '#2e7d32',
@@ -715,71 +641,37 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: C.primary,
+    minWidth: 72,
+    justifyContent: 'center',
     paddingHorizontal: 12,
     paddingVertical: 8,
-    borderRadius: 20,
+    borderRadius: 18,
   },
-  addBtnText: {
-    color: '#fff',
-    fontSize: 13,
-    fontWeight: '700',
-  },
+  addBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
   statusPill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
     paddingHorizontal: 10,
     paddingVertical: 7,
-    borderRadius: 20,
+    borderRadius: 18,
   },
-  friendsPill: {
-    backgroundColor: '#e8f5e9',
-  },
-  friendsPillText: {
-    color: '#2e7d32',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  pendingPill: {
-    backgroundColor: '#fff3e0',
-  },
-  pendingPillText: {
-    color: '#e65100',
-    fontSize: 12,
-    fontWeight: '700',
-  },
+  friendsPillText: { color: '#2e7d32', fontSize: 12, fontWeight: '700' },
+  pendingPillText: { color: '#e65100', fontSize: 12, fontWeight: '700' },
   emptyBox: {
     alignItems: 'center',
     paddingVertical: 48,
     paddingHorizontal: 24,
     gap: 8,
   },
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: C.text,
-    marginTop: 4,
-  },
-  emptySub: {
-    fontSize: 14,
-    color: C.muted,
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-  emptySearchBtn: {
-    flexDirection: 'row',
+  emptyOrb: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
     alignItems: 'center',
-    gap: 6,
-    marginTop: 12,
-    backgroundColor: C.primary,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 22,
+    justifyContent: 'center',
+    marginBottom: 8,
   },
-  emptySearchBtnText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 14,
-  },
+  emptyTitle: { fontSize: 18, fontWeight: '800' },
+  emptySub: { fontSize: 14, textAlign: 'center', lineHeight: 20 },
 });

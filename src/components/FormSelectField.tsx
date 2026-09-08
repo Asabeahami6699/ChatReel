@@ -73,7 +73,7 @@ export function FormSelectField<T extends FieldValues>({
                   style={[
                     styles.selectWrap,
                     {
-                      backgroundColor: theme.searchBg,
+                      backgroundColor: theme.inputFieldBg,
                       borderColor: theme.listBorder,
                     },
                     error && styles.inputError,
@@ -110,7 +110,7 @@ export function FormSelectField<T extends FieldValues>({
                 style={[
                   styles.selectBtn,
                   {
-                    backgroundColor: theme.searchBg,
+                    backgroundColor: theme.inputFieldBg,
                     borderColor: theme.listBorder,
                   },
                   error && styles.inputError,

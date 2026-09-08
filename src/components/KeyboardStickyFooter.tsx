@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleProp, ViewStyle } from 'react-native';
+import { Platform, StyleProp, View, ViewStyle } from 'react-native';
 import { KeyboardStickyView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -13,6 +13,10 @@ type Props = {
 
 /**
  * Pins a composer / toolbar to the top of the keyboard (chat input, comment bar, etc.).
+ *
+ * On Android the app uses `softwareKeyboardLayoutMode: 'resize'` + `useResizeMode()`,
+ * so the window already shrinks with the keyboard. Applying KeyboardStickyView on top
+ * of that can translate the composer off-screen (input “missing” on device builds).
  */
 export function KeyboardStickyFooter({
   children,
@@ -22,6 +26,10 @@ export function KeyboardStickyFooter({
 }: Props) {
   const insets = useSafeAreaInsets();
   const closed = closedOffset ?? insets.bottom;
+
+  if (Platform.OS === 'android') {
+    return <View style={[{ paddingBottom: closed }, style]}>{children}</View>;
+  }
 
   return (
     <KeyboardStickyView

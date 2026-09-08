@@ -1,4 +1,7 @@
 import { config } from './config';
+import { Platform, Share } from 'react-native';
+import { setStringAsync } from './clipboard';
+import { showAppToast } from './appToast';
 
 /** Public HTTPS landing page — clickable in WhatsApp, SMS, etc. */
 export function buildAppInviteLink(opts?: { fromUserId?: string | null }): string {
@@ -26,4 +29,45 @@ export function buildAppInviteShareMessage(opts?: {
     // URL must appear in `message` for Android/WhatsApp to make it tappable.
     message: `${intro}\nChat, calls, moments and reels — all in one app.\n\n${url}`,
   };
+}
+
+/**
+ * Opens the system share sheet for an app invite.
+ * Call after any parent Modal has finished dismissing (Android/iOS).
+ */
+export async function shareAppInvite(opts?: {
+  fromName?: string | null;
+  fromUserId?: string | null;
+}): Promise<void> {
+  const share = buildAppInviteShareMessage(opts);
+
+  if (Platform.OS === 'web') {
+    try {
+      const nav = typeof navigator !== 'undefined' ? navigator : null;
+      if (nav && typeof (nav as Navigator & { share?: (d: ShareData) => Promise<void> }).share === 'function') {
+        await (nav as Navigator & { share: (d: ShareData) => Promise<void> }).share({
+          title: share.title,
+          text: share.message,
+          url: share.url,
+        });
+        return;
+      }
+    } catch {
+      /* fall through to clipboard */
+    }
+    await setStringAsync(share.message);
+    showAppToast('Invite link copied');
+    return;
+  }
+
+  try {
+    await Share.share({
+      message: share.message,
+      url: Platform.OS === 'ios' ? share.url : undefined,
+      title: share.title,
+    });
+  } catch {
+    await setStringAsync(share.message);
+    showAppToast('Invite link copied');
+  }
 }

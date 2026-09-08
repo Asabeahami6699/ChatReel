@@ -1003,10 +1003,15 @@ export const api = {
         body: { ref },
       }),
     /** WhatsApp-style: desktop creates pending login QR (no auth). */
-    createLoginSession: () =>
+    createLoginSession: (body?: {
+      installation_id?: string;
+      device_label?: string;
+      device_platform?: string;
+    }) =>
       apiRequest<{ ref: string; expires_in_sec: number }>('/api/qr/login-sessions', {
         method: 'POST',
         auth: false,
+        body: body ?? {},
       }),
     /** Desktop polls until phone approves. */
     getLoginSession: (ref: string) =>
@@ -1058,6 +1063,15 @@ export const api = {
           trusted_at: string;
           last_seen_at: string;
           is_current?: boolean;
+          kind?: 'session';
+        }>;
+        linked?: Array<{
+          id: string;
+          peer_user_id: string;
+          label: string;
+          avatar_url?: string | null;
+          linked_at: string;
+          kind: 'linked';
         }>;
       }>(
         `/api/account/sessions/devices${
@@ -1079,6 +1093,8 @@ export const api = {
       ),
     revokeDevice: (id: string) =>
       apiRequest<{ ok: boolean }>(`/api/account/sessions/devices/${id}`, { method: 'DELETE' }),
+    unlinkLinkedDevice: (id: string) =>
+      apiRequest<{ ok: boolean }>(`/api/account/sessions/linked/${id}`, { method: 'DELETE' }),
   },
 
   uploads: {

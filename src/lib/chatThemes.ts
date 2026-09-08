@@ -52,7 +52,7 @@ const lightList = {
   listSecondaryText: '#6b7280',
   listCardBg: '#FFFFFF',
   sectionLabel: '#64748b',
-  searchBg: '#FFFFFF',
+  searchBg: '#f1f5f9',
   searchText: '#111111',
   searchPlaceholder: '#666666',
   tabInactive: '#6b7280',

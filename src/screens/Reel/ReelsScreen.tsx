@@ -67,6 +67,7 @@ import { ReelWebFeed, type ReelWebFeedHandle } from './ReelWebFeed';
 import { ReelNativeFeed, type ReelNativeFeedHandle } from './ReelNativeFeed';
 import { ReelFloatingChrome } from './ReelFloatingChrome';
 import { useAuth } from '../../hooks/useAuth';
+import { useImmersiveAppChrome } from '../../context/AppChromeContext';
 import { promptSignIn } from '../../lib/requireSignedIn';
 import { ReelDesktopNavArrows } from './ReelDesktopNavArrows';
 
@@ -84,6 +85,7 @@ export default function ReelsScreen() {
   const isReelTabFocused = useIsFocused();
   const isMainAppTabFocused = useReelsMainTabFocused();
   const isFocused = isReelTabFocused && isMainAppTabFocused;
+  useImmersiveAppChrome(isFocused);
   const { feedMode, setFeedMode } = useReelFeedMode();
   const { isGuest, isAuthenticated, exitGuest } = useAuth();
   const isGuestRef = useRef(isGuest);
@@ -1273,11 +1275,15 @@ export default function ReelsScreen() {
       <View
         style={[
           styles.topBarWrap,
-          { paddingTop: usePhoneFrame ? 16 : Math.max(insets.top, StatusBar.currentHeight ?? 0) },
+          {
+            // Parent SafeArea already clears the notch; keep a small inset + scrim.
+            paddingTop: usePhoneFrame ? 16 : 10,
+          },
           usePhoneFrame && styles.topBarWrapDesktop,
         ]}
         pointerEvents="box-none"
       >
+        <View style={styles.topBarScrim} pointerEvents="none" />
         <View style={styles.topBar}>
           <TouchableOpacity
             style={styles.topIconBtn}
@@ -1782,7 +1788,11 @@ const styles = StyleSheet.create({
     zIndex: 20,
     elevation: 20,
     paddingHorizontal: 12,
-    paddingBottom: 8,
+    paddingBottom: 10,
+  },
+  topBarScrim: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(0,0,0,0.35)',
   },
   topBarWrapDesktop: {
     borderTopLeftRadius: 16,

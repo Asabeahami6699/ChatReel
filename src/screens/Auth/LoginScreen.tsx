@@ -1,7 +1,16 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react'
-import { Alert, View, Text, StyleSheet, TouchableOpacity, Animated, Easing } from 'react-native'
+import {
+  Alert,
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Animated,
+  Easing,
+  Platform,
+  useWindowDimensions,
+} from 'react-native'
 import { useNavigation } from '@react-navigation/native'
-import { useWindowDimensions } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
 import QRCode from 'react-native-qrcode-svg'
 import AuthForm from '../../components/AuthForm'
@@ -13,6 +22,7 @@ import type { AuthStackParamList } from '../../navigation/AuthNavigator'
 import { USE_NATIVE_DRIVER } from '../../lib/animation'
 import { api, ApiError } from '../../lib/api'
 import type { Session } from '@supabase/supabase-js'
+import { getInstallationId } from '../../lib/installationId'
 
 type LoginNavProp = NativeStackNavigationProp<AuthStackParamList, 'Login'>
 
@@ -62,7 +72,12 @@ export default function LoginScreen() {
     generatingRef.current = true
     setQrError(null)
     try {
-      const res = await api.qr.createLoginSession()
+      const installation_id = await getInstallationId()
+      const res = await api.qr.createLoginSession({
+        installation_id,
+        device_label: 'ChatReel · Desktop (QR)',
+        device_platform: Platform.OS,
+      })
       setQrRef(res.ref)
       const nextTtl = res.expires_in_sec ?? DEFAULT_TTL_SEC
       setTtlSec(nextTtl)

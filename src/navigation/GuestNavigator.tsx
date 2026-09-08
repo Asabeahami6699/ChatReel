@@ -1,9 +1,9 @@
 import React, { useMemo } from 'react';
-import { StyleSheet } from 'react-native';
+import { StatusBar, StyleSheet, View } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createMaterialTopTabNavigator } from '@react-navigation/material-top-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import ReelsScreen from '../screens/Reel/ReelsScreen';
 import ReelSearchScreen from '../screens/Reel/ReelSearchScreen';
 import ReelDetailScreen from '../screens/Reel/ReelDetailScreen';
@@ -14,6 +14,7 @@ import { ChatStack, ThemedPhoneTabBar } from './AppNavigator';
 import ExploreNavigator from './ExploreNavigator';
 import CallsScreen from '../screens/Call/CallsScreen';
 import { useChatSettings } from '../context/ChatSettingsContext';
+import { useAppChrome } from '../context/AppChromeContext';
 import { getFocusedRouteName } from './navigationUtils';
 import { blurActiveElementOnWeb } from '../lib/webFocus';
 import { ReelsMainTabFocusContext } from '../context/ReelsMainTabFocusContext';
@@ -98,6 +99,8 @@ function GuestReelsNavigator() {
 export function GuestNavigator() {
   const insets = useSafeAreaInsets();
   const { theme } = useChatSettings();
+  const chrome = useAppChrome();
+  const shellBg = chrome.topBg || theme.listHeaderBg;
   const tabBarBase = useMemo(
     () => ({
       ...styles.tabBarMobile,
@@ -112,6 +115,16 @@ export function GuestNavigator() {
   );
 
   return (
+    <SafeAreaView
+      style={[styles.safeArea, { backgroundColor: shellBg }]}
+      edges={['top', 'left', 'right']}
+    >
+      <StatusBar
+        barStyle={chrome.statusBarStyle}
+        backgroundColor={shellBg}
+        translucent={false}
+      />
+      <View style={[styles.appShell, { backgroundColor: theme.listBg }]}>
     <GuestTab.Navigator
       key={theme.id}
       initialRouteName="Reels"
@@ -133,6 +146,7 @@ export function GuestNavigator() {
             theme={theme}
             bottomInset={insets.bottom}
             hidden={hideTabBar}
+            keepBottomInset={hideTabBar && currentTab !== 'Reels'}
           />
         );
       }}
@@ -213,10 +227,14 @@ export function GuestNavigator() {
         }}
       />
     </GuestTab.Navigator>
+      </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: { flex: 1 },
+  appShell: { flex: 1 },
   tabBarMobile: {
     borderTopWidth: StyleSheet.hairlineWidth,
     elevation: 8,

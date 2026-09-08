@@ -13,6 +13,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import Constants from 'expo-constants';
 import { normalizePhoneToE164 } from '../lib/phone';
 import CountryCodePicker from './CountryCodePicker';
+import { useChatSettings } from '../context/ChatSettingsContext';
 
 type Mode = 'login' | 'register';
 
@@ -62,6 +63,10 @@ export default function PhoneAuthForm({
 }: Props) {
   const { width } = useWindowDimensions();
   const isDesktop = width > 700;
+  const { theme } = useChatSettings();
+  const gradientColors = theme.isDark
+    ? ([theme.listBg, theme.listCardBg, theme.headerBg] as [string, string, string])
+    : (['#E3F2FD', '#BBDEFB', '#90CAF9'] as [string, string, string]);
   const countryHint = useMemo(() => defaultCountryCode(), []);
   const [selectedCountryCode, setSelectedCountryCode] = useState(countryHint);
 
@@ -304,7 +309,10 @@ export default function PhoneAuthForm({
   }
 
   return (
-    <LinearGradient colors={['#E3F2FD', '#BBDEFB', '#90CAF9']} style={styles.gradientBackground}>
+    <LinearGradient
+      colors={gradientColors}
+      style={[styles.gradientBackground, { backgroundColor: theme.listBg }]}
+    >
       {wrappedForm}
     </LinearGradient>
   );

@@ -717,6 +717,9 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
       closeFabMenu()
       if (!requireAuth('Sign in to use friends, groups, and chat tools.')) return
       if (!isOnline) return
+      if (route === 'AddFriend') {
+        void import('../../lib/addFriendPrefetch').then((m) => m.prefetchAddFriend())
+      }
       navigation.navigate(route)
     },
     [closeFabMenu, isOnline, navigation, requireAuth]
@@ -1806,7 +1809,10 @@ export default function ChatListScreen({ setSelectedChat }: Props) {
           icon="account-plus"
           onPress={() => {
             if (!requireAuth('Sign in to add friends.')) return
-            if (isOnline) navigation.navigate('AddFriend')
+            if (isOnline) {
+              void import('../../lib/addFriendPrefetch').then((m) => m.prefetchAddFriend())
+              navigation.navigate('AddFriend')
+            }
           }}
         />
       )}

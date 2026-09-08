@@ -33,7 +33,7 @@ import { showAppToast } from '../../lib/appToast';
 import { disappearLabel } from '../../lib/disappearOptions';
 import { DisappearTimerSheet } from './DisappearTimerSheet';
 import { RemindMeSheet } from './RemindMeSheet';
-import { refreshChatReminders } from '../../hooks/useChatReminders';
+import { clearDueRemindersForChat, refreshChatReminders } from '../../hooks/useChatReminders';
 import { formatReminderWhen } from '../../lib/chatReminders';
 import NetInfo from '@react-native-community/netinfo';
 import { uploadFromUri } from '../../lib/uploads';
@@ -2321,6 +2321,17 @@ export default function ChatRoomScreen() {
         }
       };
     }, [sound])
+  );
+
+  // Visiting a chat clears due reminders for that thread.
+  useFocusEffect(
+    useCallback(() => {
+      if (!chatId) return;
+      void clearDueRemindersForChat(
+        chatType === 'group' ? 'group' : 'individual',
+        chatId
+      );
+    }, [chatId, chatType])
   );
 
   useEffect(() => {

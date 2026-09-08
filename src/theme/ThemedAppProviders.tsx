@@ -30,20 +30,37 @@ function useWebDocumentTheme(backgroundColor: string, isDark: boolean) {
 }
 
 /** Sync Android system navigation chrome with the active app theme. */
-function useAndroidSystemChrome(isDark: boolean) {
+function useAndroidSystemChrome(backgroundColor: string, isDark: boolean) {
   useEffect(() => {
     if (Platform.OS !== 'android') return;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const NavigationBar = require('expo-navigation-bar') as {
-        setStyle?: (style: 'light' | 'dark' | 'auto') => void;
-      };
-      // `dark` = dark bar + light icons; `light` = light bar + dark icons.
-      NavigationBar.setStyle?.(isDark ? 'dark' : 'light');
-    } catch {
-      /* optional native module */
-    }
-  }, [isDark]);
+    let alive = true;
+    void (async () => {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const NavigationBar = require('expo-navigation-bar') as {
+          setBackgroundColorAsync?: (color: string) => Promise<void>;
+          setButtonStyleAsync?: (style: 'light' | 'dark') => Promise<void>;
+          setVisibilityAsync?: (visibility: 'visible' | 'hidden') => Promise<void>;
+        };
+        // Do NOT call setStyle() — on several OEMs / edge-to-edge builds it resets
+        // the nav bar to a light (white) scrim after an in-app theme switch.
+        await NavigationBar.setButtonStyleAsync?.(isDark ? 'light' : 'dark');
+        if (!alive) return;
+        await NavigationBar.setBackgroundColorAsync?.(backgroundColor);
+        if (!alive) return;
+        // Re-apply after a tick — Appearance theme flips can race the first paint.
+        await new Promise((r) => setTimeout(r, 50));
+        if (!alive) return;
+        await NavigationBar.setBackgroundColorAsync?.(backgroundColor);
+        await NavigationBar.setButtonStyleAsync?.(isDark ? 'light' : 'dark');
+      } catch {
+        /* optional native module */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [backgroundColor, isDark]);
 }
 
 /**
@@ -57,7 +74,7 @@ export function ThemedPaperProvider({ children }: { children: React.ReactNode })
   const theme = settingsCtx?.theme ?? chatThemePresets.blue;
   const paperTheme = useMemo(() => buildPaperTheme(theme), [theme]);
   useWebDocumentTheme(theme.listBg, theme.isDark);
-  useAndroidSystemChrome(theme.isDark);
+  useAndroidSystemChrome(theme.listCardBg, theme.isDark);
   return (
     <PaperProvider theme={paperTheme}>
       <View style={{ flex: 1, backgroundColor: theme.listBg }}>{children}</View>

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 import { api } from '../lib/api';
-import type { ChatReminder } from '../lib/chatReminders';
+import { reminderUrgency, type ChatReminder } from '../lib/chatReminders';
 import {
   emitChatRemindersChanged,
   subscribeChatRemindersChanged,
@@ -55,6 +55,52 @@ export function scheduleChatRemindersPrefetch(delayMs = 0): void {
     prefetchTimer = null;
     void prefetchChatReminders();
   }, delayMs);
+}
+
+function isDueReminder(r: ChatReminder, now = Date.now()): boolean {
+  return r.status === 'fired' || reminderUrgency(r.remind_at, now) === 'due';
+}
+
+/** Mark a single reminder done (optimistic cache update). */
+export async function completeReminderOnView(id: string): Promise<void> {
+  const prev = memoryCache;
+  memoryCache = memoryCache.filter((r) => r.id !== id);
+  emitChatRemindersChanged();
+  try {
+    await api.chatReminders.update(id, { status: 'done' });
+    await refreshChatReminders();
+  } catch {
+    memoryCache = prev;
+    emitChatRemindersChanged();
+  }
+}
+
+/**
+ * After a due reminder fires, opening the chat (or the reminder itself)
+ * clears matching due/fired reminders so badges don't linger.
+ */
+export async function clearDueRemindersForChat(
+  chatType: 'individual' | 'group',
+  chatId: string
+): Promise<void> {
+  if (!chatId) return;
+  const due = memoryCache.filter(
+    (r) => r.chat_type === chatType && r.chat_id === chatId && isDueReminder(r)
+  );
+  if (!due.length) return;
+  const ids = new Set(due.map((r) => r.id));
+  const prev = memoryCache;
+  memoryCache = memoryCache.filter((r) => !ids.has(r.id));
+  emitChatRemindersChanged();
+  try {
+    await Promise.all(
+      due.map((r) => api.chatReminders.update(r.id, { status: 'done' }).catch(() => null))
+    );
+    await refreshChatReminders();
+  } catch {
+    memoryCache = prev;
+    emitChatRemindersChanged();
+  }
 }
 
 export function useChatReminders() {

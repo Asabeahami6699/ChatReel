@@ -6,6 +6,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { AuthProvider } from './src/context/AuthContext';
 import { ChatSettingsProvider } from './src/context/ChatSettingsContext';
+import { AppChromeProvider } from './src/context/AppChromeContext';
 import { AppLockProvider } from './src/context/AppLockContext';
 import { ChatLockProvider } from './src/context/ChatLockContext';
 import { ThemedPaperProvider } from './src/theme/ThemedAppProviders';
@@ -49,6 +50,7 @@ export default function App() {
         <SafeAreaProvider>
         <AuthProvider>
           <ChatSettingsProvider>
+            <AppChromeProvider>
             <ThemedPaperProvider>
               <AppLockProvider>
                 <ChatLockProvider>
@@ -76,6 +78,7 @@ export default function App() {
                 </ChatLockProvider>
               </AppLockProvider>
             </ThemedPaperProvider>
+            </AppChromeProvider>
           </ChatSettingsProvider>
         </AuthProvider>
         </SafeAreaProvider>

@@ -31,6 +31,14 @@ type DeviceRow = {
   is_current?: boolean;
 };
 
+type LinkedRow = {
+  id: string;
+  peer_user_id: string;
+  label: string;
+  avatar_url?: string | null;
+  linked_at: string;
+};
+
 type Props = {
   visible: boolean;
   onClose: () => void;
@@ -64,6 +72,7 @@ export function AccountDevicesSheet({ visible, onClose }: Props) {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [devices, setDevices] = useState<DeviceRow[]>([]);
+  const [linked, setLinked] = useState<LinkedRow[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -74,6 +83,7 @@ export function AccountDevicesSheet({ visible, onClose }: Props) {
       setCurrentId(installId);
       const res = await api.accountSessions.listDevices(installId);
       setDevices(res.devices ?? []);
+      setLinked(res.linked ?? []);
     } catch (e) {
       Alert.alert(
         'Could not load devices',
@@ -118,6 +128,37 @@ export function AccountDevicesSheet({ visible, onClose }: Props) {
               } catch (e) {
                 Alert.alert(
                   'Sign out failed',
+                  e instanceof Error ? e.message : 'Try again'
+                );
+              } finally {
+                setBusyId(null);
+              }
+            })();
+          },
+        },
+      ]
+    );
+  };
+
+  const unlinkDevice = (row: LinkedRow) => {
+    Alert.alert(
+      'Unlink device?',
+      `Remove the QR link with ${row.label}? This does not sign anyone out.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Unlink',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              setBusyId(`linked-${row.id}`);
+              try {
+                await api.accountSessions.unlinkLinkedDevice(row.id);
+                showAppToast('Device unlinked');
+                await refresh();
+              } catch (e) {
+                Alert.alert(
+                  'Unlink failed',
                   e instanceof Error ? e.message : 'Try again'
                 );
               } finally {
@@ -216,21 +257,27 @@ export function AccountDevicesSheet({ visible, onClose }: Props) {
             </TouchableOpacity>
           </View>
           <Text style={[styles.subtitle, { color: theme.listSecondaryText }]}>
-            Sign out any device you no longer use. Remote wipe clears every session.
+            Sessions signed into your account, plus devices linked by QR.
           </Text>
 
           {loading ? (
             <ActivityIndicator style={{ marginVertical: 28 }} color={theme.primary} />
           ) : (
             <ScrollView style={styles.list} contentContainerStyle={{ paddingBottom: 8 }}>
+              <Text style={[styles.section, { color: theme.listSecondaryText }]}>
+                Active sessions
+              </Text>
               {devices.length === 0 ? (
                 <Text style={[styles.empty, { color: theme.listSecondaryText }]}>
-                  No devices registered yet. Open the app once while online.
+                  No sessions registered yet. Open ChatReel once while online.
                 </Text>
               ) : (
                 devices.map((device) => {
                   const isCurrent =
                     device.is_current || device.installation_id === currentId;
+                  const viaQr = /QR|Linked via/i.test(
+                    `${device.label || ''} ${device.device_name || ''}`
+                  );
                   return (
                     <View
                       key={device.id}
@@ -257,6 +304,7 @@ export function AccountDevicesSheet({ visible, onClose }: Props) {
                           {isCurrent ? ' · This device' : ''}
                         </Text>
                         <Text style={{ color: theme.listSecondaryText, fontSize: 12 }}>
+                          {viaQr ? 'Linked via QR · ' : ''}
                           Last active {formatWhen(device.last_seen_at)}
                         </Text>
                       </View>
@@ -276,6 +324,59 @@ export function AccountDevicesSheet({ visible, onClose }: Props) {
                     </View>
                   );
                 })
+              )}
+
+              <Text
+                style={[
+                  styles.section,
+                  styles.sectionSpaced,
+                  { color: theme.listSecondaryText },
+                ]}
+              >
+                Linked by QR
+              </Text>
+              {linked.length === 0 ? (
+                <Text style={[styles.empty, { color: theme.listSecondaryText }]}>
+                  No QR account links yet. Pair from Link a Device / My QR Code.
+                </Text>
+              ) : (
+                linked.map((row) => (
+                  <View
+                    key={row.id}
+                    style={[styles.row, { borderBottomColor: theme.listBorder }]}
+                  >
+                    <View
+                      style={[
+                        styles.iconWrap,
+                        { backgroundColor: theme.isDark ? '#222' : '#eef2f7' },
+                      ]}
+                    >
+                      <Ionicons name="link-outline" size={20} color={theme.primary} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text
+                        style={[styles.rowTitle, { color: theme.listPrimaryText }]}
+                        numberOfLines={1}
+                      >
+                        {row.label}
+                      </Text>
+                      <Text style={{ color: theme.listSecondaryText, fontSize: 12 }}>
+                        Linked {formatWhen(row.linked_at)}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.logoutBtn}
+                      disabled={busyId === `linked-${row.id}`}
+                      onPress={() => unlinkDevice(row)}
+                    >
+                      {busyId === `linked-${row.id}` ? (
+                        <ActivityIndicator size="small" color="#ef5350" />
+                      ) : (
+                        <Text style={styles.logoutText}>Unlink</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                ))
               )}
             </ScrollView>
           )}
@@ -334,7 +435,15 @@ const styles = StyleSheet.create({
   title: { flex: 1, fontSize: 18, fontWeight: '800' },
   subtitle: { fontSize: 13, lineHeight: 18, marginBottom: 12 },
   list: { maxHeight: 360 },
-  empty: { textAlign: 'center', paddingVertical: 24, fontSize: 14 },
+  section: {
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    marginBottom: 4,
+  },
+  sectionSpaced: { marginTop: 16 },
+  empty: { textAlign: 'center', paddingVertical: 16, fontSize: 14 },
   row: {
     flexDirection: 'row',
     alignItems: 'center',

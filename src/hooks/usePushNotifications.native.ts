@@ -109,7 +109,18 @@ function handlePushOpen(data: PushData | undefined) {
       chatName: data.chat_name || (data.chat_type === 'group' ? 'Group' : 'Chat'),
       focusMessageId: data.message_id,
     });
-    void import('../hooks/useChatReminders').then((m) => m.refreshChatReminders()).catch(() => undefined);
+    void import('../hooks/useChatReminders')
+      .then(async (m) => {
+        if (data.reminder_id) {
+          await m.completeReminderOnView(data.reminder_id);
+        } else {
+          await m.clearDueRemindersForChat(
+            data.chat_type === 'group' ? 'group' : 'individual',
+            data.chat_id!
+          );
+        }
+      })
+      .catch(() => undefined);
     return;
   }
 

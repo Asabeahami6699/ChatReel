@@ -149,6 +149,8 @@ const ChatInput = forwardRef<TextInput, ChatInputProps>(({
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [selection, setSelection] = useState({ start: 0, end: 0 });
   const selectionRef = useRef({ start: 0, end: 0 });
+  /** Only force controlled selection after emoji insert — always-controlled selection breaks Android TextInput. */
+  const [forceSelection, setForceSelection] = useState(false);
   const [mode, setMode] = useState<RecordingMode>('text');
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [playbackPosition, setPlaybackPosition] = useState(0);
@@ -1076,8 +1078,11 @@ const formatDuration = (seconds: number) => {
     const newCursorPos = at + emoji.length;
     selectionRef.current = { start: newCursorPos, end: newCursorPos };
     setSelection({ start: newCursorPos, end: newCursorPos });
+    setForceSelection(true);
     setInputText(next);
     animateSendButton(next.trim().length > 0 || selectedAttachments.length > 0);
+    // Release controlled selection on the next tick so Android keeps typing normally.
+    setTimeout(() => setForceSelection(false), 0);
   }
 
   // ... (All recording functions remain the same)
@@ -1263,8 +1268,10 @@ const formatDuration = (seconds: number) => {
             style={[
               styles.textInput,
               {
+                minHeight: Math.max(MIN_INPUT_HEIGHT - 8, 32),
                 height: Math.max(MIN_INPUT_HEIGHT - 8, inputHeight - 8),
                 color: theme.listPrimaryText,
+                backgroundColor: theme.inputFieldBg,
               },
             ]}
             underlineColorAndroid="transparent"
@@ -1281,10 +1288,11 @@ const formatDuration = (seconds: number) => {
               selectionRef.current = next;
               setSelection(next);
             }}
-            selection={selection}
-            textAlignVertical="top"
+            {...(forceSelection || Platform.OS === 'web' ? { selection } : {})}
+            textAlignVertical="center"
             selectionColor={theme.primary}
             cursorColor={theme.primary}
+            editable={!disabled}
             {...(Platform.OS === 'web'
               ? ({
                   outlineStyle: 'none',
@@ -1484,18 +1492,18 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   inputWrapFocused: {
-    borderWidth: 0,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   textInput: {
     fontSize: 16,
     lineHeight: 22,
-    paddingTop: Platform.OS === 'ios' ? 8 : 6,
-    paddingBottom: Platform.OS === 'ios' ? 8 : 6,
+    paddingTop: Platform.OS === 'ios' ? 8 : 8,
+    paddingBottom: Platform.OS === 'ios' ? 8 : 8,
     paddingHorizontal: 0,
     margin: 0,
     color: '#111',
-    textAlignVertical: 'top',
-    backgroundColor: 'transparent',
+    textAlignVertical: 'center',
+    includeFontPadding: false,
     ...(Platform.OS === 'web'
       ? ({ outlineStyle: 'none', outlineWidth: 0 } as object)
       : {}),

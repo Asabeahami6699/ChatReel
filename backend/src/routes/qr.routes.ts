@@ -60,7 +60,16 @@ async function mintSessionForUserId(userId: string) {
 
 router.post(
   '/login-sessions',
-  asyncHandler(async (_req, res) => {
+  asyncHandler(async (req, res) => {
+    const body = z
+      .object({
+        installation_id: z.string().min(8).max(128).optional(),
+        device_label: z.string().max(80).optional(),
+        device_platform: z.string().max(40).optional(),
+      })
+      .passthrough()
+      .parse(req.body ?? {});
+
     const ref = newLoginRef();
     const expires_at = new Date(Date.now() + LOGIN_QR_TTL_MS).toISOString();
 
@@ -68,6 +77,9 @@ router.post(
       ref,
       status: 'pending',
       expires_at,
+      installation_id: body.installation_id ?? null,
+      device_label: body.device_label?.slice(0, 80) || null,
+      device_platform: body.device_platform?.slice(0, 40) || null,
     });
 
     if (error) {
@@ -75,6 +87,21 @@ router.post(
       if (/login_qr_sessions/i.test(error.message) || error.code === '42P01') {
         return res.status(503).json({
           error: 'Login QR is not set up yet. Apply migration 051_login_qr_sessions.sql.',
+        });
+      }
+      // Column missing (052 not applied) — retry without device meta
+      if (/installation_id|device_label|device_platform/i.test(error.message)) {
+        const retry = await supabaseAdmin.from('login_qr_sessions').insert({
+          ref,
+          status: 'pending',
+          expires_at,
+        });
+        if (retry.error) {
+          return res.status(500).json({ error: retry.error.message });
+        }
+        return res.status(201).json({
+          ref,
+          expires_in_sec: Math.floor(LOGIN_QR_TTL_MS / 1000),
         });
       }
       return res.status(500).json({ error: error.message });
@@ -193,6 +220,31 @@ router.post(
       .eq('status', 'pending');
 
     if (updErr) return res.status(500).json({ error: updErr.message });
+
+    // Register the desktop install so it appears under Logged-in devices immediately.
+    const installId =
+      (typeof row.installation_id === 'string' && row.installation_id.trim()) ||
+      `desktop_${ref}`;
+    const now = new Date().toISOString();
+    const label =
+      (typeof row.device_label === 'string' && row.device_label.trim()) ||
+      'ChatReel · Desktop (QR)';
+    const platform =
+      (typeof row.device_platform === 'string' && row.device_platform.trim()) || 'web';
+
+    await supabaseAdmin.from('account_trusted_devices').upsert(
+      {
+        user_id: userId,
+        installation_id: installId.slice(0, 128),
+        label: label.slice(0, 80),
+        platform: platform.slice(0, 40),
+        device_name: 'Linked via QR',
+        trusted_at: now,
+        last_seen_at: now,
+        revoked_at: null,
+      },
+      { onConflict: 'user_id,installation_id' }
+    );
 
     return res.json({ success: true });
   })

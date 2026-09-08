@@ -6,11 +6,12 @@ import {
   Modal,
   Platform,
   Pressable,
-  Share,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Switch,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -22,6 +23,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import Constants from 'expo-constants';
 import { chatThemePresets, type ChatThemeId } from '../../lib/chatThemes';
 import { useChatSettings } from '../../context/ChatSettingsContext';
+import { useAppChrome } from '../../context/AppChromeContext';
 import { showErrorAlert, confirmAction } from '../../lib/confirmAction';
 import {
   configurePlaybackAudio,
@@ -191,8 +193,19 @@ export default function ChatSettingsScreen() {
     refreshRingtoneLibrary,
     selectRingtone,
   } = useChatSettings();
+  const { setChrome, resetChrome } = useAppChrome();
+
+  useEffect(() => {
+    setChrome({
+      topBg: theme.headerBg,
+      statusBarStyle: 'light-content',
+      immersive: false,
+    });
+    return () => resetChrome();
+  }, [theme.headerBg, setChrome, resetChrome]);
 
   const [page, setPage] = useState<SettingsPage>('hub');
+  const [settingsQuery, setSettingsQuery] = useState('');
   const [twoFaOpen, setTwoFaOpen] = useState(false);
   const [devicesOpen, setDevicesOpen] = useState(false);
   const [profile, setProfile] = useState<{
@@ -294,7 +307,10 @@ export default function ChatSettingsScreen() {
 
   const goBack = () => {
     if (page === 'hub') navigation.goBack();
-    else setPage('hub');
+    else {
+      setSettingsQuery('');
+      setPage('hub');
+    }
   };
 
   const pageTitle =
@@ -634,8 +650,280 @@ export default function ChatSettingsScreen() {
       else navigation.navigate(tab);
     };
 
+    const q = settingsQuery.trim().toLowerCase();
+    const match = (...parts: Array<string | undefined>) => {
+      if (!q) return true;
+      return parts.some((p) => (p || '').toLowerCase().includes(q));
+    };
+
+    type SearchHit = {
+      key: string;
+      label: string;
+      subtitle?: string;
+      icon: keyof typeof Ionicons.glyphMap;
+      iconBg: string;
+      iconColor: string;
+      onPress: () => void;
+    };
+
+    const searchHits: SearchHit[] = [
+      {
+        key: 'profile',
+        label: 'Edit profile',
+        subtitle: 'Name, photo, bio, language',
+        icon: 'person-outline',
+        iconBg: a.appearance.bg,
+        iconColor: a.appearance.color,
+        onPress: () => {
+          void prefetchMyProfile(user?.email);
+          navigation.navigate('Profile');
+        },
+      },
+      {
+        key: '2fa',
+        label: 'Two-step verification',
+        subtitle: 'Secret code · security question',
+        icon: 'shield-checkmark-outline',
+        iconBg: '#e8eaf6',
+        iconColor: '#5c6bc0',
+        onPress: () => {
+          if (!user) {
+            Alert.alert('Sign in required', 'Sign in to set up two-step verification.');
+            return;
+          }
+          setTwoFaOpen(true);
+        },
+      },
+      {
+        key: 'devices',
+        label: 'Logged-in devices',
+        subtitle: 'Sessions · QR-linked devices',
+        icon: 'phone-portrait-outline',
+        iconBg: '#efebe9',
+        iconColor: '#8d6e63',
+        onPress: () => {
+          if (!user) {
+            Alert.alert('Sign in required', 'Sign in to manage devices.');
+            return;
+          }
+          setDevicesOpen(true);
+        },
+      },
+      {
+        key: 'privacy',
+        label: 'Privacy and security',
+        subtitle: 'Receipts, presence, app lock, chat lock',
+        icon: 'lock-closed-outline',
+        iconBg: a.privacy.bg,
+        iconColor: a.privacy.color,
+        onPress: () => setPage('privacy'),
+      },
+      {
+        key: 'appearance',
+        label: 'Appearance',
+        subtitle: 'Theme · light dark night',
+        icon: 'color-palette-outline',
+        iconBg: a.appearance.bg,
+        iconColor: a.appearance.color,
+        onPress: () => setPage('appearance'),
+      },
+      {
+        key: 'chats',
+        label: 'Chats',
+        subtitle: 'Wallpaper, media, enter to send',
+        icon: 'chatbubbles-outline',
+        iconBg: a.chats.bg,
+        iconColor: a.chats.color,
+        onPress: () => setPage('chats'),
+      },
+      {
+        key: 'notif',
+        label: 'Notifications',
+        subtitle: 'Ringtones and alerts',
+        icon: 'notifications-outline',
+        iconBg: a.notif.bg,
+        iconColor: a.notif.color,
+        onPress: () => setPage('notifications'),
+      },
+      {
+        key: 'storage',
+        label: 'Storage and data',
+        subtitle: 'Cache size and clear',
+        icon: 'folder-outline',
+        iconBg: a.storage.bg,
+        iconColor: a.storage.color,
+        onPress: () => setPage('storage'),
+      },
+      {
+        key: 'about',
+        label: 'About',
+        subtitle: 'Version and legal',
+        icon: 'information-circle-outline',
+        iconBg: a.about.bg,
+        iconColor: a.about.color,
+        onPress: () => setPage('about'),
+      },
+      {
+        key: 'tips',
+        label: 'Tips',
+        subtitle: 'How to use ChatReel',
+        icon: 'bulb-outline',
+        iconBg: a.tips.bg,
+        iconColor: a.tips.color,
+        onPress: () => setPage('tips'),
+      },
+      {
+        key: 'friends',
+        label: 'Friends',
+        subtitle: 'People you know',
+        icon: 'people-outline',
+        iconBg: a.friends.bg,
+        iconColor: a.friends.color,
+        onPress: () => navigation.navigate('FriendsList'),
+      },
+      {
+        key: 'add',
+        label: 'Add friend',
+        subtitle: 'Search by username or email',
+        icon: 'person-add-outline',
+        iconBg: a.add.bg,
+        iconColor: a.add.color,
+        onPress: () => {
+          void import('../../lib/addFriendPrefetch').then((m) => m.prefetchAddFriend());
+          navigation.navigate('AddFriend');
+        },
+      },
+      {
+        key: 'qr',
+        label: 'My QR code',
+        subtitle: 'Link a device',
+        icon: 'qr-code-outline',
+        iconBg: a.qr.bg,
+        iconColor: a.qr.color,
+        onPress: () => navigation.navigate('QRCode'),
+      },
+      {
+        key: 'scanner',
+        label: 'Link a Device',
+        subtitle: 'Scan QR · add friend',
+        icon: 'scan-outline',
+        iconBg: a.devices.bg,
+        iconColor: a.devices.color,
+        onPress: () => navigation.navigate('QRScanner'),
+      },
+      {
+        key: 'search',
+        label: 'Search messages',
+        subtitle: 'Find chats and media',
+        icon: 'search-outline',
+        iconBg: a.explore.bg,
+        iconColor: a.explore.color,
+        onPress: () => navigation.navigate('GlobalSearch'),
+      },
+      {
+        key: 'explore',
+        label: 'Explore',
+        subtitle: 'Feed and market',
+        icon: 'compass-outline',
+        iconBg: a.explore.bg,
+        iconColor: a.explore.color,
+        onPress: () => goTab('Explore'),
+      },
+      {
+        key: 'calls',
+        label: 'Calls',
+        subtitle: 'Voice and video',
+        icon: 'call-outline',
+        iconBg: a.calls.bg,
+        iconColor: a.calls.color,
+        onPress: () => goTab('Calls'),
+      },
+    ].filter((hit) => match(hit.label, hit.subtitle, hit.key));
+
     return (
       <>
+        <View
+          style={[
+            styles.settingsSearchWrap,
+            {
+              backgroundColor: theme.isDark ? theme.listCardBg : '#fff',
+              borderColor: settingsQuery ? theme.primary : 'transparent',
+              shadowOpacity: theme.isDark ? 0 : 0.06,
+              elevation: theme.isDark ? 0 : 2,
+            },
+          ]}
+        >
+          <View
+            style={[
+              styles.settingsSearchIcon,
+              {
+                backgroundColor: settingsQuery
+                  ? theme.isDark
+                    ? `${theme.primary}33`
+                    : `${theme.primary}18`
+                  : theme.searchBg,
+              },
+            ]}
+          >
+            <Ionicons
+              name="search"
+              size={16}
+              color={settingsQuery ? theme.primary : sc}
+            />
+          </View>
+          <TextInput
+            value={settingsQuery}
+            onChangeText={setSettingsQuery}
+            placeholder="Search settings"
+            placeholderTextColor={theme.searchPlaceholder}
+            style={[styles.settingsSearchInput, { color: theme.searchText }]}
+            autoCorrect={false}
+            autoCapitalize="none"
+            clearButtonMode="never"
+            underlineColorAndroid="transparent"
+          />
+          {settingsQuery ? (
+            <TouchableOpacity
+              style={[styles.settingsClearChip, { backgroundColor: theme.searchBg }]}
+              onPress={() => setSettingsQuery('')}
+              hitSlop={10}
+            >
+              <Ionicons name="close" size={14} color={sc} />
+            </TouchableOpacity>
+          ) : null}
+        </View>
+
+        {q ? (
+          <>
+            <SectionLabel title={searchHits.length ? 'Results' : 'No matches'} color={sc} />
+            <SettingsCard bg={cardBg} border={border}>
+              {searchHits.length === 0 ? (
+                <Text style={[styles.linkSub, { color: sc, padding: 16 }]}>
+                  Try “lock”, “theme”, “devices”, or “ringtone”.
+                </Text>
+              ) : (
+                searchHits.map((hit, index) => (
+                  <LinkRow
+                    key={hit.key}
+                    icon={hit.icon}
+                    label={hit.label}
+                    subtitle={hit.subtitle}
+                    onPress={() => {
+                      setSettingsQuery('');
+                      hit.onPress();
+                    }}
+                    textColor={tc}
+                    subColor={sc}
+                    iconBg={hit.iconBg}
+                    iconColor={hit.iconColor}
+                    last={index === searchHits.length - 1}
+                  />
+                ))
+              )}
+            </SettingsCard>
+          </>
+        ) : (
+          <>
         <TouchableOpacity
           style={[styles.profileCard, { backgroundColor: cardBg, borderColor: border }]}
           onPress={() => {
@@ -688,7 +976,7 @@ export default function ChatSettingsScreen() {
           <LinkRow
             icon="phone-portrait-outline"
             label="Logged-in devices"
-            subtitle="See sessions · log out any · remote wipe"
+            subtitle="Sessions · QR-linked devices · log out any"
             onPress={() => {
               if (!user) {
                 Alert.alert('Sign in required', 'Sign in to manage devices.');
@@ -730,7 +1018,10 @@ export default function ChatSettingsScreen() {
             icon="person-add-outline"
             label="Add friends"
             subtitle="Search people to connect"
-            onPress={() => navigation.navigate('AddFriend')}
+            onPress={() => {
+              void import('../../lib/addFriendPrefetch').then((m) => m.prefetchAddFriend());
+              navigation.navigate('AddFriend');
+            }}
             textColor={tc}
             subColor={sc}
             iconBg={a.add.bg}
@@ -796,24 +1087,12 @@ export default function ChatSettingsScreen() {
             label="Invite a friend"
             subtitle="Share a link to ChatReel"
             onPress={() => {
-              void (async () => {
-                try {
-                  const { buildAppInviteShareMessage } = await import(
-                    '../../lib/appInviteLinks'
-                  );
-                  const share = buildAppInviteShareMessage({
-                    fromName: profile?.display_name || user?.email || null,
-                    fromUserId: user?.id ?? null,
-                  });
-                  await Share.share({
-                    message: share.message,
-                    url: Platform.OS === 'ios' ? share.url : undefined,
-                    title: share.title,
-                  });
-                } catch {
-                  /* user dismissed sheet */
-                }
-              })();
+              void import('../../lib/appInviteLinks').then(({ shareAppInvite }) =>
+                shareAppInvite({
+                  fromName: profile?.display_name || user?.email || null,
+                  fromUserId: user?.id ?? null,
+                })
+              );
             }}
             textColor={tc}
             subColor={sc}
@@ -942,6 +1221,8 @@ export default function ChatSettingsScreen() {
             last
           />
         </SettingsCard>
+          </>
+        )}
       </>
     );
   };
@@ -1604,6 +1885,10 @@ export default function ChatSettingsScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: theme.listBg }]}>
+      <StatusBar
+        barStyle="light-content"
+        backgroundColor={theme.headerBg}
+      />
       <View
         style={[
           styles.header,
@@ -1771,6 +2056,42 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: StyleSheet.hairlineWidth,
     marginBottom: 8,
+  },
+  settingsSearchWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderRadius: 22,
+    borderWidth: 1.5,
+    paddingLeft: 6,
+    paddingRight: 10,
+    paddingVertical: 6,
+    marginBottom: 14,
+    shadowColor: '#0f172a',
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  settingsSearchIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  settingsSearchInput: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '500',
+    letterSpacing: -0.2,
+    padding: 0,
+    margin: 0,
+  },
+  settingsClearChip: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   profileAvatar: { width: 64, height: 64, borderRadius: 32 },
   profileText: { flex: 1, minWidth: 0 },

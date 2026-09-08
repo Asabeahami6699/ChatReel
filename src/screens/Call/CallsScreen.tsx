@@ -1,11 +1,12 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
   Platform,
+  Pressable,
   RefreshControl,
+  ScrollView,
   SectionList,
-  StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -13,14 +14,14 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { FAB } from 'react-native-paper';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useIsFocused } from '@react-navigation/native';
-import { api, ApiError, type CallHistoryItemDTO } from '../../lib/api';
+import { ApiError, type CallHistoryItemDTO } from '../../lib/api';
 import { showAppToast } from '../../lib/appToast';
 import { startCallGuarded } from '../../lib/startCallGuarded';
 import { useAuth } from '../../hooks/useAuth';
 import { useChatSettings } from '../../context/ChatSettingsContext';
+import { useAppChrome } from '../../context/AppChromeContext';
 import { navigateToChat } from '../../navigation/navigateToChat';
 import { useCurrentProfileId } from '../../hooks/useCurrentProfileId';
 import { useCallsFeed } from '../../hooks/useCallsFeed';
@@ -101,8 +102,6 @@ function missedLabel(c: CallHistoryItemDTO): string {
 
 function peerUserId(c: CallHistoryItemDTO, myAuthId?: string | null): string | null {
   if (c.scope !== 'direct') return null;
-  // Prefer direction from history (server already labeled it) so callback
-  // works even before local auth id has resolved.
   if (c.direction === 'outgoing' && c.callee_id) return c.callee_id;
   if (c.direction === 'incoming' && c.caller_id) return c.caller_id;
   if (!myAuthId) return null;
@@ -122,6 +121,7 @@ function groupCalls(calls: CallHistoryItemDTO[]): CallSection[] {
 export default function CallsScreen() {
   const insets = useSafeAreaInsets();
   const { theme } = useChatSettings();
+  const { setChrome, resetChrome } = useAppChrome();
   const isFocused = useIsFocused();
   const { user, isGuest, exitGuest } = useAuth();
   const myProfileId = useCurrentProfileId();
@@ -138,6 +138,19 @@ export default function CallsScreen() {
   const [tab, setTab] = useState<Tab>('all');
   const myAuthId = user?.id ?? null;
   const [pickerOpen, setPickerOpen] = useState(false);
+
+  const shellBg = theme.listHeaderBg;
+  const statusStyle = theme.isDark ? 'light-content' : 'dark-content';
+
+  useEffect(() => {
+    if (!isFocused) return;
+    setChrome({
+      topBg: shellBg,
+      statusBarStyle: statusStyle,
+      immersive: false,
+    });
+    return () => resetChrome();
+  }, [isFocused, shellBg, statusStyle, setChrome, resetChrome]);
 
   const requireAuth = useCallback(
     (message?: string) => {
@@ -163,21 +176,27 @@ export default function CallsScreen() {
 
   const weekStats = useMemo(() => {
     const weekAgo = Date.now() - 7 * 24 * 3600_000;
-    const recent = calls.filter((c) => new Date(c.created_at).getTime() >= weekAgo && !isMissedFor(c));
+    const recent = calls.filter(
+      (c) => new Date(c.created_at).getTime() >= weekAgo && !isMissedFor(c)
+    );
     const talkSeconds = recent.reduce((sum, c) => sum + (c.duration_seconds ?? 0), 0);
     return { count: recent.length, talkSeconds };
   }, [calls]);
 
+  const quickFriends = useMemo(() => friendContacts.slice(0, 14), [friendContacts]);
+
   const startCallToUser = useCallback(
-    async (userId: string, type: 'voice' | 'video', peerHint?: { peerName?: string; peerAvatar?: string | null }) => {
+    async (
+      userId: string,
+      type: 'voice' | 'video',
+      peerHint?: { peerName?: string; peerAvatar?: string | null }
+    ) => {
       if (!requireAuth('Sign in to place a call.')) return;
       if (callsEnabled === false) {
         showAppToast('Calls are not enabled on this server yet', { isError: true });
         return;
       }
-      // Close the picker Modal first — on Android it sits above ActiveCallLayer.
       setPickerOpen(false);
-      // Let the picker Modal finish dismissing before showing the call Modal.
       if (Platform.OS === 'android') {
         await new Promise((r) => setTimeout(r, 80));
       }
@@ -208,7 +227,10 @@ export default function CallsScreen() {
           });
           return;
         }
-        await startCallToUser(otherUserId, type);
+        await startCallToUser(otherUserId, type, {
+          peerName: callDisplayName(target),
+          peerAvatar: target.peer?.avatar_url ?? null,
+        });
         return;
       }
       if (target.scope === 'group' && target.group_id) {
@@ -220,7 +242,10 @@ export default function CallsScreen() {
           setPickerOpen(false);
           const { call, live_kit } = await startCallGuarded(
             { type, group_id: target.group_id },
-            { peerName: callDisplayName(target), peerAvatar: target.group?.avatar_url ?? null }
+            {
+              peerName: callDisplayName(target),
+              peerAvatar: target.group?.avatar_url ?? null,
+            }
           );
           const { navigateToOutgoingCall } = await import('../../navigation/rootNavigation');
           navigateToOutgoingCall({ call, token: live_kit.token, url: live_kit.url });
@@ -249,101 +274,109 @@ export default function CallsScreen() {
     [myAuthId, requireAuth]
   );
 
-  const renderCallItem = (item: CallHistoryItemDTO) => {
+  const openPicker = useCallback(() => {
+    if (!requireAuth('Sign in to call your friends.')) return;
+    setPickerOpen(true);
+  }, [requireAuth]);
+
+  const renderCallItem = ({ item }: { item: CallHistoryItemDTO }) => {
     const missed = isMissedFor(item);
     const incoming = item.direction === 'incoming';
     const name = callDisplayName(item);
     const avatar =
       item.scope === 'group' ? item.group?.avatar_url ?? null : item.peer?.avatar_url ?? null;
-    const sub = missed
+    const kind = missed
       ? missedLabel(item)
-      : item.duration_seconds
-        ? `${relativeTime(item.created_at)} · ${formatDuration(item.duration_seconds)}`
-        : relativeTime(item.created_at);
+      : item.call_type === 'video'
+        ? 'Video call'
+        : 'Voice call';
+    const when = relativeTime(item.created_at);
+    const duration = !missed && item.duration_seconds ? formatDuration(item.duration_seconds) : '';
     const canChat = item.scope === 'direct';
+    const danger = '#E53935';
 
     return (
-      <View style={[styles.callItem, { backgroundColor: theme.listCardBg, borderColor: theme.listBorder }]}>
-        <TouchableOpacity
-          style={styles.callMain}
-          activeOpacity={0.7}
+      <View style={styles.row}>
+        <Pressable
+          style={styles.rowMain}
           onPress={() => canChat && openChatFor(item)}
           disabled={!canChat}
         >
-          <View style={styles.avatarContainer}>
+          <View style={styles.avatarWrap}>
             {avatar ? (
               <Image source={{ uri: avatar }} style={styles.avatar} />
             ) : (
-              <View style={[styles.avatar, styles.avatarFallback]}>
-                <Text style={styles.avatarFallbackText}>{name.charAt(0).toUpperCase()}</Text>
-              </View>
+              <LinearGradient
+                colors={[theme.accent, theme.primary]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.avatar}
+              >
+                <Text style={styles.avatarLetter}>{name.charAt(0).toUpperCase()}</Text>
+              </LinearGradient>
             )}
             <View
               style={[
-                styles.callTypeIcon,
-                item.call_type === 'video' ? styles.videoIcon : styles.voiceIcon,
+                styles.typeDot,
+                {
+                  backgroundColor: item.call_type === 'video' ? '#22c55e' : theme.primary,
+                  borderColor: theme.listBg,
+                },
               ]}
             >
               <Ionicons
                 name={item.call_type === 'video' ? 'videocam' : 'call'}
-                size={12}
+                size={9}
                 color="#fff"
               />
             </View>
           </View>
 
-          <View style={styles.callInfo}>
+          <View style={styles.rowText}>
             <Text
-              style={[
-                styles.callName,
-                { color: theme.listPrimaryText },
-                missed && styles.missedCallName,
-              ]}
+              style={[styles.rowName, { color: missed ? danger : theme.listPrimaryText }]}
               numberOfLines={1}
             >
               {name}
             </Text>
-            <View style={styles.callMeta}>
+            <View style={styles.metaRow}>
               <Ionicons
-                name={incoming ? 'arrow-down' : 'arrow-up'}
-                size={14}
-                color={missed ? '#ff3b30' : theme.listSecondaryText}
+                name={missed ? 'close-circle' : incoming ? 'arrow-down' : 'arrow-up'}
+                size={13}
+                color={missed ? danger : theme.listSecondaryText}
               />
               <Text
-                style={[
-                  styles.callTime,
-                  { color: theme.listSecondaryText },
-                  missed && styles.missedCallTime,
-                ]}
+                style={[styles.metaText, { color: missed ? danger : theme.listSecondaryText }]}
+                numberOfLines={1}
               >
-                {sub}
+                {kind}
+                {duration ? ` · ${duration}` : ''}
+                {` · ${when}`}
               </Text>
             </View>
           </View>
-        </TouchableOpacity>
+        </Pressable>
 
-        <View style={styles.callbackRow}>
+        <View style={styles.rowActions}>
           <TouchableOpacity
             style={[
-              styles.callbackButton,
-              styles.callbackVoice,
-              theme.isDark && { backgroundColor: '#0d2137' },
+              styles.actionBtn,
+              { backgroundColor: theme.isDark ? 'rgba(96,165,250,0.14)' : '#eaf3ff' },
             ]}
-            accessibilityLabel="Call back"
             onPress={() => void startCall(item, 'voice')}
+            accessibilityLabel="Voice call back"
           >
-            <Ionicons name="call" size={20} color="#1976d2" />
+            <Ionicons name="call" size={18} color={theme.primary} />
           </TouchableOpacity>
           <TouchableOpacity
             style={[
-              styles.callbackButton,
-              styles.callbackVideo,
-              theme.isDark && { backgroundColor: '#0f2918' },
+              styles.actionBtn,
+              { backgroundColor: theme.isDark ? 'rgba(34,197,94,0.14)' : '#e9f9ef' },
             ]}
-            accessibilityLabel="Video call back"
             onPress={() => void startCall(item, 'video')}
+            accessibilityLabel="Video call back"
           >
-            <Ionicons name="videocam" size={20} color="#34c759" />
+            <Ionicons name="videocam" size={18} color="#16a34a" />
           </TouchableOpacity>
         </View>
       </View>
@@ -352,194 +385,260 @@ export default function CallsScreen() {
 
   const listHeader = (
     <View>
-      <LinearGradient
-        colors={['#0d47a1', '#1976d2', '#42a5f5']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={[styles.hero, { marginTop: -insets.top, paddingTop: insets.top + 12 }]}
+      <View
+        style={[
+          styles.topBar,
+          {
+            backgroundColor: shellBg,
+            marginTop: -insets.top,
+            paddingTop: insets.top + 10,
+            borderBottomColor: theme.listBorder,
+          },
+        ]}
       >
-        <Text style={styles.heroTitle}>Calls</Text>
-        <Text style={styles.heroSubtitle}>Stay connected with voice & video</Text>
-        <View style={styles.statsRow}>
-          <View style={styles.statCard}>
-            <Text style={styles.statValue}>{weekStats.count}</Text>
-            <Text style={styles.statLabel}>This week</Text>
+        <View style={styles.titleBlock}>
+          <Text style={[styles.title, { color: theme.listHeaderText }]}>Calls</Text>
+          <Text style={[styles.subtitle, { color: theme.listSecondaryText }]}>
+            {weekStats.count > 0
+              ? `${weekStats.count} calls · ${formatTalkTime(weekStats.talkSeconds)} this week`
+              : 'Voice & video with friends'}
+          </Text>
+        </View>
+
+        {missedCount > 0 ? (
+          <Pressable
+            style={[
+              styles.missedPill,
+              {
+                backgroundColor: theme.isDark ? 'rgba(229,57,53,0.18)' : '#fee2e2',
+              },
+            ]}
+            onPress={() => setTab('missed')}
+          >
+            <View style={styles.missedDot} />
+            <Text style={styles.missedPillText}>{missedCount} missed</Text>
+          </Pressable>
+        ) : null}
+      </View>
+
+      {/* Soft accent wash under the header */}
+      <LinearGradient
+        colors={[
+          theme.isDark ? `${theme.primary}18` : `${theme.primary}12`,
+          theme.listBg,
+        ]}
+        style={styles.wash}
+      >
+        {quickFriends.length > 0 ? (
+          <View style={styles.quickBlock}>
+            <Text style={[styles.quickHeading, { color: theme.sectionLabel }]}>Favorites</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.quickScroll}
+            >
+              {quickFriends.map((f) => (
+                <Pressable
+                  key={f.userId}
+                  style={styles.quickItem}
+                  onPress={() =>
+                    void startCallToUser(f.userId, 'voice', {
+                      peerName: f.name,
+                      peerAvatar: f.avatar,
+                    })
+                  }
+                  onLongPress={() =>
+                    void startCallToUser(f.userId, 'video', {
+                      peerName: f.name,
+                      peerAvatar: f.avatar,
+                    })
+                  }
+                >
+                  <View style={styles.quickAvatarRing}>
+                    {f.avatar ? (
+                      <Image source={{ uri: f.avatar }} style={styles.quickAvatar} />
+                    ) : (
+                      <LinearGradient
+                        colors={[theme.accent, theme.primary]}
+                        style={styles.quickAvatar}
+                      >
+                        <Text style={styles.quickLetter}>{f.name.charAt(0).toUpperCase()}</Text>
+                      </LinearGradient>
+                    )}
+                    <View
+                      style={[
+                        styles.quickCallBadge,
+                        { backgroundColor: theme.primary, borderColor: theme.listBg },
+                      ]}
+                    >
+                      <Ionicons name="call" size={9} color="#fff" />
+                    </View>
+                  </View>
+                  <Text
+                    style={[styles.quickName, { color: theme.listPrimaryText }]}
+                    numberOfLines={1}
+                  >
+                    {f.name}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
           </View>
-          <View style={styles.statDivider} />
-          <View style={styles.statCard}>
-            <Text style={styles.statValue}>{formatTalkTime(weekStats.talkSeconds)}</Text>
-            <Text style={styles.statLabel}>Talk time</Text>
-          </View>
-          <View style={styles.statDivider} />
-          <View style={styles.statCard}>
-            <Text style={[styles.statValue, missedCount > 0 && styles.statValueMissed]}>
-              {missedCount}
-            </Text>
-            <Text style={styles.statLabel}>Missed</Text>
-          </View>
+        ) : null}
+
+        <View style={[styles.segmentTrack, { backgroundColor: theme.searchBg }]}>
+          {([
+            { key: 'all' as Tab, label: 'Recent' },
+            { key: 'missed' as Tab, label: 'Missed' },
+          ]).map(({ key, label }) => {
+            const active = tab === key;
+            return (
+              <Pressable
+                key={key}
+                onPress={() => setTab(key)}
+                style={[
+                  styles.segmentBtn,
+                  active && {
+                    backgroundColor: theme.listCardBg,
+                    shadowColor: '#000',
+                    shadowOpacity: theme.isDark ? 0 : 0.08,
+                    shadowRadius: 6,
+                    shadowOffset: { width: 0, height: 2 },
+                    elevation: theme.isDark ? 0 : 2,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.segmentLabel,
+                    {
+                      color: active ? theme.listPrimaryText : theme.listSecondaryText,
+                      fontWeight: active ? '800' : '600',
+                    },
+                  ]}
+                >
+                  {label}
+                </Text>
+                {key === 'missed' && missedCount > 0 ? (
+                  <View style={styles.segmentBadge}>
+                    <Text style={styles.segmentBadgeText}>
+                      {missedCount > 9 ? '9+' : missedCount}
+                    </Text>
+                  </View>
+                ) : null}
+              </Pressable>
+            );
+          })}
         </View>
       </LinearGradient>
 
-      {tab === 'all' && missedCount > 0 && (
-        <TouchableOpacity
+      {callsEnabled === false ? (
+        <View
           style={[
-            styles.missedBanner,
-            theme.isDark && { backgroundColor: '#2a1212', borderColor: '#5c1f1f' },
+            styles.warn,
+            {
+              backgroundColor: theme.isDark ? '#2a2110' : '#fff8e8',
+              borderColor: theme.isDark ? '#5c4a1a' : '#f5d78e',
+            },
           ]}
-          onPress={() => setTab('missed')}
         >
-          <View style={styles.missedBannerIcon}>
-            <Ionicons name="call-outline" size={18} color="#fff" />
-          </View>
-          <View style={styles.missedBannerText}>
-            <Text
-              style={[
-                styles.missedBannerTitle,
-                theme.isDark && { color: '#ff8a80' },
-              ]}
-            >
-              {missedCount} missed call{missedCount === 1 ? '' : 's'}
-            </Text>
-            <Text style={styles.missedBannerSub}>Tap to view and call back</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={20} color="#ff3b30" />
-        </TouchableOpacity>
-      )}
-
-      <View style={[styles.tabContainer, { backgroundColor: theme.listBg }]}>
-        <TouchableOpacity
-          style={[
-            styles.tab,
-            { backgroundColor: theme.listCardBg },
-            tab === 'all' && styles.activeTab,
-          ]}
-          onPress={() => setTab('all')}
-        >
-          <Ionicons
-            name="time-outline"
-            size={16}
-            color={tab === 'all' ? '#fff' : theme.listSecondaryText}
-            style={styles.tabIcon}
-          />
-          <Text
-            style={[
-              styles.tabText,
-              { color: theme.listSecondaryText },
-              tab === 'all' && styles.activeTabText,
-            ]}
-          >
-            Recent
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            styles.tab,
-            { backgroundColor: theme.listCardBg },
-            tab === 'missed' && styles.activeTab,
-          ]}
-          onPress={() => setTab('missed')}
-        >
-          <Ionicons
-            name="call-outline"
-            size={16}
-            color={tab === 'missed' ? '#fff' : theme.listSecondaryText}
-            style={styles.tabIcon}
-          />
-          <Text
-            style={[
-              styles.tabText,
-              { color: theme.listSecondaryText },
-              tab === 'missed' && styles.activeTabText,
-            ]}
-          >
-            Missed
-          </Text>
-          {missedCount > 0 && (
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>{missedCount > 9 ? '9+' : missedCount}</Text>
-            </View>
-          )}
-        </TouchableOpacity>
-      </View>
-
-      {callsEnabled === false && (
-        <View style={styles.disabledBanner}>
-          <Ionicons name="alert-circle" size={16} color="#bf6500" />
-          <Text style={styles.disabledText}>
-            Calls are disabled on this server. Set LIVEKIT_API_KEY in backend .env to enable.
+          <Ionicons name="warning-outline" size={15} color="#d97706" />
+          <Text style={[styles.warnText, { color: theme.isDark ? '#fbbf24' : '#92400e' }]}>
+            Calls are disabled on this server.
           </Text>
         </View>
-      )}
+      ) : null}
     </View>
   );
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: theme.listBg }]} edges={['left', 'right']}>
-      {isFocused ? (
-        <StatusBar barStyle="light-content" backgroundColor="#0d47a1" />
-      ) : null}
-
+    <SafeAreaView
+      style={[styles.container, { backgroundColor: theme.listBg }]}
+      edges={['left', 'right']}
+    >
       {loading && calls.length === 0 ? (
-        <View style={styles.loadingBox}>
-          <ActivityIndicator color="#1976d2" size="large" />
-          <Text style={[styles.loadingText, { color: theme.listSecondaryText }]}>Loading calls…</Text>
+        <View style={styles.center}>
+          <ActivityIndicator color={theme.primary} size="large" />
+          <Text style={[styles.loadingText, { color: theme.listSecondaryText }]}>
+            Loading calls…
+          </Text>
         </View>
       ) : error && calls.length === 0 ? (
-        <View style={styles.loadingBox}>
-          <Ionicons name="cloud-offline-outline" size={40} color="#888" />
-          <Text style={styles.errorText}>{error}</Text>
-          <TouchableOpacity style={styles.retryBtn} onPress={refresh}>
-            <Text style={styles.retryBtnText}>Retry</Text>
+        <View style={styles.center}>
+          <Ionicons name="cloud-offline-outline" size={40} color={theme.listSecondaryText} />
+          <Text style={[styles.errorText, { color: theme.listSecondaryText }]}>{error}</Text>
+          <TouchableOpacity
+            style={[styles.retryBtn, { backgroundColor: theme.primary }]}
+            onPress={refresh}
+          >
+            <Text style={styles.retryText}>Retry</Text>
           </TouchableOpacity>
         </View>
       ) : (
         <SectionList
           sections={sections}
           keyExtractor={(c) => c.id}
-          renderItem={({ item }) => renderCallItem(item)}
+          renderItem={renderCallItem}
           renderSectionHeader={({ section: { title } }) => (
-            <Text style={[styles.sectionHeader, { color: theme.sectionLabel, backgroundColor: theme.listBg }]}>
+            <Text
+              style={[
+                styles.section,
+                { color: theme.sectionLabel, backgroundColor: theme.listBg },
+              ]}
+            >
               {title}
             </Text>
+          )}
+          ItemSeparatorComponent={() => (
+            <View style={[styles.separator, { backgroundColor: theme.listBorder }]} />
           )}
           ListHeaderComponent={listHeader}
           stickySectionHeadersEnabled={false}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor="#1976d2" />
+            <RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.primary} />
           }
           ListEmptyComponent={
-            <View style={styles.emptyState}>
-              <View style={[styles.emptyIconRing, { backgroundColor: theme.listCardBg }]}>
+            <View style={styles.empty}>
+              <LinearGradient
+                colors={[`${theme.primary}28`, `${theme.accent}14`]}
+                style={styles.emptyOrb}
+              >
                 <Ionicons
-                  name={tab === 'missed' ? 'checkmark-circle' : 'call-outline'}
-                  size={40}
-                  color={tab === 'missed' ? '#34c759' : '#1976d2'}
+                  name={tab === 'missed' ? 'checkmark-done' : 'call-outline'}
+                  size={34}
+                  color={tab === 'missed' ? '#22c55e' : theme.primary}
                 />
-              </View>
-              <Text style={[styles.emptyText, { color: theme.listPrimaryText }]}>
-                {tab === 'missed' ? 'All caught up!' : 'No recent calls'}
+              </LinearGradient>
+              <Text style={[styles.emptyTitle, { color: theme.listPrimaryText }]}>
+                {tab === 'missed' ? 'All caught up' : 'No recent calls'}
               </Text>
-              <Text style={[styles.emptySubtext, { color: theme.listSecondaryText }]}>
+              <Text style={[styles.emptySub, { color: theme.listSecondaryText }]}>
                 {tab === 'missed'
-                  ? 'You have no missed calls right now.'
-                  : 'Tap the friends button below to start a call.'}
+                  ? 'No missed calls right now.'
+                  : 'Tap the button below to call a friend.'}
               </Text>
             </View>
           }
         />
       )}
 
-      <FAB
-        icon="account-multiple"
-        style={[styles.fab, { bottom: insets.bottom + 20 }]}
-        onPress={() => {
-          if (!requireAuth('Sign in to call your friends.')) return;
-          setPickerOpen(true);
-        }}
-        color="#fff"
-      />
+      <TouchableOpacity
+        style={[
+          styles.fab,
+          {
+            bottom: insets.bottom + 20,
+            backgroundColor: theme.primary,
+            shadowColor: theme.primary,
+          },
+        ]}
+        onPress={openPicker}
+        activeOpacity={0.9}
+        accessibilityLabel="Call a friend"
+      >
+        <Ionicons name="people" size={24} color="#fff" />
+      </TouchableOpacity>
 
       <CallFriendPickerSheet
         visible={pickerOpen}
@@ -552,197 +651,254 @@ export default function CallsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f4f6f9' },
-  loadingBox: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 80, gap: 12 },
-  loadingText: { color: '#6b7280', fontSize: 15 },
-  hero: {
-    paddingHorizontal: 20,
-    paddingBottom: 22,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
-  },
-  heroTitle: { fontSize: 28, fontWeight: '800', color: '#fff' },
-  heroSubtitle: { fontSize: 14, color: 'rgba(255,255,255,0.85)', marginTop: 4 },
-  statsRow: {
-    flexDirection: 'row',
-    marginTop: 18,
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    borderRadius: 16,
-    paddingVertical: 14,
-    paddingHorizontal: 8,
-  },
-  statCard: { flex: 1, alignItems: 'center' },
-  statValue: { fontSize: 20, fontWeight: '800', color: '#fff' },
-  statValueMissed: { color: '#ffcdd2' },
-  statLabel: { fontSize: 11, color: 'rgba(255,255,255,0.8)', marginTop: 2, fontWeight: '600' },
-  statDivider: { width: 1, backgroundColor: 'rgba(255,255,255,0.25)', marginVertical: 4 },
-  missedBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginHorizontal: 16,
-    marginTop: 12,
-    padding: 12,
-    backgroundColor: '#fff5f5',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#ffcdd2',
-    gap: 10,
-  },
-  missedBannerIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#ff3b30',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  missedBannerTitle: { fontSize: 14, fontWeight: '700', color: '#c62828' },
-  missedBannerText: { flex: 1 },
-  missedBannerSub: { fontSize: 12, color: '#e57373', marginTop: 1 },
-  tabContainer: {
-    flexDirection: 'row',
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 8,
-    gap: 8,
-  },
-  tab: {
+  container: { flex: 1 },
+  center: {
     flex: 1,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    paddingHorizontal: 32,
+  },
+  loadingText: { fontSize: 15 },
+  topBar: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    elevation: 1,
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingBottom: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: 12,
   },
-  activeTab: { backgroundColor: '#1976d2' },
-  tabIcon: { marginRight: 6 },
-  tabText: { fontSize: 15, fontWeight: '700', color: '#8e8e93' },
-  activeTabText: { color: '#fff' },
-  badge: {
-    backgroundColor: '#ff3b30',
-    borderRadius: 10,
-    minWidth: 18,
-    height: 18,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginLeft: 6,
-    paddingHorizontal: 4,
+  titleBlock: { flex: 1 },
+  title: {
+    fontSize: 34,
+    fontWeight: '800',
+    letterSpacing: -0.9,
   },
-  badgeText: { color: '#fff', fontSize: 10, fontWeight: 'bold' },
-  disabledBanner: {
+  subtitle: {
+    fontSize: 13,
+    fontWeight: '500',
+    marginTop: 3,
+  },
+  missedPill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#fff5e0',
-    marginHorizontal: 16,
-    marginBottom: 8,
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginBottom: 2,
   },
-  disabledText: { color: '#7a4a00', fontSize: 12, flex: 1 },
-  sectionHeader: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#6b7280',
+  missedDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: '#E53935',
+  },
+  missedPillText: {
+    color: '#E53935',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  wash: {
+    paddingBottom: 4,
+  },
+  quickBlock: {
+    paddingTop: 14,
+  },
+  quickHeading: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
     paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 6,
-    backgroundColor: '#f4f6f9',
+    marginBottom: 12,
   },
-  listContent: { paddingBottom: 100 },
-  callItem: {
-    flexDirection: 'row',
+  quickScroll: {
+    paddingHorizontal: 16,
+    gap: 12,
+    paddingBottom: 4,
+  },
+  quickItem: {
+    width: 72,
     alignItems: 'center',
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-    marginHorizontal: 12,
-    marginBottom: 4,
-    backgroundColor: '#fff',
-    borderRadius: 14,
   },
-  callMain: {
+  quickAvatarRing: {
+    position: 'relative',
+  },
+  quickAvatar: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quickLetter: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  quickCallBadge: {
+    position: 'absolute',
+    right: -1,
+    bottom: -1,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+  },
+  quickName: {
+    marginTop: 7,
+    fontSize: 12,
+    fontWeight: '600',
+    textAlign: 'center',
+    width: '100%',
+  },
+  segmentTrack: {
+    flexDirection: 'row',
+    marginHorizontal: 16,
+    marginTop: 14,
+    marginBottom: 6,
+    padding: 4,
+    borderRadius: 14,
+    gap: 4,
+  },
+  segmentBtn: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 4,
+    justifyContent: 'center',
+    paddingVertical: 10,
+    borderRadius: 11,
+    gap: 6,
+  },
+  segmentLabel: { fontSize: 14 },
+  segmentBadge: {
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 5,
+    backgroundColor: '#E53935',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  segmentBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800' },
+  warn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: 16,
+    marginTop: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  warnText: { flex: 1, fontSize: 12, fontWeight: '600' },
+  section: {
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 6,
+  },
+  listContent: { paddingBottom: 110, flexGrow: 1 },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+  rowMain: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    minWidth: 0,
     paddingRight: 8,
   },
-  avatarContainer: { position: 'relative' },
-  avatar: { width: 50, height: 50, borderRadius: 25 },
-  avatarFallback: {
-    backgroundColor: '#1976d2',
-    justifyContent: 'center',
+  avatarWrap: { position: 'relative' },
+  avatar: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  avatarFallbackText: { color: '#fff', fontSize: 18, fontWeight: '700' },
-  callTypeIcon: {
+  avatarLetter: { color: '#fff', fontSize: 18, fontWeight: '800' },
+  typeDot: {
     position: 'absolute',
-    bottom: 0,
-    right: -4,
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    justifyContent: 'center',
+    right: -2,
+    bottom: -2,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
     alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 2,
-    borderColor: '#fff',
   },
-  videoIcon: { backgroundColor: '#34c759' },
-  voiceIcon: { backgroundColor: '#1976d2' },
-  callInfo: { flex: 1, marginLeft: 14 },
-  callName: { fontSize: 17, fontWeight: '600', color: '#000' },
-  missedCallName: { color: '#ff3b30' },
-  callMeta: { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
-  callTime: { fontSize: 13, color: '#8e8e93', marginLeft: 4 },
-  missedCallTime: { color: '#ff3b30' },
-  callbackRow: { flexDirection: 'row', gap: 4 },
-  callbackButton: {
+  rowText: { flex: 1, marginLeft: 14, minWidth: 0 },
+  rowName: { fontSize: 16, fontWeight: '700', letterSpacing: -0.2 },
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 3,
+  },
+  metaText: { fontSize: 13, fontWeight: '500', flexShrink: 1 },
+  rowActions: { flexDirection: 'row', gap: 8 },
+  actionBtn: {
     width: 40,
     height: 40,
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  callbackVoice: { backgroundColor: '#e3f2fd' },
-  callbackVideo: { backgroundColor: '#e8f5e9' },
-  emptyState: {
-    alignItems: 'center',
-    paddingVertical: 48,
-    paddingHorizontal: 32,
+  separator: {
+    height: StyleSheet.hairlineWidth,
+    marginLeft: 80,
   },
-  emptyIconRing: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: '#fff',
+  empty: {
+    alignItems: 'center',
+    paddingTop: 56,
+    paddingHorizontal: 36,
+  },
+  emptyOrb: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
+    marginBottom: 18,
   },
-  emptyText: { fontSize: 18, fontWeight: '700', color: '#374151' },
-  emptySubtext: { fontSize: 14, color: '#9ca3af', marginTop: 6, textAlign: 'center', lineHeight: 20 },
-  errorText: { color: '#666', textAlign: 'center', paddingHorizontal: 32 },
+  emptyTitle: { fontSize: 20, fontWeight: '800', letterSpacing: -0.3 },
+  emptySub: {
+    fontSize: 14,
+    textAlign: 'center',
+    marginTop: 8,
+    lineHeight: 20,
+  },
+  errorText: { textAlign: 'center' },
   retryBtn: {
-    marginTop: 4,
     paddingHorizontal: 18,
-    paddingVertical: 9,
-    backgroundColor: '#1976d2',
-    borderRadius: 18,
+    paddingVertical: 10,
+    borderRadius: 20,
   },
-  retryBtnText: { color: '#fff', fontWeight: '700' },
+  retryText: { color: '#fff', fontWeight: '700' },
   fab: {
     position: 'absolute',
     right: 20,
-    backgroundColor: '#1976d2',
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 8,
   },
 });

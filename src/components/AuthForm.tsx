@@ -12,6 +12,7 @@ import {
 import { KeyboardSafeScreen } from './KeyboardSafeScreen'
 import { LinearGradient } from 'expo-linear-gradient'
 import { Ionicons } from '@expo/vector-icons'
+import { useChatSettings } from '../context/ChatSettingsContext'
 
 interface AuthFormProps {
   title: string
@@ -61,6 +62,10 @@ export default function AuthForm({
 
   const { width } = useWindowDimensions()
   const isDesktop = width > 700
+  const { theme } = useChatSettings()
+  const gradientColors = theme.isDark
+    ? ([theme.listBg, theme.listCardBg, theme.headerBg] as const)
+    : (['#E3F2FD', '#BBDEFB', '#90CAF9'] as const)
 
   // Validation handlers
   const validateEmail = (text: string) => {
@@ -239,8 +244,8 @@ export default function AuthForm({
     wrappedForm
   ) : (
     <LinearGradient
-      colors={['#E3F2FD', '#BBDEFB', '#90CAF9']}
-      style={styles.gradientBackground}
+      colors={[...gradientColors]}
+      style={[styles.gradientBackground, { backgroundColor: theme.listBg }]}
     >
       {wrappedForm}
     </LinearGradient>

@@ -4,6 +4,7 @@ import { prefetch2faStatus } from '../lib/account2faCache';
 import { scheduleChatRemindersPrefetch } from '../hooks/useChatReminders';
 import { scheduleCallsPrefetch } from '../lib/callsPrefetch';
 import { scheduleFriendsPrefetch } from '../lib/friendsPrefetch';
+import { scheduleAddFriendPrefetch } from '../lib/addFriendPrefetch';
 import { scheduleGiftCatalogPrefetch } from '../lib/giftCatalogPrefetch';
 import { scheduleReelInboxPrefetch } from '../lib/reelInboxPrefetch';
 import { scheduleExplorePrefetch } from '../lib/momentsFeedPrefetch';
@@ -23,6 +24,7 @@ export function AppPrefetchRegistrar() {
     scheduleChatRemindersPrefetch(400);
     scheduleExplorePrefetch(APP_PREFETCH_DELAY_MS);
     scheduleFriendsPrefetch(APP_PREFETCH_DELAY_MS + 400);
+    scheduleAddFriendPrefetch(APP_PREFETCH_DELAY_MS + 600);
     scheduleCallsPrefetch(APP_PREFETCH_DELAY_MS + 800);
     scheduleReelsFeedPrefetch(APP_PREFETCH_DELAY_MS + 1600);
     scheduleGiftCatalogPrefetch(APP_PREFETCH_DELAY_MS + 2400);

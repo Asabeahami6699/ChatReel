@@ -20,7 +20,11 @@ import {
   urgencyColor,
   type ChatReminder,
 } from '../../lib/chatReminders';
-import { refreshChatReminders, getCachedChatReminders } from '../../hooks/useChatReminders';
+import {
+  refreshChatReminders,
+  getCachedChatReminders,
+  completeReminderOnView,
+} from '../../hooks/useChatReminders';
 import { openChat } from '../../navigation/chatNavigationBridge';
 
 function sectionFor(remindAt: string, now = Date.now()): 'due' | 'today' | 'later' {
@@ -83,12 +87,16 @@ export default function RemindersScreen() {
   }, [items]);
 
   const openReminder = (item: ChatReminder) => {
+    const due =
+      item.status === 'fired' || reminderUrgency(item.remind_at) === 'due';
     openChat({
       chatId: item.chat_id,
       chatType: item.chat_type,
       chatName: item.chat_name || 'Chat',
       focusMessageId: item.message_id || undefined,
     });
+    // Due reminders clear once the user opens/visits them.
+    if (due) void completeReminderOnView(item.id);
   };
 
   const markDone = async (item: ChatReminder) => {

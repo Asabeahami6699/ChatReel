@@ -156,6 +156,17 @@ export default function DropdownMenu({ triggerIcon = 'ellipsis-vertical' }: Drop
     });
   };
 
+  /** Share after the menu Modal finishes closing — Share fails if the Modal is still dismissing. */
+  const shareInvite = () => {
+    const fromName = profile?.display_name || user?.email || null;
+    const fromUserId = user?.id ?? null;
+    setTimeout(() => {
+      void import('../lib/appInviteLinks')
+        .then(({ shareAppInvite }) => shareAppInvite({ fromName, fromUserId }))
+        .catch(() => undefined);
+    }, Platform.OS === 'web' ? 0 : 350);
+  };
+
   const menuItems = isGuest
     ? [
         { title: 'Profile', icon: 'person-outline', onPress: () => requestLogin('open your profile') },
@@ -195,7 +206,7 @@ export default function DropdownMenu({ triggerIcon = 'ellipsis-vertical' }: Drop
         },
         { title: 'Archived chats', icon: 'archive-outline', onPress: () => navigation.navigate('ArchivedChats') },
         { title: 'Settings', icon: 'settings-outline', onPress: () => navigation.navigate('Settings') },
-        { title: 'Invite a Friend', icon: 'share-social-outline', onPress: () => navigation.navigate('Invite') },
+        { title: 'Invite a Friend', icon: 'share-social-outline', onPress: shareInvite },
         { title: 'My QR Code', icon: 'qr-code-outline', onPress: () => navigation.navigate('QRCode') },
         { title: 'Link a Device', icon: 'phone-portrait-outline', onPress: () => navigation.navigate('QRScanner') },
         {
