@@ -32,7 +32,6 @@ import {
 } from '../../lib/appAudio';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
-import * as FileSystem from 'expo-file-system/legacy';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 import AttachmentPreview from '../../components/AttachmentPreview'; // Adjust the path as necessary
 import { USE_NATIVE_DRIVER } from '../../lib/animation';
@@ -210,7 +209,11 @@ const ChatInput = forwardRef<TextInput, ChatInputProps>(({
     const uri = await finalizeRecordingForPreview();
     if (!uri) return null;
     const segDuration = Math.max(0, recordedDurationRef.current - segmentBaseDurationRef.current);
-    if (segDuration > 0) {
+    const last = recordingSegmentsRef.current[recordingSegmentsRef.current.length - 1];
+    // Avoid duplicating the same pause clip when send finalizes again.
+    if (segDuration > 0.05 && last?.uri !== uri) {
+      recordingSegmentsRef.current.push({ uri, duration: segDuration });
+    } else if (segDuration > 0.05 && !last) {
       recordingSegmentsRef.current.push({ uri, duration: segDuration });
     }
     segmentBaseDurationRef.current = recordedDurationRef.current;
@@ -218,90 +221,59 @@ const ChatInput = forwardRef<TextInput, ChatInputProps>(({
     return uri;
   };
 
-  const resolveSendUri = async (): Promise<string | null> => {
-    if (Platform.OS === 'web') {
-      if (audioRecorder.isRecording) {
-        await audioRecorder.stop();
-        await new Promise((resolve) => setTimeout(resolve, 120));
-        recorderNeedsPrepareRef.current = true;
-      }
-
-      const finalUri =
+  const resolveMergedSegments = async (): Promise<string | null> => {
+    const segments = recordingSegmentsRef.current;
+    if (segments.length === 0) {
+      return (
+        recordingPreviewUriRef.current ??
         audioRecorder.uri ??
         audioRecorder.getStatus().url ??
-        recordingPreviewUriRef.current ??
-        recordingSegmentsRef.current[recordingSegmentsRef.current.length - 1]?.uri ??
-        null;
-      if (finalUri) {
-        const segDuration = Math.max(
-          0,
-          recordedDurationRef.current - segmentBaseDurationRef.current
-        );
-        if (segDuration > 0) {
-          recordingSegmentsRef.current.push({ uri: finalUri, duration: segDuration });
-        }
-      }
-
-      const segments = recordingSegmentsRef.current;
-      if (segments.length === 0) return finalUri;
-      if (segments.length === 1) return segments[0].uri;
-      return mergeVoiceSegments(segments.map((seg) => seg.uri));
+        null
+      );
     }
-
-    // Native: one MediaRecorder session — pause/resume keeps the full clip in one file.
-    if (audioRecorder.isRecording) {
-      await audioRecorder.stop();
-    } else {
-      const status = audioRecorder.getStatus();
-      if (status.canRecord) {
-        await audioRecorder.stop();
-      }
+    if (segments.length === 1) return segments[0].uri;
+    const merged = await mergeVoiceSegments(segments.map((seg) => seg.uri));
+    if (merged) {
+      recordingPreviewUriRef.current = merged;
     }
+    return merged ?? segments[segments.length - 1].uri;
+  };
 
-    return (
-      audioRecorder.uri ??
-      audioRecorder.getStatus().url ??
-      recordingPreviewUriRef.current
-    );
+  const resolveSendUri = async (): Promise<string | null> => {
+    // Always commit any in-progress take so pause/resume segments are complete.
+    if (
+      audioRecorder.isRecording ||
+      (Platform.OS !== 'web' && audioRecorder.getStatus().canRecord)
+    ) {
+      await commitCurrentSegment();
+    }
+    return resolveMergedSegments();
   };
 
   const resolvePreviewUri = async (): Promise<string | null> => {
-    if (Platform.OS === 'web') {
-      if (audioRecorder.isRecording) {
-        await finalizeRecordingForPreview();
-      }
-      const segments = recordingSegmentsRef.current;
-      if (segments.length > 0) {
-        return segments[segments.length - 1].uri;
-      }
-      return recordingPreviewUriRef.current ?? getRecordingUri();
+    if (audioRecorder.isRecording) {
+      await commitCurrentSegment();
     }
+
+    const segments = recordingSegmentsRef.current;
+    if (segments.length > 1) {
+      return resolveMergedSegments();
+    }
+    if (segments.length === 1) return segments[0].uri;
 
     const sourceUri = getRecordingUri();
     if (!sourceUri) return null;
 
-    // Native paused session: play the in-progress file directly (no copy/finalize).
-    if (modeRef.current === 'paused' && !recorderNeedsPrepareRef.current) {
+    // Native paused session: play the in-progress file directly when still one open session.
+    if (
+      Platform.OS !== 'web' &&
+      modeRef.current === 'paused' &&
+      !recorderNeedsPrepareRef.current
+    ) {
       return sourceUri;
     }
 
-    const status = audioRecorder.getStatus();
-    const sessionStillOpen =
-      modeRef.current === 'paused' && status.canRecord && !recorderNeedsPrepareRef.current;
-    const cacheDir = FileSystem.cacheDirectory;
-
-    if (!sessionStillOpen || !cacheDir) {
-      return sourceUri;
-    }
-
-    try {
-      const extension = sourceUri.includes('.') ? sourceUri.split('.').pop() : 'm4a';
-      const previewPath = `${cacheDir}voice-preview-${Date.now()}.${extension}`;
-      await FileSystem.copyAsync({ from: sourceUri, to: previewPath });
-      return previewPath;
-    } catch {
-      return sourceUri;
-    }
+    return sourceUri;
   };
 
   // Initialize wave animations
@@ -813,12 +785,9 @@ const pauseRecording = async () => {
       waveIntervalRef.current = null;
     }
 
-    if (Platform.OS === 'web') {
-      await commitCurrentSegment();
-    } else if (audioRecorder.isRecording) {
-      audioRecorder.pause();
-      recordingPreviewUriRef.current = getRecordingUri();
-    }
+    // Finalize this take into a segment. Resume always starts a new take;
+    // send/preview merge segments so nothing is overwritten.
+    await commitCurrentSegment();
 
     setMode('paused');
     stopWaveAnimation();
@@ -834,22 +803,9 @@ const resumeRecording = async () => {
       await stopPlayback();
     }
 
-    if (Platform.OS === 'web') {
-      await configureRecordingAudio();
-      await audioRecorder.prepareToRecordAsync();
-      recorderNeedsPrepareRef.current = false;
-    } else {
-      const status = audioRecorder.getStatus();
-      const canResumeSameSession =
-        !recorderNeedsPrepareRef.current && status.canRecord && !audioRecorder.isRecording;
-
-      if (!canResumeSameSession) {
-        await configureRecordingAudio();
-        await audioRecorder.prepareToRecordAsync();
-        recorderNeedsPrepareRef.current = false;
-      }
-    }
-
+    await configureRecordingAudio();
+    await audioRecorder.prepareToRecordAsync();
+    recorderNeedsPrepareRef.current = false;
     audioRecorder.record();
 
     recordingIntervalRef.current = setInterval(() => {

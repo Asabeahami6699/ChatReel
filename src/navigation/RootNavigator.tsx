@@ -23,6 +23,7 @@ import {
 } from '../lib/pendingReel';
 import { captureAppInviteFromUrl } from '../lib/pendingAppInvite';
 import { AppInviteDownloadPrompt } from '../components/AppInviteDownloadPrompt';
+import { WebPlayStoreInstallBanner } from '../components/WebPlayStoreInstallBanner';
 import { navigateToInvite, rootNavigationRef } from './rootNavigation';
 import { navigateToReelPreview } from './navigateToChat';
 
@@ -126,13 +127,16 @@ export const RootNavigator = () => {
   }
 
   return (
-    <NavigationContainer
-      ref={rootNavigationRef}
-      linking={linking}
-      theme={navigationTheme}
-    >
-      <AppInviteDownloadPrompt />
-      {isAuthenticated ? <AppNavigator /> : isGuest ? <GuestNavigator /> : <AuthNavigator />}
-    </NavigationContainer>
+    <View style={{ flex: 1 }}>
+      <NavigationContainer
+        ref={rootNavigationRef}
+        linking={linking}
+        theme={navigationTheme}
+      >
+        <AppInviteDownloadPrompt />
+        {isAuthenticated ? <AppNavigator /> : isGuest ? <GuestNavigator /> : <AuthNavigator />}
+      </NavigationContainer>
+      <WebPlayStoreInstallBanner />
+    </View>
   );
 };
