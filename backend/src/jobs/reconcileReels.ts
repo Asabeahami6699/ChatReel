@@ -1,4 +1,5 @@
 import { env } from '../config/env';
+import { warnJobQueryFailure } from '../lib/jobQueryWarn';
 import { supabaseAdmin } from '../lib/supabaseAdmin';
 import { moderateReelById } from '../services/reelModeration.service';
 import {
@@ -133,7 +134,7 @@ export async function reconcileStuckReels(): Promise<{
       .limit(BATCH_LIMIT);
 
     if (tErr) {
-      console.warn('[reconcile] stuck transcode query failed:', tErr.message);
+      warnJobQueryFailure('reconcile.transcode', '[reconcile] stuck transcode query failed', tErr);
     } else {
       for (const row of (stuckTranscode ?? []) as StuckReelRow[]) {
         handled.add(row.id);
@@ -154,7 +155,7 @@ export async function reconcileStuckReels(): Promise<{
       .limit(BATCH_LIMIT);
 
     if (mErr) {
-      console.warn('[reconcile] stuck moderation query failed:', mErr.message);
+      warnJobQueryFailure('reconcile.moderation', '[reconcile] stuck moderation query failed', mErr);
     } else {
       for (const row of (stuckModeration ?? []) as StuckReelRow[]) {
         if (handled.has(row.id)) continue;
@@ -169,7 +170,7 @@ export async function reconcileStuckReels(): Promise<{
       );
     }
   } catch (err) {
-    console.warn('[reconcile] pass failed:', err);
+    warnJobQueryFailure('reconcile.pass', '[reconcile] pass failed', err);
   } finally {
     running = false;
   }

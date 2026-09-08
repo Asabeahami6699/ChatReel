@@ -12,9 +12,12 @@ export type OpenChatParams = {
 };
 
 type ChatOpener = (params: OpenChatParams) => void;
+type ChatCloser = () => void;
 
 /** Desktop split layout: opens chat in the main panel. */
 let desktopChatOpener: ChatOpener | null = null;
+/** Desktop split layout: clears the main-panel chat (back from isolated WebChatRoom). */
+let desktopChatCloser: ChatCloser | null = null;
 /** Mobile / narrow web: opens chat via the main tab navigator. */
 let mobileChatOpener: ChatOpener | null = null;
 let beforeChatNavigate: (() => void) | null = null;
@@ -25,6 +28,21 @@ export function registerDesktopChatOpener(fn: ChatOpener) {
 
 export function unregisterDesktopChatOpener() {
   desktopChatOpener = null;
+}
+
+export function registerDesktopChatCloser(fn: ChatCloser) {
+  desktopChatCloser = fn;
+}
+
+export function unregisterDesktopChatCloser() {
+  desktopChatCloser = null;
+}
+
+/** Close the desktop main-panel chat when there is no stack history to pop. */
+export function closeDesktopChat(): boolean {
+  if (!desktopChatCloser) return false;
+  desktopChatCloser();
+  return true;
 }
 
 export function registerMobileChatOpener(fn: ChatOpener) {

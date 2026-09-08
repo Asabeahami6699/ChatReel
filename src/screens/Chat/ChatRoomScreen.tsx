@@ -62,6 +62,10 @@ import { ChatMediaAlbum } from './ChatMediaAlbum';
 import { ChatRoomLockCover } from '../../components/ChatRoomLockCover';
 import { PollComposerSheet } from '../../components/PollMessageBubble';
 import { navigateToReelPreview } from '../../navigation/navigateToChat';
+import {
+  closeDesktopChat,
+  isWebDesktopLayout,
+} from '../../navigation/chatNavigationBridge';
 import { ensureSupabaseSession } from '../../lib/ensureSupabaseSession';
 import { useChatTyping } from '../../hooks/useChatTyping';
 import { usePartnerPresence } from '../../hooks/usePartnerPresence';
@@ -137,6 +141,20 @@ export default function ChatRoomScreen() {
     chatType === 'group' ? chatId : undefined,
     chatType === 'group'
   );
+
+  /** Web desktop mounts ChatRoom as the root of an isolated stack — no history to pop. */
+  const leaveChatRoom = useCallback(() => {
+    if (typeof navigation.canGoBack === 'function' && navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+    if (isWebDesktopLayout() && closeDesktopChat()) {
+      return;
+    }
+    if (navigation.navigate) {
+      navigation.navigate('ChatList');
+    }
+  }, [navigation]);
 
   const insets = useSafeAreaInsets();
   const { theme } = useChatSettings();
@@ -842,6 +860,11 @@ export default function ChatRoomScreen() {
             ...serverMessages,
             ...sanitizeChatMessages(localMessages),
           ]);
+          setMessages((prev) => {
+            const next = deduplicateMessages([...serverMessages, ...prev]);
+            rememberChatThread(chatId, next);
+            return next;
+          });
         } else {
           const localPending = localMessages.filter(m =>
             (m.id.startsWith('temp-') || m.client_message_id) &&
@@ -871,10 +894,47 @@ export default function ChatRoomScreen() {
           });
 
           finalMessages = deduplicateMessages([...withKeptCleartext, ...uniquePending]);
+
+          // Merge into what's already on screen so a partial server page never
+          // wipes older history the user already loaded (looks like "vanishing").
+          setMessages((prev) => {
+            if (prev.length === 0) {
+              rememberChatThread(chatId, finalMessages);
+              return finalMessages;
+            }
+            const serverById = new Map(withKeptCleartext.map((m) => [m.id, m]));
+            const mergedPrev = prev.map((m) => {
+              const fresh = serverById.get(m.id);
+              if (!fresh) return m;
+              return {
+                ...m,
+                ...fresh,
+                local_file_uri: m.local_file_uri ?? fresh.local_file_uri,
+                local_audio_uri: m.local_audio_uri ?? fresh.local_audio_uri,
+                file_url: fresh.file_url || m.file_url,
+                audio_url: fresh.audio_url || m.audio_url,
+                decrypted: fresh.decrypted ?? m.decrypted,
+                delivered: Boolean(m.delivered || fresh.delivered),
+                is_read: Boolean(m.is_read || fresh.is_read),
+                _status:
+                  m._status === 'pending' || m._status === 'failed'
+                    ? m._status
+                    : fresh._status ?? m._status ?? 'sent',
+              };
+            });
+            const prevIds = new Set(prev.map((m) => m.id));
+            const brandNew = withKeptCleartext.filter((m) => !prevIds.has(m.id));
+            const pendingKeep = uniquePending.filter(
+              (m) =>
+                !prevIds.has(m.id) &&
+                !(m.client_message_id && serverClientIds.has(m.client_message_id))
+            );
+            const next = deduplicateMessages([...mergedPrev, ...brandNew, ...pendingKeep]);
+            rememberChatThread(chatId, next);
+            return next;
+          });
         }
 
-        setMessages(finalMessages);
-        rememberChatThread(chatId, finalMessages);
         setHasMore(messagesData.length >= pageSize);
 
         // Persist full thread when loading more; on first page keep prior older locals.
@@ -927,25 +987,30 @@ export default function ChatRoomScreen() {
         }
       }
       else if (messagesData && messagesData.length === 0 && !loadMore) {
+        // Empty server page is common (new chat, filters, transient API/RLS).
+        // Never wipe local storage or an already-painted thread — that looks like
+        // messages "vanishing".
         const kept = deduplicateMessages(
           filterByClearedAt(sanitizeChatMessages(localMessages)).filter((m) =>
             messageBelongsToChat(m)
           )
         );
-        if (kept.length > 0) {
+        if (kept.length > 0 && messagesRef.current.length === 0) {
           const recent = kept.slice(-INITIAL_MESSAGE_PAGE);
           setMessages(recent);
+          rememberChatThread(chatId, recent);
           setHasMore(kept.length > recent.length);
-          await messageStorage.saveMessages(chatId, kept);
+        } else if (kept.length > 0) {
+          setHasMore(kept.length > messagesRef.current.length);
         } else {
-          await messageStorage.clearMessages(chatId);
-          setMessages([]);
           setHasMore(false);
         }
       }
       else {
         setHasMore(false);
-        if (!loadMore) {
+        // Don't replace an already-painted thread with a local slice — that can
+        // drop older history the user scrolled into.
+        if (!loadMore && messagesRef.current.length === 0) {
           const deduped = deduplicateMessages(localMessages);
           const recent = deduped.slice(-INITIAL_MESSAGE_PAGE);
           setMessages(recent);
@@ -954,7 +1019,7 @@ export default function ChatRoomScreen() {
       }
     } catch (err: any) {
       console.error('Sync error:', err);
-      if (!loadMore) {
+      if (!loadMore && messagesRef.current.length === 0) {
         const deduped = deduplicateMessages(localMessages);
         if (deduped.length > 0) {
           const recent = deduped.slice(-INITIAL_MESSAGE_PAGE);
@@ -2923,7 +2988,7 @@ export default function ChatRoomScreen() {
               try {
                 await api.friendships.block(chatId);
                 showAppToast(`${chatName} blocked`);
-                navigation.goBack();
+                leaveChatRoom();
               } catch {
                 showAppToast('Could not block user', { isError: true });
               }
@@ -2932,7 +2997,7 @@ export default function ChatRoomScreen() {
         },
       ]
     );
-  }, [chatType, chatId, chatName, navigation]);
+  }, [chatType, chatId, chatName, leaveChatRoom]);
 
   const handleExportChat = useCallback(() => {
     const lines = visibleMessages
@@ -3430,7 +3495,7 @@ export default function ChatRoomScreen() {
       >
         <View style={styles.headerLeft}>
           <TouchableOpacity
-            onPress={() => navigation.goBack()}
+            onPress={leaveChatRoom}
             style={styles.headerIconBtn}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             accessibilityLabel="Go back"
@@ -3892,7 +3957,7 @@ export default function ChatRoomScreen() {
         kind={roomKind}
         chatId={chatId}
         chatName={chatName}
-        onBack={() => navigation.goBack()}
+        onBack={leaveChatRoom}
       />
     </SafeAreaView>
   );

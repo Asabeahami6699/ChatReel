@@ -13,6 +13,8 @@ import { getFocusedRouteName, MOBILE_BREAKPOINT } from './navigationUtils';
 import {
   registerDesktopChatOpener,
   unregisterDesktopChatOpener,
+  registerDesktopChatCloser,
+  unregisterDesktopChatCloser,
   type OpenChatParams,
 } from './chatNavigationBridge';
 import { createMaterialTopTabNavigator, MaterialTopTabBar } from '@react-navigation/material-top-tabs';
@@ -432,10 +434,18 @@ const WebDesktopMain = () => {
     setSelectedChat(params);
   }, []);
 
+  const closeDesktopChatPanel = useCallback(() => {
+    setSelectedChat(null);
+  }, []);
+
   useLayoutEffect(() => {
     registerDesktopChatOpener(openDesktopChat);
-    return () => unregisterDesktopChatOpener();
-  }, [openDesktopChat]);
+    registerDesktopChatCloser(closeDesktopChatPanel);
+    return () => {
+      unregisterDesktopChatOpener();
+      unregisterDesktopChatCloser();
+    };
+  }, [openDesktopChat, closeDesktopChatPanel]);
 
   return (
     <View style={styles.webContainer}>

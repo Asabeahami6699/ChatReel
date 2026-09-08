@@ -1,4 +1,5 @@
 import { env } from '../config/env';
+import { warnJobQueryFailure } from '../lib/jobQueryWarn';
 import { supabaseAdmin } from '../lib/supabaseAdmin';
 import { sendPushToUserSafe } from '../services/push.service';
 
@@ -27,7 +28,7 @@ export async function fireDueChatReminders(): Promise<{ fired: number }> {
       .limit(BATCH_SIZE);
 
     if (error) {
-      console.warn('[reminders] due query failed:', error.message);
+      warnJobQueryFailure('reminders.due', '[reminders] due query failed', error);
       return { fired: 0 };
     }
 
@@ -91,7 +92,7 @@ export async function fireDueChatReminders(): Promise<{ fired: number }> {
     }
     return { fired };
   } catch (err) {
-    console.warn('[reminders] fire pass failed:', err);
+    warnJobQueryFailure('reminders.pass', '[reminders] fire pass failed', err);
     return { fired: 0 };
   } finally {
     running = false;

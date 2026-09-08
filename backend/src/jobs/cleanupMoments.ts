@@ -1,4 +1,5 @@
 import { env } from '../config/env';
+import { warnJobQueryFailure } from '../lib/jobQueryWarn';
 import { supabaseAdmin } from '../lib/supabaseAdmin';
 import { cleanupMomentMedia } from '../services/momentStorage.service';
 
@@ -31,7 +32,7 @@ export async function cleanupExpiredMoments(): Promise<{ deleted: number }> {
       .limit(BATCH_SIZE);
 
     if (error) {
-      console.warn('[moments] expired query failed:', error.message);
+      warnJobQueryFailure('moments.expired', '[moments] expired query failed', error);
       return { deleted: 0 };
     }
 

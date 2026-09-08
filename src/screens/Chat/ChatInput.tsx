@@ -1,5 +1,5 @@
 // ChatInput.tsx
-import React, { useState, useRef, forwardRef } from 'react';
+import React, { useState, useRef, forwardRef, useEffect, useMemo } from 'react';
 import {
   View,
   TextInput,
@@ -37,6 +37,13 @@ import AttachmentPreview from '../../components/AttachmentPreview'; // Adjust th
 import { USE_NATIVE_DRIVER } from '../../lib/animation';
 import { mergeVoiceSegments } from '../../lib/mergeVoiceSegments';
 import { useChatSettings } from '../../context/ChatSettingsContext';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  EMOJI_CATEGORIES,
+  EMOJI_RECENTS_KEY,
+  EMOJI_RECENTS_MAX,
+  type EmojiCategoryId,
+} from '../../lib/emojiCategories';
 
 type ChatInputProps = {
   onSend?: (text: string) => void;
@@ -97,21 +104,6 @@ type AttachmentFile = {
   caption?: string;
 };
 
-const commonEmojis = [
-  '😀', '😃', '😄', '😁', '😆', '😅', '😂', '🤣', '😊', '😇',
-  '🙂', '🙃', '😉', '😌', '😍', '🥰', '😘', '😗', '😙', '😚',
-  '😋', '😛', '😝', '😜', '🤪', '🤨', '🧐', '🤓', '😎', '🤩',
-  '🥳', '😏', '😒', '😞', '😔', '😟', '😕', '🙁', '☹️', '😣',
-  '😖', '😫', '😩', '🥺', '😢', '😭', '😤', '😠', '😡', '🤬',
-  '🤯', '😳', '🥵', '🥶', '😱', '😨', '😰', '😥', '😓', '🤗',
-  '🤔', '🤭', '🤫', '🤥', '😶', '😐', '😑', '😬', '🙄', '😯',
-  '😦', '😧', '😮', '😲', '🥱', '😴', '🤤', '😪', '😵', '🤐',
-  '🥴', '🤢', '🤮', '🤧', '😷', '🤒', '🤕', '🤑', '🤠', '😈',
-  '👿', '👹', '👺', '🤡', '💩', '👻', '💀', '☠️', '👽', '👾',
-  '🤖', '🎃', '😺', '😸', '😹', '😻', '😼', '😽', '🙀', '😿',
-  '😾'
-];
-
 const VOICE_RECORDING_OPTIONS = {
   ...RecordingPresets.HIGH_QUALITY,
   numberOfChannels: 1,
@@ -146,6 +138,8 @@ const ChatInput = forwardRef<TextInput, ChatInputProps>(({
   const [inputHeight, setInputHeight] = useState(40);
   const [inputFocused, setInputFocused] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [emojiCategoryId, setEmojiCategoryId] = useState<EmojiCategoryId>('smileys');
+  const [recentEmojis, setRecentEmojis] = useState<string[]>([]);
   const [selection, setSelection] = useState({ start: 0, end: 0 });
   const selectionRef = useRef({ start: 0, end: 0 });
   /** Only force controlled selection after emoji insert — always-controlled selection breaks Android TextInput. */
@@ -179,6 +173,37 @@ const ChatInput = forwardRef<TextInput, ChatInputProps>(({
   React.useEffect(() => {
     modeRef.current = mode;
   }, [mode]);
+
+  useEffect(() => {
+    let alive = true;
+    void AsyncStorage.getItem(EMOJI_RECENTS_KEY).then((raw) => {
+      if (!alive || !raw) return;
+      try {
+        const parsed = JSON.parse(raw) as unknown;
+        if (Array.isArray(parsed)) {
+          setRecentEmojis(parsed.filter((e) => typeof e === 'string').slice(0, EMOJI_RECENTS_MAX));
+        }
+      } catch {
+        /* ignore */
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const emojiTabs = useMemo(
+    () => [
+      { id: 'recents' as const, label: 'Recents', tab: '🕒', emojis: recentEmojis },
+      ...EMOJI_CATEGORIES,
+    ],
+    [recentEmojis]
+  );
+
+  const activeEmojiCategory = useMemo(
+    () => emojiTabs.find((c) => c.id === emojiCategoryId) ?? emojiTabs[1],
+    [emojiTabs, emojiCategoryId]
+  );
 
   const getRecordingUri = () =>
     recordingPreviewUriRef.current ??
@@ -1039,6 +1064,15 @@ const formatDuration = (seconds: number) => {
     animateSendButton(next.trim().length > 0 || selectedAttachments.length > 0);
     // Release controlled selection on the next tick so Android keeps typing normally.
     setTimeout(() => setForceSelection(false), 0);
+
+    setRecentEmojis((prevRecents) => {
+      const nextRecents = [emoji, ...prevRecents.filter((e) => e !== emoji)].slice(
+        0,
+        EMOJI_RECENTS_MAX
+      );
+      void AsyncStorage.setItem(EMOJI_RECENTS_KEY, JSON.stringify(nextRecents));
+      return nextRecents;
+    });
   }
 
   // ... (All recording functions remain the same)
@@ -1177,6 +1211,8 @@ const formatDuration = (seconds: number) => {
             style={styles.iconButton}
             onPress={() => {
               // Don't blur — on web blur resets the caret and emoji inserts at the start.
+              if (recentEmojis.length > 0) setEmojiCategoryId('recents');
+              else setEmojiCategoryId('smileys');
               setShowEmojiPicker(true);
             }}
           >
@@ -1346,7 +1382,9 @@ const formatDuration = (seconds: number) => {
             onStartShouldSetResponder={() => true}
           >
             <View style={[styles.emojiPickerHeader, { borderBottomColor: theme.listBorder }]}>
-              <Text style={[styles.emojiPickerTitle, { color: theme.listPrimaryText }]}>Emoji</Text>
+              <Text style={[styles.emojiPickerTitle, { color: theme.listPrimaryText }]}>
+                {activeEmojiCategory.label}
+              </Text>
               <TouchableOpacity
                 style={styles.closeButton}
                 onPress={() => setShowEmojiPicker(false)}
@@ -1359,16 +1397,63 @@ const formatDuration = (seconds: number) => {
               contentContainerStyle={styles.emojiGrid}
               keyboardShouldPersistTaps="handled"
             >
-              {commonEmojis.map((emoji, index) => (
-                <TouchableOpacity
-                  key={`${emoji}-${index}`}
-                  style={styles.emojiButton}
-                  onPress={() => handleEmojiSelect(emoji)}
-                >
-                  <Text style={styles.emojiText}>{emoji}</Text>
-                </TouchableOpacity>
-              ))}
+              {activeEmojiCategory.emojis.length === 0 ? (
+                <View style={styles.emojiEmpty}>
+                  <Text style={[styles.emojiEmptyText, { color: theme.listSecondaryText }]}>
+                    {emojiCategoryId === 'recents'
+                      ? 'No recent emojis yet'
+                      : 'Nothing here'}
+                  </Text>
+                </View>
+              ) : (
+                activeEmojiCategory.emojis.map((emoji, index) => (
+                  <TouchableOpacity
+                    key={`${activeEmojiCategory.id}-${emoji}-${index}`}
+                    style={styles.emojiButton}
+                    onPress={() => handleEmojiSelect(emoji)}
+                  >
+                    <Text style={styles.emojiText}>{emoji}</Text>
+                  </TouchableOpacity>
+                ))
+              )}
             </ScrollView>
+            <View
+              style={[
+                styles.emojiCategoryBar,
+                {
+                  backgroundColor: theme.listCardBg,
+                  borderTopColor: theme.listBorder,
+                },
+              ]}
+            >
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.emojiCategoryRow}
+                keyboardShouldPersistTaps="handled"
+              >
+                {emojiTabs.map((cat) => {
+                  const active = cat.id === emojiCategoryId;
+                  return (
+                    <TouchableOpacity
+                      key={cat.id}
+                      style={[
+                        styles.emojiCategoryTab,
+                        active && {
+                          backgroundColor: theme.isDark
+                            ? 'rgba(255,255,255,0.08)'
+                            : 'rgba(0,0,0,0.06)',
+                        },
+                      ]}
+                      onPress={() => setEmojiCategoryId(cat.id)}
+                      accessibilityLabel={cat.label}
+                    >
+                      <Text style={styles.emojiCategoryTabText}>{cat.tab}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
           </View>
         </View>
       </Modal>
@@ -1591,7 +1676,8 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
   },
   emojiScroll: {
-    maxHeight: 340,
+    maxHeight: 300,
+    flexGrow: 0,
   },
   emojiPickerHeader: {
     flexDirection: 'row',
@@ -1603,8 +1689,8 @@ const styles = StyleSheet.create({
     borderBottomColor: '#e0e0e0',
   },
   emojiPickerTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
+    fontSize: 16,
+    fontWeight: '700',
     color: '#000',
   },
   closeButton: {
@@ -1614,17 +1700,47 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     padding: 8,
+    paddingBottom: 4,
+  },
+  emojiEmpty: {
+    width: '100%',
+    paddingVertical: 48,
+    alignItems: 'center',
+  },
+  emojiEmptyText: {
+    fontSize: 14,
+    fontWeight: '500',
   },
   emojiButton: {
     width: '12.5%',
     aspectRatio: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 8,
+    padding: 6,
   },
   emojiText: {
-    fontSize: 24,
+    fontSize: 26,
     textAlign: 'center',
+  },
+  emojiCategoryBar: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+  },
+  emojiCategoryRow: {
+    paddingHorizontal: 4,
+    alignItems: 'center',
+    gap: 2,
+  },
+  emojiCategoryTab: {
+    width: 40,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emojiCategoryTabText: {
+    fontSize: 20,
   },
   // Attachment Menu styles (3x2 Grid)
   attachmentMenuOverlay: {
