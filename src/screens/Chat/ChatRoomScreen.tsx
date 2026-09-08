@@ -161,6 +161,11 @@ export default function ChatRoomScreen() {
   const [hasMore, setHasMore] = useState(true);
   const [isPlayingAudio, setIsPlayingAudio] = useState<string | null>(null);
   const [sound, setSound] = useState<AudioPlayer | null>(null);
+  /** Bumps on user-initiated play/stop so a pending auto-advance is cancelled. */
+  const audioPlayGenRef = useRef(0);
+  const playAudioRef = useRef<
+    (url: string, id: string, opts?: { fromAutoAdvance?: boolean }) => Promise<void>
+  >(async () => undefined);
   const [composerDraft, setComposerDraft] = useState('');
   const draftSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [syncing, setSyncing] = useState(false);
@@ -2218,8 +2223,30 @@ export default function ChatRoomScreen() {
   /* ------------------------------------------------------------------ */
   /*  AUDIO PLAYBACK FUNCTIONS                                          */
   /* ------------------------------------------------------------------ */
-  const playAudio = async (url: string, id: string) => {
+  const findNextVoiceMessage = useCallback((afterId: string): Message | null => {
+    const list = messagesRef.current;
+    const idx = list.findIndex((m) => m.id === afterId);
+    if (idx < 0) return null;
+    for (let i = idx + 1; i < list.length; i++) {
+      const msg = list[i];
+      if (msg.message_type !== 'audio') continue;
+      if (!getAudioPlaybackUri(msg)) continue;
+      return msg;
+    }
+    return null;
+  }, []);
+
+  const playAudio = async (
+    url: string,
+    id: string,
+    opts?: { fromAutoAdvance?: boolean }
+  ) => {
     try {
+      if (!opts?.fromAutoAdvance) {
+        audioPlayGenRef.current += 1;
+      }
+      const playGen = audioPlayGenRef.current;
+
       if (!hasAudioPermission && Platform.OS !== 'web') {
         const granted = await ensureMicPermission();
         if (!granted) {
@@ -2229,7 +2256,8 @@ export default function ChatRoomScreen() {
         setHasAudioPermission(true);
       }
 
-      if (sound && isPlayingAudio === id) {
+      // User tapped the same bubble that's playing → stop (do not auto-advance).
+      if (sound && isPlayingAudio === id && !opts?.fromAutoAdvance) {
         await releasePlayer(sound);
         setIsPlayingAudio(null);
         setSound(null);
@@ -2242,7 +2270,9 @@ export default function ChatRoomScreen() {
         setIsPlayingAudio(null);
       }
 
-      const message = messages.find((msg) => msg.id === id);
+      if (audioPlayGenRef.current !== playGen) return;
+
+      const message = messagesRef.current.find((msg) => msg.id === id);
       let audioUri = message ? getAudioPlaybackUri(message) : url;
 
       if (!audioUri) {
@@ -2254,6 +2284,7 @@ export default function ChatRoomScreen() {
       }
 
       await configurePlaybackAudio();
+      if (audioPlayGenRef.current !== playGen) return;
 
       const newSound = createPlaybackPlayer(audioUri);
       newSound.play();
@@ -2262,21 +2293,41 @@ export default function ChatRoomScreen() {
       setIsPlayingAudio(id);
 
       const sub = newSound.addListener('playbackStatusUpdate', (status) => {
-        if (status.duration > 0 && status.currentTime >= status.duration - 0.05) {
-          setIsPlayingAudio(null);
-          setSound(null);
-          void releasePlayer(newSound);
-          sub.remove();
+        if (!(status.duration > 0 && status.currentTime >= status.duration - 0.05)) {
+          return;
         }
-      });
+        sub.remove();
+        if (audioPlayGenRef.current !== playGen) {
+          void releasePlayer(newSound);
+          return;
+        }
 
+        setIsPlayingAudio(null);
+        setSound(null);
+        void releasePlayer(newSound);
+
+        const next = findNextVoiceMessage(id);
+        if (!next) return;
+        const nextUri = getAudioPlaybackUri(next);
+        if (!nextUri) return;
+
+        // Brief gap between clips, like WhatsApp continuous play.
+        setTimeout(() => {
+          if (audioPlayGenRef.current !== playGen) return;
+          void playAudioRef.current(nextUri, next.id, { fromAutoAdvance: true });
+        }, 180);
+      });
     } catch (error) {
       console.error('Failed to play audio:', error);
-      Alert.alert('Error', 'Failed to play audio message');
+      if (!opts?.fromAutoAdvance) {
+        Alert.alert('Error', 'Failed to play audio message');
+      }
       setIsPlayingAudio(null);
       setSound(null);
     }
   };
+
+  playAudioRef.current = playAudio;
 
   /* ------------------------------------------------------------------ */
   /*  EFFECTS AND LIFECYCLE                                             */
@@ -2316,6 +2367,7 @@ export default function ChatRoomScreen() {
   useFocusEffect(
     useCallback(() => {
       return () => {
+        audioPlayGenRef.current += 1;
         if (sound) {
           void releasePlayer(sound);
         }
