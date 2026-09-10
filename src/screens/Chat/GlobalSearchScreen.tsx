@@ -12,6 +12,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useChatSettings } from '../../context/ChatSettingsContext';
+import { useHeaderChrome } from '../../context/AppChromeContext';
 import { searchMessagesAcrossChats, type GlobalSearchHit } from '../../lib/globalMessageSearch';
 import { openChat } from '../../navigation/chatNavigationBridge';
 
@@ -19,6 +20,7 @@ export default function GlobalSearchScreen() {
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
   const { theme } = useChatSettings();
+  useHeaderChrome(theme.headerBg);
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<GlobalSearchHit[]>([]);
   const [loading, setLoading] = useState(false);
@@ -42,7 +44,12 @@ export default function GlobalSearchScreen() {
       <View
         style={[
           styles.header,
-          { backgroundColor: theme.headerBg, paddingTop: insets.top + 8, borderBottomColor: theme.listBorder },
+          {
+            backgroundColor: theme.headerBg,
+            marginTop: -insets.top,
+            paddingTop: insets.top + 8,
+            borderBottomColor: theme.listBorder,
+          },
         ]}
       >
         <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={8}>

@@ -15,6 +15,7 @@ import {
   Switch,
   Share,
   Platform,
+  Pressable,
   RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -1563,12 +1564,18 @@ useEffect(() => {
       </ScrollView>
 
       {/* Invite Options Modal */}
-      <Modal visible={showInviteOptions} transparent animationType="slide">
-        <TouchableOpacity 
-          style={styles.modalOverlay} 
-          activeOpacity={1} 
-          onPress={() => setShowInviteOptions(false)}
-        >
+      <Modal
+        visible={showInviteOptions}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowInviteOptions(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => setShowInviteOptions(false)}
+            accessibilityLabel="Dismiss"
+          />
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Create Invite Link</Text>
@@ -1607,16 +1614,22 @@ useEffect(() => {
               </View>
             </View>
           </View>
-        </TouchableOpacity>
+        </View>
       </Modal>
 
       {/* Member Actions Modal */}
-      <Modal visible={showMemberActions} transparent animationType="fade">
-        <TouchableOpacity 
-          style={styles.modalOverlay} 
-          activeOpacity={1} 
-          onPress={() => setShowMemberActions(false)}
-        >
+      <Modal
+        visible={showMemberActions}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowMemberActions(false)}
+      >
+        <View style={styles.actionsOverlay}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => setShowMemberActions(false)}
+            accessibilityLabel="Dismiss"
+          />
           <View style={styles.actionsModalContent}>
             <Text style={styles.actionsModalTitle}>
               Manage {selectedMember?.profiles?.display_name}
@@ -1660,16 +1673,22 @@ useEffect(() => {
               <Text style={[styles.actionButtonText, { color: '#666' }]}>Cancel</Text>
             </TouchableOpacity>
           </View>
-        </TouchableOpacity>
+        </View>
       </Modal>
 
       {/* Invite Actions Modal */}
-      <Modal visible={showInviteActions} transparent animationType="fade">
-        <TouchableOpacity 
-          style={styles.modalOverlay} 
-          activeOpacity={1} 
-          onPress={() => setShowInviteActions(false)}
-        >
+      <Modal
+        visible={showInviteActions}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowInviteActions(false)}
+      >
+        <View style={styles.actionsOverlay}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => setShowInviteActions(false)}
+            accessibilityLabel="Dismiss"
+          />
           <View style={styles.actionsModalContent}>
             <Text style={styles.actionsModalTitle}>
               Invite Link Actions
@@ -1724,7 +1743,7 @@ useEffect(() => {
               <Text style={[styles.actionButtonText, { color: '#666' }]}>Cancel</Text>
             </TouchableOpacity>
           </View>
-        </TouchableOpacity>
+        </View>
       </Modal>
     </SafeAreaView>
   );
@@ -2170,6 +2189,11 @@ const makeStyles = (theme: ChatThemeTokens) => StyleSheet.create({
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'flex-end',
+  },
+  actionsOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
   },
   modalContent: {
     backgroundColor: theme.listCardBg,

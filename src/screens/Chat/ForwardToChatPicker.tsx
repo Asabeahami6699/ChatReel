@@ -9,7 +9,9 @@ import {
   TextInput,
   Image,
   ActivityIndicator,
+  Pressable,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { OfflineAvatar } from '../../components/OfflineAvatar';
 import { api } from '../../lib/api';
@@ -43,6 +45,7 @@ export function ForwardToChatPicker({
   onSelect,
 }: Props) {
   const { theme } = useChatSettings();
+  const insets = useSafeAreaInsets();
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState('');
   const [rows, setRows] = useState<ChatRow[]>([]);
@@ -105,9 +108,19 @@ export function ForwardToChatPicker({
   }, [rows, query, excludeChatId, excludeChatType]);
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <View style={[styles.container, { backgroundColor: theme.listBg }]}>
-        <View style={[styles.header, { backgroundColor: theme.headerBg }]}>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={styles.modalRoot}>
+        <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Dismiss" />
+        <View
+          style={[
+            styles.container,
+            {
+              backgroundColor: theme.listBg,
+              paddingBottom: Math.max(insets.bottom, 12),
+            },
+          ]}
+        >
+        <View style={[styles.header, { backgroundColor: theme.headerBg, paddingTop: Math.max(insets.top, 12) }]}>
           <TouchableOpacity onPress={onClose}>
             <Ionicons name="close" size={26} color={theme.headerText} />
           </TouchableOpacity>
@@ -172,17 +185,28 @@ export function ForwardToChatPicker({
           />
         )}
       </View>
+      </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  modalRoot: { flex: 1, justifyContent: 'flex-end' },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  container: {
+    maxHeight: '92%',
+    minHeight: '70%',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    overflow: 'hidden',
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingTop: 48,
     paddingHorizontal: 14,
     paddingBottom: 14,
   },

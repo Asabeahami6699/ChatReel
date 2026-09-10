@@ -34,6 +34,7 @@ import {
   optionsWithCurrentValue,
 } from '../../lib/profileLocaleOptions';
 import { useChatSettings } from '../../context/ChatSettingsContext';
+import { useHeaderChrome } from '../../context/AppChromeContext';
 import { getCachedProfile, setCachedProfile, patchCachedProfile, hydrateProfileCache, prefetchMyProfile } from '../../lib/profileCache';
 
 // === Schema ===
@@ -154,6 +155,7 @@ const StatusPulseDot = () => {
 const ProfileScreen = ({ navigation }: { navigation: any }) => {
   const { user } = useAuth();
   const { theme } = useChatSettings();
+  useHeaderChrome(theme.headerBg);
   const insets = useSafeAreaInsets();
   const [loading, setLoading] = useState(() => !getCachedProfile());
   const [saving, setSaving] = useState(false);
@@ -384,6 +386,7 @@ const ProfileScreen = ({ navigation }: { navigation: any }) => {
           styles.header,
           {
             backgroundColor: theme.headerBg,
+            marginTop: -insets.top,
             paddingTop: insets.top + 8,
           },
         ]}

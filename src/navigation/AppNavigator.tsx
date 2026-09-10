@@ -597,19 +597,26 @@ export const AppNavigator = () => {
   const isWebDesktop = Platform.OS === 'web' && width >= MOBILE_BREAKPOINT;
   // Prefer chrome override (e.g. Reels immersive black) so status icons stay readable.
   const shellBg = chrome.topBg || theme.listHeaderBg;
+  // Immersive screens (Reels) own the status-bar region themselves — skip top edge
+  // so For you / Following / back aren't trapped under a double-padded shell.
+  const shellEdges = isWebDesktop
+    ? undefined
+    : chrome.immersive
+      ? (['left', 'right'] as const)
+      : (['top', 'left', 'right'] as const);
 
   return (
     <SafeAreaView
       style={[
         isWebDesktop ? styles.webSafeArea : styles.safeArea,
-        !isWebDesktop && { backgroundColor: shellBg },
+        !isWebDesktop && { backgroundColor: chrome.immersive ? '#000' : shellBg },
       ]}
-      edges={isWebDesktop ? undefined : ['top', 'left', 'right']}
+      edges={shellEdges}
     >
       <StatusBar
         barStyle={chrome.statusBarStyle}
-        backgroundColor={shellBg}
-        translucent={false}
+        backgroundColor={chrome.immersive ? 'transparent' : shellBg}
+        translucent={chrome.immersive}
       />
       <View style={[styles.appShell, { backgroundColor: theme.listBg }]}>
         <Stack.Navigator

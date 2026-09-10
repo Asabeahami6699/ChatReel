@@ -4,6 +4,7 @@ import {
   FlatList,
   Image,
   Modal,
+  Pressable,
   StyleSheet,
   Text,
   TextInput,
@@ -158,6 +159,7 @@ export function AddCallParticipantModal({ visible, call, onClose, onInvited }: P
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.overlay}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Dismiss" />
         <View style={styles.sheet}>
           <View style={styles.header}>
             <Text style={styles.title}>Add to call</Text>

@@ -7,6 +7,7 @@ import React, {
   useState,
 } from 'react';
 import type { StatusBarStyle } from 'react-native';
+import { useIsFocused } from '@react-navigation/native';
 import { useChatSettings } from './ChatSettingsContext';
 
 export type AppChromeState = {
@@ -98,4 +99,21 @@ export function useImmersiveAppChrome(active: boolean) {
     return () => resetChrome();
     // Re-apply after theme flips so parent theme sync can't leave a light strip on Reels.
   }, [active, setChrome, resetChrome, theme.listHeaderBg, theme.isDark]);
+}
+
+/**
+ * Accent headers (chat room, contact, settings, etc.): paint the shell strip
+ * with the same color as the screen header and use light status icons.
+ */
+export function useHeaderChrome(
+  topBg: string,
+  statusBarStyle: StatusBarStyle = 'light-content'
+) {
+  const { setChrome, resetChrome } = useAppChrome();
+  const isFocused = useIsFocused();
+  useEffect(() => {
+    if (!isFocused) return;
+    setChrome({ topBg, statusBarStyle, immersive: false });
+    return () => resetChrome();
+  }, [isFocused, topBg, statusBarStyle, setChrome, resetChrome]);
 }

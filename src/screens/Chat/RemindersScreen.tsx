@@ -12,6 +12,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useChatSettings } from '../../context/ChatSettingsContext';
+import { useHeaderChrome } from '../../context/AppChromeContext';
 import { api } from '../../lib/api';
 import { showAppToast } from '../../lib/appToast';
 import {
@@ -40,6 +41,7 @@ export default function RemindersScreen() {
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
   const { theme } = useChatSettings();
+  useHeaderChrome(theme.headerBg);
   const cached = getCachedChatReminders();
   const [items, setItems] = useState<ChatReminder[]>(cached);
   const [loading, setLoading] = useState(cached.length === 0);
@@ -136,15 +138,16 @@ export default function RemindersScreen() {
           styles.header,
           {
             backgroundColor: theme.headerBg,
+            marginTop: -insets.top,
             paddingTop: insets.top + 8,
             borderBottomColor: theme.listBorder,
           },
         ]}
       >
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Ionicons name="arrow-back" size={22} color={theme.listPrimaryText} />
+          <Ionicons name="arrow-back" size={22} color={theme.headerText} />
         </TouchableOpacity>
-        <Text style={[styles.title, { color: theme.listPrimaryText }]}>Reminders</Text>
+        <Text style={[styles.title, { color: theme.headerText }]}>Reminders</Text>
         <View style={styles.backBtn} />
       </View>
 

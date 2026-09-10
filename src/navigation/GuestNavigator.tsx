@@ -101,6 +101,9 @@ export function GuestNavigator() {
   const { theme } = useChatSettings();
   const chrome = useAppChrome();
   const shellBg = chrome.topBg || theme.listHeaderBg;
+  const shellEdges = chrome.immersive
+    ? (['left', 'right'] as const)
+    : (['top', 'left', 'right'] as const);
   const tabBarBase = useMemo(
     () => ({
       ...styles.tabBarMobile,
@@ -116,13 +119,13 @@ export function GuestNavigator() {
 
   return (
     <SafeAreaView
-      style={[styles.safeArea, { backgroundColor: shellBg }]}
-      edges={['top', 'left', 'right']}
+      style={[styles.safeArea, { backgroundColor: chrome.immersive ? '#000' : shellBg }]}
+      edges={shellEdges}
     >
       <StatusBar
         barStyle={chrome.statusBarStyle}
-        backgroundColor={shellBg}
-        translucent={false}
+        backgroundColor={chrome.immersive ? 'transparent' : shellBg}
+        translucent={chrome.immersive}
       />
       <View style={[styles.appShell, { backgroundColor: theme.listBg }]}>
     <GuestTab.Navigator

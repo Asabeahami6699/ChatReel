@@ -23,7 +23,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import Constants from 'expo-constants';
 import { chatThemePresets, type ChatThemeId } from '../../lib/chatThemes';
 import { useChatSettings } from '../../context/ChatSettingsContext';
-import { useAppChrome } from '../../context/AppChromeContext';
+import { useHeaderChrome } from '../../context/AppChromeContext';
 import { showErrorAlert, confirmAction } from '../../lib/confirmAction';
 import {
   configurePlaybackAudio,
@@ -193,16 +193,7 @@ export default function ChatSettingsScreen() {
     refreshRingtoneLibrary,
     selectRingtone,
   } = useChatSettings();
-  const { setChrome, resetChrome } = useAppChrome();
-
-  useEffect(() => {
-    setChrome({
-      topBg: theme.headerBg,
-      statusBarStyle: 'light-content',
-      immersive: false,
-    });
-    return () => resetChrome();
-  }, [theme.headerBg, setChrome, resetChrome]);
+  useHeaderChrome(theme.headerBg);
 
   const [page, setPage] = useState<SettingsPage>('hub');
   const [settingsQuery, setSettingsQuery] = useState('');
@@ -1831,7 +1822,7 @@ export default function ChatSettingsScreen() {
         {
           icon: 'moon-outline',
           title: 'Dark & Night',
-          body: 'Appearance → ChatReel Blue or Gray for light UI, Dark for classic black, or Night for a deep navy dark theme.',
+          body: 'Appearance → ChatReel Blue, Gray, or Light Gray for light UI, Dark for classic black, or Night for a deep navy dark theme.',
         },
         {
           icon: 'color-palette-outline',

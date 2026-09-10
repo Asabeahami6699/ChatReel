@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useChatSettings } from '../../context/ChatSettingsContext';
+import { useHeaderChrome } from '../../context/AppChromeContext';
 import { useIndividualChats } from '../../hooks/useIndividualChats';
 import { useGroupList } from '../../hooks/useGroupList';
 import { chatListKey } from '../../lib/chatListHidden';
@@ -23,6 +24,7 @@ export default function ArchivedChatsScreen() {
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
   const { theme } = useChatSettings();
+  useHeaderChrome(theme.headerBg);
   const { chats } = useIndividualChats('');
   const { groups } = useGroupList('');
   const [meta, setMeta] = useState<Record<string, ChatListMeta>>({});
@@ -76,7 +78,12 @@ export default function ArchivedChatsScreen() {
       <View
         style={[
           styles.header,
-          { backgroundColor: theme.headerBg, paddingTop: insets.top + 8, borderBottomColor: theme.listBorder },
+          {
+            backgroundColor: theme.headerBg,
+            marginTop: -insets.top,
+            paddingTop: insets.top + 8,
+            borderBottomColor: theme.listBorder,
+          },
         ]}
       >
         <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={8}>

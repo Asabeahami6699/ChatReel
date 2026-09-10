@@ -20,6 +20,7 @@ import { chatTheme } from './chatTheme';
 import { useAuth } from '../../hooks/useAuth';
 import { usePeerProfileStore } from '../../stores/peerProfileStore';
 import { useChatSettings } from '../../context/ChatSettingsContext';
+import { useHeaderChrome } from '../../context/AppChromeContext';
 import { patchChatListMeta } from '../../lib/chatListMeta';
 
 type RouteParams = {
@@ -34,6 +35,7 @@ export default function ContactScreen() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const { theme } = useChatSettings();
+  useHeaderChrome(theme.headerBg);
   const { userId, chatName, avatarUrl } = route.params as RouteParams;
 
   const profile = usePeerProfileStore((s) => s.byUserId[userId]?.profile ?? null);

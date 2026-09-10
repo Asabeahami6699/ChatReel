@@ -5,6 +5,7 @@ import {
   Image,
   Linking,
   Modal,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -178,8 +179,19 @@ export function ChatSharedMediaSheet({
     tab === 'media' ? mediaItems.length : tab === 'links' ? linkItems.length : docItems.length;
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <View style={[styles.root, { backgroundColor: theme.listBg, paddingTop: insets.top }]}>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={styles.modalRoot}>
+        <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Dismiss" />
+        <View
+          style={[
+            styles.root,
+            {
+              backgroundColor: theme.listBg,
+              paddingTop: insets.top,
+              paddingBottom: insets.bottom,
+            },
+          ]}
+        >
         <View style={[styles.topBar, { backgroundColor: theme.headerBg }]}>
           <TouchableOpacity onPress={onClose} style={styles.iconBtn} hitSlop={10}>
             <Ionicons name="arrow-back" size={24} color={theme.headerText} />
@@ -352,6 +364,7 @@ export function ChatSharedMediaSheet({
           )
         ) : null}
       </View>
+      </View>
     </Modal>
   );
 }
@@ -366,7 +379,18 @@ function EmptyState({ label, color }: { label: string; color: string }) {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1 },
+  modalRoot: { flex: 1, justifyContent: 'flex-end' },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  root: {
+    maxHeight: '94%',
+    minHeight: '75%',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    overflow: 'hidden',
+  },
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',

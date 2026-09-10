@@ -28,6 +28,7 @@ import { useFriendshipsRealtime } from '../../hooks/useFriendshipsRealtime';
 import { notifyRealtimeTopic } from '../../lib/realtimeHub';
 import { buildGroupInviteLink, INVITE_SCHEME } from '../../lib/groupInviteLinks';
 import { useChatSettings } from '../../context/ChatSettingsContext';
+import { useHeaderChrome } from '../../context/AppChromeContext';
 import { useToastLayout } from '../../lib/toastLayout';
 
 export type Friend = {
@@ -89,6 +90,7 @@ const NewGroupScreen = ({ navigation }: Props) => {
   const { friends, loading: friendsLoading } = useAcceptedFriends();
   const { user } = useAuth();
   const { theme } = useChatSettings();
+  useHeaderChrome(theme.headerBg);
   const insets = useSafeAreaInsets();
   const { wrapperStyle, snackbarStyle, textStyle } = useToastLayout();
 
@@ -263,7 +265,16 @@ const NewGroupScreen = ({ navigation }: Props) => {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.listBg }]} edges={['left', 'right', 'bottom']}>
-      <View style={[styles.header, { backgroundColor: theme.headerBg }]}>
+      <View
+        style={[
+          styles.header,
+          {
+            backgroundColor: theme.headerBg,
+            marginTop: -insets.top,
+            paddingTop: insets.top + 12,
+          },
+        ]}
+      >
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <Ionicons name="arrow-back" size={28} color="#fff" />
         </TouchableOpacity>

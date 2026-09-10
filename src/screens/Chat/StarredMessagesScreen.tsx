@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useChatSettings } from '../../context/ChatSettingsContext';
+import { useHeaderChrome } from '../../context/AppChromeContext';
 import { api } from '../../lib/api';
 import { getMessageDisplayText } from '../../lib/messageCrypto';
 import { openChat } from '../../navigation/chatNavigationBridge';
@@ -21,6 +22,7 @@ export default function StarredMessagesScreen() {
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
   const { theme } = useChatSettings();
+  useHeaderChrome(theme.headerBg);
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -75,7 +77,12 @@ export default function StarredMessagesScreen() {
       <View
         style={[
           styles.header,
-          { backgroundColor: theme.headerBg, paddingTop: insets.top + 8, borderBottomColor: theme.listBorder },
+          {
+            backgroundColor: theme.headerBg,
+            marginTop: -insets.top,
+            paddingTop: insets.top + 8,
+            borderBottomColor: theme.listBorder,
+          },
         ]}
       >
         <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={8}>

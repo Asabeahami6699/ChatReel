@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Image,
   ActivityIndicator,
+  Pressable,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '../../lib/api';
@@ -53,8 +54,10 @@ export function MomentChatPreview({ momentId, visible, onClose }: Props) {
   const caption = (moment?.caption as string) || '';
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <View style={styles.container}>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={styles.modalRoot}>
+        <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Dismiss" />
+        <View style={styles.container}>
         <View style={styles.header}>
           <TouchableOpacity onPress={onClose}>
             <Ionicons name="close" size={28} color="#fff" />
@@ -90,17 +93,30 @@ export function MomentChatPreview({ momentId, visible, onClose }: Props) {
           </View>
         )}
       </View>
+      </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#111' },
+  modalRoot: { flex: 1, justifyContent: 'flex-end' },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  container: {
+    maxHeight: '90%',
+    minHeight: '55%',
+    backgroundColor: '#111',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    overflow: 'hidden',
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingTop: 48,
+    paddingTop: 16,
     paddingHorizontal: 16,
     paddingBottom: 12,
   },

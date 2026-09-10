@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Pressable,
   StyleSheet,
   Text,
   TextInput,
@@ -165,8 +166,11 @@ export function PollComposerSheet({ visible, onClose, onSubmit, busy }: Composer
     !busy;
 
   return (
-    <View style={styles.composerBackdrop}>
-      <View style={[styles.composerCard, { backgroundColor: theme.listCardBg }]}>
+    <Pressable style={styles.composerBackdrop} onPress={onClose}>
+      <Pressable
+        style={[styles.composerCard, { backgroundColor: theme.listCardBg }]}
+        onPress={(e) => e.stopPropagation()}
+      >
         <Text style={[styles.composerTitle, { color: theme.listPrimaryText }]}>New poll</Text>
         <TextInput
           value={question}
@@ -234,8 +238,8 @@ export function PollComposerSheet({ visible, onClose, onSubmit, busy }: Composer
             )}
           </TouchableOpacity>
         </View>
-      </View>
-    </View>
+      </Pressable>
+    </Pressable>
   );
 }
 

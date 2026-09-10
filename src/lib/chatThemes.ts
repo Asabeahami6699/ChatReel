@@ -1,5 +1,5 @@
 /** Chat list / room colour presets. */
-export type ChatThemeId = 'blue' | 'gray' | 'dark' | 'night' | 'teal' | 'classic';
+export type ChatThemeId = 'blue' | 'gray' | 'lightGray' | 'dark' | 'night' | 'teal' | 'classic';
 
 export type ChatThemeTokens = {
   id: ChatThemeId;
@@ -156,6 +156,24 @@ export const chatThemePresets: Record<ChatThemeId, ChatThemeTokens> = {
     incomingBubble: '#FFFFFF',
     senderName: '#4B5563',
     link: '#4B5563',
+  },
+  lightGray: {
+    id: 'lightGray',
+    label: 'ChatReel Light Gray',
+    isDark: false,
+    ...lightList,
+    listHeaderBg: '#EEF0F2',
+    headerBg: '#9CA3AF',
+    headerText: '#FFFFFF',
+    headerStatus: 'rgba(255, 255, 255, 0.9)',
+    chatBg: '#F4F5F7',
+    primary: '#9CA3AF',
+    accent: '#A8B0BC',
+    tabActive: '#6B7280',
+    outgoingBubble: '#9CA3AF',
+    incomingBubble: '#FFFFFF',
+    senderName: '#6B7280',
+    link: '#6B7280',
   },
   dark: {
     id: 'dark',

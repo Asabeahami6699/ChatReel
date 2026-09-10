@@ -1213,10 +1213,9 @@ export default function ReelsScreen() {
         style={[
           styles.container,
           styles.center,
-          !usePhoneFrame && { marginTop: -insets.top },
         ]}
       >
-        {isFocused ? <StatusBar barStyle="light-content" backgroundColor="#000" /> : null}
+        {isFocused ? <StatusBar barStyle="light-content" backgroundColor="#000" translucent /> : null}
         <ActivityIndicator size="large" color="#fff" />
         <Text style={styles.emptyText}>Loading reels…</Text>
       </View>
@@ -1229,10 +1228,9 @@ export default function ReelsScreen() {
         style={[
           styles.container,
           styles.center,
-          !usePhoneFrame && { marginTop: -insets.top },
         ]}
       >
-        {isFocused ? <StatusBar barStyle="light-content" backgroundColor="#000" /> : null}
+        {isFocused ? <StatusBar barStyle="light-content" backgroundColor="#000" translucent /> : null}
         <Ionicons name="cloud-offline-outline" size={48} color="#fff" />
         <Text style={styles.emptyText}>{error}</Text>
         <TouchableOpacity style={styles.retryButton} onPress={reload}>
@@ -1247,7 +1245,6 @@ export default function ReelsScreen() {
       style={[
         styles.container,
         usePhoneFrame && styles.containerPhoneFrame,
-        !usePhoneFrame && { marginTop: -insets.top },
       ]}
       onLayout={(e) => {
         const h = Math.round(e.nativeEvent.layout.height);
@@ -1276,9 +1273,8 @@ export default function ReelsScreen() {
         style={[
           styles.topBarWrap,
           {
-            // Phone pulls content under the status bar (marginTop: -insets.top).
-            // Top controls must re-apply the safe inset or they sit under the notch.
-            paddingTop: usePhoneFrame ? 16 : insets.top + 8,
+            // Shell skips top inset while immersive; pad controls below the status bar.
+            paddingTop: usePhoneFrame ? 16 : Math.max(insets.top, StatusBar.currentHeight ?? 0) + 12,
           },
           usePhoneFrame && styles.topBarWrapDesktop,
         ]}
@@ -1355,7 +1351,7 @@ export default function ReelsScreen() {
       {(activeCount > 0 || summary.error > 0) && (
         <TouchableOpacity
           onPress={() => setShowUploadPanel(true)}
-          style={[styles.uploadStatusChip, { top: insets.top + 56 }]}
+          style={[styles.uploadStatusChip, { top: Math.max(insets.top, StatusBar.currentHeight ?? 0) + 56 }]}
           activeOpacity={0.85}
         >
           <Ionicons

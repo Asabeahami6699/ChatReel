@@ -5,9 +5,10 @@
   "scripts": {
     "start": "expo start --dev-client --lan --port 8081",
     "web": "expo start --web --port 8081",
-    "start:emu": "node scripts/adb-reverse.js && expo start --dev-client --lan --port 8081 --clear",
+    "start:emu": "node scripts/start-emu.js",
     "reset:dev": "node scripts/reset-dev-cache.js",
     "android": "node scripts/pre-android.js && expo run:android --port 8081",
+    "android:emu": "npx expo run:android --variant release --no-bundler",
     "android:usb": "node scripts/adb-reverse.js && expo run:android --device --port 8081",
     "adb:reverse": "node scripts/adb-reverse.js",
     "ios": "expo run:ios",

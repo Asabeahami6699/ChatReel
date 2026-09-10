@@ -106,6 +106,7 @@ import { useChatRoomScroll } from './useChatRoomScroll';
 import { useChatRoomRealtime } from './useChatRoomRealtime';
 import { useRealtimeTopic } from '../../hooks/useRealtimeTopic';
 import { useChatSettings } from '../../context/ChatSettingsContext';
+import { useHeaderChrome } from '../../context/AppChromeContext';
 import {
   decryptChatMessage,
   decryptChatMessages,
@@ -159,6 +160,7 @@ export default function ChatRoomScreen() {
 
   const insets = useSafeAreaInsets();
   const { theme } = useChatSettings();
+  useHeaderChrome(theme.headerBg);
   const roomKind = chatType === 'group' ? 'group' : 'individual';
   const isSelfNotes = chatType === 'individual' && isSelfNotesChat(chatId, user?.id);
 
