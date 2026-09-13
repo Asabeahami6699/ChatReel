@@ -301,13 +301,16 @@ const MainTabNavigator = () => {
         const hideTabBar =
           (currentTab === 'Chats' && !!stackScreen && stackScreen !== 'ChatList') ||
           currentTab === 'Reels';
+        // ChatRoom paints its own input-bar into the home-indicator area — a spare
+        // inset strip here leaves a visible gap under the composer.
+        const ownsBottomChrome = stackScreen === 'ChatRoom';
         return (
           <ThemedPhoneTabBar
             {...props}
             theme={theme}
             bottomInset={insets.bottom}
             hidden={hideTabBar}
-            keepBottomInset={hideTabBar && currentTab !== 'Reels'}
+            keepBottomInset={hideTabBar && currentTab !== 'Reels' && !ownsBottomChrome}
           />
         );
       }}

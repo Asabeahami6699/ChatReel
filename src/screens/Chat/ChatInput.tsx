@@ -17,6 +17,7 @@ import {
   ScrollView,
   FlatList,
   Pressable,
+  Keyboard,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAudioRecorder, RecordingPresets } from 'expo-audio';
@@ -37,6 +38,7 @@ import AttachmentPreview from '../../components/AttachmentPreview'; // Adjust th
 import { USE_NATIVE_DRIVER } from '../../lib/animation';
 import { mergeVoiceSegments } from '../../lib/mergeVoiceSegments';
 import { useChatSettings } from '../../context/ChatSettingsContext';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   EMOJI_CATEGORIES,
@@ -83,6 +85,11 @@ type ChatInputProps = {
   onDraftChange?: (text: string) => void;
   /** Group @mention suggestions */
   mentionMembers?: Array<{ display_name: string; user_id?: string }>;
+  /**
+   * Extend the input bar background into the home-indicator / nav-bar inset
+   * (WhatsApp-style). Parent should pass KeyboardStickyFooter closedOffset={0}.
+   */
+  fillBottomSafeArea?: boolean;
 };
 
 type RecordingMode = 'text' | 'recording' | 'paused' | 'playing';
@@ -129,8 +136,11 @@ const ChatInput = forwardRef<TextInput, ChatInputProps>(({
   draft,
   onDraftChange,
   mentionMembers = [],
+  fillBottomSafeArea = false,
 }, ref) => {
   const { theme } = useChatSettings();
+  const insets = useSafeAreaInsets();
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [text, setText] = useState('');
   const isDraftControlled = onDraftChange != null;
   const inputText = isDraftControlled ? (draft ?? '') : text;
@@ -192,6 +202,20 @@ const ChatInput = forwardRef<TextInput, ChatInputProps>(({
     };
   }, []);
 
+  useEffect(() => {
+    if (!fillBottomSafeArea || Platform.OS === 'web') return;
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvt, () => setKeyboardOpen(true));
+    const hideSub = Keyboard.addListener(hideEvt, () => setKeyboardOpen(false));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, [fillBottomSafeArea]);
+
+  const bottomSafePad =
+    fillBottomSafeArea && !keyboardOpen ? Math.max(insets.bottom, 0) : 0;
   const emojiTabs = useMemo(
     () => [
       { id: 'recents' as const, label: 'Recents', tab: '🕒', emojis: recentEmojis },
@@ -1334,6 +1358,7 @@ const formatDuration = (seconds: number) => {
         {
           backgroundColor: theme.inputBarBg,
           borderTopColor: theme.composerBorder,
+          paddingBottom: bottomSafePad,
         },
         style,
       ]}

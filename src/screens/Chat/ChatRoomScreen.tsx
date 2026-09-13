@@ -3878,7 +3878,7 @@ export default function ChatRoomScreen() {
                     76 +
                     (isKeyboardVisible
                       ? Math.max(keyboardHeight, 0) + 12
-                      : insets.bottom),
+                      : Math.max(insets.bottom, 0)),
                 },
               ]}
               onPress={scrollToBottomAndStick}
@@ -3889,7 +3889,7 @@ export default function ChatRoomScreen() {
           )}
         </View>
 
-        <KeyboardStickyFooter>
+        <KeyboardStickyFooter closedOffset={0}>
           {replyTo ? (
             <ReplyPreviewBar
               message={replyTo}
@@ -3911,6 +3911,7 @@ export default function ChatRoomScreen() {
               chatType === 'group' ? () => setPollComposerOpen(true) : undefined
             }
             disabled={!user?.id}
+            fillBottomSafeArea
           />
         </KeyboardStickyFooter>
       </View>
