@@ -84,6 +84,8 @@ module.exports = {
       backgroundColor: '#007AFF',
       barStyle: 'light-content',
     },
+    // Local API (localhost / 10.0.2.2) for emulator + USB adb reverse.
+    usesCleartextTraffic: true,
     /**
      * Resize keeps the chat header fixed when the keyboard opens (pan was
      * pushing the navbar into the status-bar / safe-area and leaving a white gap).

@@ -36,21 +36,31 @@ function usesAdbReverse(): boolean {
   return flag === '1' || flag === 'true';
 }
 
-/** Rewrite localhost API URLs so a physical device can reach the dev machine. */
+/** Rewrite localhost API URLs so a physical device / emulator can reach the dev machine. */
 export function normalizeDevApiUrl(url: string): string {
   if (!url.includes('localhost') && !url.includes('127.0.0.1')) return url;
 
   if (Platform.OS === 'android') {
-    // Android emulator maps host machine to 10.0.2.2
-    if (!Constants.isDevice) {
+    const model = String(
+      (Platform.constants as { Model?: string; Fingerprint?: string } | undefined)?.Model ??
+        (Platform.constants as { Fingerprint?: string } | undefined)?.Fingerprint ??
+        ''
+    );
+    const looksLikeEmulator =
+      !Constants.isDevice || /sdk_gphone|emulator|generic|android sdk/i.test(model);
+
+    // Emulator host loopback — never leave localhost (cleartext + reverse are easy to miss).
+    if (looksLikeEmulator) {
       return url
         .replace('://localhost', '://10.0.2.2')
         .replace('://127.0.0.1', '://10.0.2.2');
     }
-  }
 
-  // USB + `npm run adb:reverse`: keep localhost so adb forwards phone → PC.
-  if (usesAdbReverse()) {
+    // USB physical device + `adb reverse`: keep localhost so adb forwards phone → PC.
+    if (usesAdbReverse()) {
+      return url;
+    }
+  } else if (usesAdbReverse()) {
     return url;
   }
 
