@@ -23,7 +23,6 @@ import { api, ApiError, type ReelDTO } from '../../lib/api';
 import type { ReelPlayerHandle, ReelPlaybackStatus } from '../../components/ReelPlayer';
 import { ReelFeedMedia } from './ReelFeedMedia';
 import { ProfileOpenSwipeLayer } from './ProfileOpenSwipeLayer';
-import { resolveCreatorFeedAtReel } from './resolveCreatorFeedAtReel';
 import { getReelMediaItems } from '../../lib/reelPlayback';
 import ReelCommentSheet from './ReelCommentSheet';
 import ReelShareSheet from './ReelShareSheet';
@@ -125,7 +124,6 @@ export function ReelImmersiveViewer({
   const activeReelIdRef = useRef<string | null>(null);
   const activeMediaIndexRef = useRef<Record<string, number>>({});
   const [currentMediaIndex, setCurrentMediaIndex] = useState(0);
-  const openingCreatorFeedRef = useRef(false);
   const durationMillisRef = useRef(1);
   const isScrubbingRef = useRef(false);
   const viewedReelIds = useRef<Set<string>>(new Set());
@@ -365,27 +363,9 @@ export function ReelImmersiveViewer({
       if (disableProfileNavigation) return;
       if (reel.is_sponsored) return;
       if (!requireAuth('Sign in to view creator profiles.')) return;
-      if (openingCreatorFeedRef.current) return;
-      openingCreatorFeedRef.current = true;
-      void (async () => {
-        try {
-          await pausePlayers();
-          const { posts, initialIndex } = await resolveCreatorFeedAtReel(reel);
-          const start = posts[initialIndex] ?? reel;
-          navigation.navigate('ReelDetail', {
-            reelId: start.id,
-            contextReels: posts,
-            initialIndex,
-            disableProfileNavigation: true,
-          });
-        } catch {
-          openSheet(setOpenProfile, reel);
-        } finally {
-          openingCreatorFeedRef.current = false;
-        }
-      })();
+      openSheet(setOpenProfile, reel);
     },
-    [disableProfileNavigation, navigation, openSheet, pausePlayers, requireAuth]
+    [disableProfileNavigation, openSheet, requireAuth]
   );
 
   const toggleLike = useCallback(
@@ -986,7 +966,13 @@ export function ReelImmersiveViewer({
         <View style={[styles.sheetBackdrop, usePhoneFrame && styles.sheetBackdropCentered]}>
           <TouchableOpacity style={StyleSheet.absoluteFill} onPress={closeSheets} />
           <View style={[styles.sheet, usePhoneFrame && styles.profileSheetPhone]}>
-            {openProfile && <ReelProfileSheet reel={openProfile} onClose={closeSheets} />}
+            {openProfile && (
+              <ReelProfileSheet
+                reel={openProfile}
+                highlightReelId={openProfile.id}
+                onClose={closeSheets}
+              />
+            )}
           </View>
         </View>
       </Modal>

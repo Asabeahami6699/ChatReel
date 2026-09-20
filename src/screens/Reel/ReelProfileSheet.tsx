@@ -33,10 +33,17 @@ import type { ReelsStackParamList } from '../../navigation/reelsNavigation';
 interface Props {
   reel: ReelDTO;
   onClose: () => void;
+  /** Grid tile for this reel gets a “just watched” indicator. */
+  highlightReelId?: string;
   onFollowStateChange?: (authorId: string, state: 'none' | 'pending' | 'following') => void;
 }
 
-export default function ReelProfileSheet({ reel, onClose, onFollowStateChange }: Props) {
+export default function ReelProfileSheet({
+  reel,
+  onClose,
+  highlightReelId,
+  onFollowStateChange,
+}: Props) {
   const navigation = useNavigation<NativeStackNavigationProp<ReelsStackParamList>>();
   const insets = useSafeAreaInsets();
   const { width: windowWidth } = useWindowDimensions();
@@ -264,6 +271,7 @@ export default function ReelProfileSheet({ reel, onClose, onFollowStateChange }:
             contentWidth={contentWidth}
             bottomPad={bottomPad}
             generatedThumbs={thumbs}
+            highlightReelId={highlightReelId ?? reel.id}
             onOpen={openProfileReel}
             onOpenDraft={(draft: SavedReelComposeDraft) => {
               onClose();

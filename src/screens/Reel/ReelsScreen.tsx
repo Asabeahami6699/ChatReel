@@ -67,7 +67,6 @@ import { ReelWebFeed, type ReelWebFeedHandle } from './ReelWebFeed';
 import { ReelNativeFeed, type ReelNativeFeedHandle } from './ReelNativeFeed';
 import { ReelFloatingChrome } from './ReelFloatingChrome';
 import { ProfileOpenSwipeLayer } from './ProfileOpenSwipeLayer';
-import { resolveCreatorFeedAtReel } from './resolveCreatorFeedAtReel';
 import { getReelMediaItems } from '../../lib/reelPlayback';
 import { useAuth } from '../../hooks/useAuth';
 import { useImmersiveAppChrome } from '../../context/AppChromeContext';
@@ -168,7 +167,6 @@ export default function ReelsScreen() {
 
   const activeMediaIndexRef = useRef<Record<string, number>>({});
   const [currentMediaIndex, setCurrentMediaIndex] = useState(0);
-  const openingCreatorFeedRef = useRef(false);
   const durationMillisRef = useRef(1);
   const isScrubbingRef = useRef(false);
   const progressUiRef = useRef({ progress: 0, buffered: 0, lastEmit: 0 });
@@ -707,28 +705,9 @@ export default function ReelsScreen() {
         return;
       }
       if (!requireAuth('Sign in to view creator profiles.')) return;
-      if (openingCreatorFeedRef.current) return;
-      openingCreatorFeedRef.current = true;
-      void (async () => {
-        try {
-          await pausePlayers();
-          const { posts, initialIndex } = await resolveCreatorFeedAtReel(reel);
-          const start = posts[initialIndex] ?? reel;
-          navigation.navigate('ReelDetail', {
-            reelId: start.id,
-            contextReels: posts,
-            initialIndex,
-            disableProfileNavigation: true,
-          });
-        } catch {
-          // Fall back to the grid profile sheet if the immersive handoff fails.
-          openSheet(setOpenProfile, reel);
-        } finally {
-          openingCreatorFeedRef.current = false;
-        }
-      })();
+      openSheet(setOpenProfile, reel);
     },
-    [navigation, openSheet, openSponsoredCta, pausePlayers, requireAuth]
+    [openSheet, openSponsoredCta, requireAuth]
   );
   const onNavigateSound = useCallback(
     (soundId: string) => {
@@ -1688,6 +1667,7 @@ export default function ReelsScreen() {
             {openProfile && (
               <ReelProfileSheet
                 reel={openProfile}
+                highlightReelId={openProfile.id}
                 onClose={closeSheets}
                 onFollowStateChange={(authorId, state) => {
                   setFollowedAuthorIds((prev) => {

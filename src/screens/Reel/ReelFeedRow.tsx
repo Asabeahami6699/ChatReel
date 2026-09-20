@@ -249,9 +249,9 @@ function ReelFeedRowComponent({
               </View>
             )}
           </TouchableOpacity>
-          {!sponsored ? (
+          {!sponsored && (!myProfileId || item.author_id !== myProfileId) ? (
             <TouchableOpacity style={styles.profileFollowPlus} onPress={() => onQuickFollow(item)}>
-              <Ionicons name={isFollowing ? 'checkmark' : 'add'} size={17} color="#fff" />
+              <Ionicons name={isFollowing ? 'checkmark' : 'add'} size={12} color="#fff" />
             </TouchableOpacity>
           ) : null}
         </View>
@@ -440,8 +440,8 @@ const styles = StyleSheet.create({
     textShadowRadius: 3,
   },
   actionTextDesktop: { fontSize: 10 },
-  profileActionWrap: { alignItems: 'center', marginBottom: 2 },
-  profileButton: { marginBottom: -8 },
+  profileActionWrap: { alignItems: 'center', marginBottom: 6 },
+  profileButton: {},
   profileAvatar: {
     width: 48,
     height: 48,
@@ -456,14 +456,14 @@ const styles = StyleSheet.create({
   },
   avatarFallbackText: { color: '#fff', fontSize: 18, fontWeight: '800' },
   profileFollowPlus: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    marginTop: 3,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
     backgroundColor: REEL_ACCENT,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 2,
+    borderWidth: 1.5,
     borderColor: '#000',
-    marginTop: -13,
   },
 });

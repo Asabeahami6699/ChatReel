@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -38,6 +38,8 @@ type Props = {
   contentWidth: number;
   bottomPad: number;
   generatedThumbs: Record<string, string>;
+  /** Mark the reel the user just watched in the feed. */
+  highlightReelId?: string | null;
   onOpen: (index: number) => void;
   onOpenDraft?: (draft: SavedReelComposeDraft) => void;
   onDeleteDraft?: (draft: SavedReelComposeDraft) => void;
@@ -70,6 +72,7 @@ type GridTileProps = {
   canDelete: boolean;
   selectionMode: boolean;
   selected: boolean;
+  highlighted: boolean;
   onPress: () => void;
   onLongPress: () => void;
 };
@@ -82,6 +85,7 @@ function GridTile({
   canDelete,
   selectionMode,
   selected,
+  highlighted,
   onPress,
   onLongPress,
 }: GridTileProps) {
@@ -102,7 +106,7 @@ function GridTile({
           } as object)
         : {})}
     >
-      <View style={[styles.tile, selected && styles.tileSelected]}>
+      <View style={[styles.tile, selected && styles.tileSelected, highlighted && styles.tileHighlighted]}>
         <ReelGridThumb reel={reel} generatedUri={thumbUri} style={styles.image} />
         <View style={styles.gridOverlay}>
           {(reel.media?.length ?? 0) > 1 && (
@@ -122,6 +126,12 @@ function GridTile({
             </View>
           )}
         </View>
+        {highlighted && !selectionMode ? (
+          <View style={styles.watchedBadge} pointerEvents="none">
+            <Ionicons name="eye" size={11} color="#fff" />
+            <Text style={styles.watchedBadgeText}>Watched</Text>
+          </View>
+        ) : null}
         {modLabel && (
           <View style={styles.modBadge}>
             <Text style={styles.modBadgeText}>{modLabel}</Text>
@@ -198,6 +208,7 @@ export function ReelProfileGrid({
   contentWidth,
   bottomPad,
   generatedThumbs,
+  highlightReelId = null,
   onOpen,
   onOpenDraft,
   onDeleteDraft,
@@ -210,6 +221,8 @@ export function ReelProfileGrid({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
   const [pendingDeleteIds, setPendingDeleteIds] = useState<string[] | null>(null);
+  const listRef = useRef<FlatList<GridItem>>(null);
+  const didScrollToHighlight = useRef(false);
 
   const { tileWidth, tileHeight } = useMemo(() => {
     const tw = Math.floor((contentWidth - GRID_PAD * 2 - GRID_GAP * (GRID_COLS - 1)) / GRID_COLS);
@@ -227,6 +240,24 @@ export function ReelProfileGrid({
     }));
     return [...draftItems, ...reelItems];
   }, [canDelete, drafts, posts]);
+
+  useEffect(() => {
+    didScrollToHighlight.current = false;
+  }, [highlightReelId]);
+
+  useEffect(() => {
+    if (!highlightReelId || didScrollToHighlight.current || gridData.length === 0) return;
+    const index = gridData.findIndex(
+      (item) => item.kind === 'reel' && item.reel.id === highlightReelId
+    );
+    if (index < 0) return;
+    didScrollToHighlight.current = true;
+    const row = Math.floor(index / GRID_COLS);
+    const offset = Math.max(0, row * (tileHeight + GRID_GAP) - tileHeight);
+    requestAnimationFrame(() => {
+      listRef.current?.scrollToOffset({ offset, animated: true });
+    });
+  }, [gridData, highlightReelId, tileHeight]);
 
   const exitSelection = useCallback(() => {
     setSelectionMode(false);
@@ -385,6 +416,7 @@ export function ReelProfileGrid({
       )}
 
       <FlatList
+        ref={listRef}
         data={gridData}
         key={`profile-grid-${contentWidth}`}
         keyExtractor={(item) =>
@@ -436,6 +468,7 @@ export function ReelProfileGrid({
               canDelete={canDelete}
               selectionMode={selectionMode}
               selected={selectedIds.has(item.reel.id)}
+              highlighted={Boolean(highlightReelId && item.reel.id === highlightReelId)}
               onPress={() => handleTilePress(item.reel, item.reelIndex)}
               onLongPress={() => handleTileLongPress(item.reel)}
             />
@@ -485,6 +518,29 @@ const styles = StyleSheet.create({
   tileSelected: {
     borderWidth: 2,
     borderColor: REEL_ACCENT,
+  },
+  tileHighlighted: {
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+  watchedBadge: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: 'rgba(0,0,0,0.72)',
+    borderRadius: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.35)',
+  },
+  watchedBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '700',
   },
   image: { width: '100%', height: '100%' },
   gridOverlay: {

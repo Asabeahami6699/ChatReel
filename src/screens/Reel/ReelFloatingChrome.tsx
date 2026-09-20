@@ -169,9 +169,9 @@ function ReelFloatingChromeComponent({
               </View>
             )}
           </TouchableOpacity>
-          {!sponsored ? (
+          {!sponsored && (!myProfileId || reel.author_id !== myProfileId) ? (
             <TouchableOpacity style={styles.profileFollowPlus} onPress={onQuickFollow} hitSlop={HIT_SLOP}>
-              <Ionicons name={isFollowing ? 'checkmark' : 'add'} size={17} color="#fff" />
+              <Ionicons name={isFollowing ? 'checkmark' : 'add'} size={12} color="#fff" />
             </TouchableOpacity>
           ) : null}
         </View>
@@ -313,7 +313,7 @@ const styles = StyleSheet.create({
     textShadowRadius: 2,
   },
   actionTextDesktop: { fontSize: 11 },
-  profileActionWrap: { alignItems: 'center', marginBottom: 4 },
+  profileActionWrap: { alignItems: 'center', marginBottom: 6 },
   profileButton: {},
   profileAvatar: {
     width: 44,
@@ -330,14 +330,14 @@ const styles = StyleSheet.create({
   },
   avatarFallbackText: { color: '#fff', fontWeight: '800', fontSize: 16 },
   profileFollowPlus: {
-    marginTop: -10,
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    marginTop: 3,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
     backgroundColor: REEL_ACCENT,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 2,
+    borderWidth: 1.5,
     borderColor: '#000',
   },
 });
