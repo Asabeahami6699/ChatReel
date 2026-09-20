@@ -23,6 +23,7 @@ type Props = {
   onPlaybackStatus: (reelId: string, status: ReelPlaybackStatus, isCurrent: boolean) => void;
   onRef: (reelId: string, ref: ReelPlayerHandle | null) => void;
   onMediaIndexChange: (reelId: string, mediaIndex: number) => void;
+  onSwipePastLastMedia?: (reel: ReelDTO) => void;
   showEndScreen?: boolean;
 };
 
@@ -46,6 +47,7 @@ function ReelPageMediaComponent({
   onPlaybackStatus,
   onRef,
   onMediaIndexChange,
+  onSwipePastLastMedia,
   showEndScreen = false,
 }: Props) {
   const isCurrent = index === currentIndex;
@@ -73,6 +75,7 @@ function ReelPageMediaComponent({
         onPlaybackStatus={onPlaybackStatus}
         onRef={onRef}
         onMediaIndexChange={onMediaIndexChange}
+        onSwipePastLastMedia={onSwipePastLastMedia}
       />
       {showEndScreen && isCurrent ? (
         <View style={styles.endScreen} pointerEvents="none">

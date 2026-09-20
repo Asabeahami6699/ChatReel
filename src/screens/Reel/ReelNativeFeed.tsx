@@ -34,6 +34,7 @@ type Props = {
   onPlaybackStatus: (reelId: string, status: ReelPlaybackStatus, isCurrent: boolean) => void;
   onRef: (reelId: string, ref: ReelPlayerHandle | null) => void;
   onMediaIndexChange: (reelId: string, mediaIndex: number) => void;
+  onSwipePastLastMedia?: (reel: ReelDTO) => void;
   onVideoPress: (reel: ReelDTO) => void;
   onEndReached?: () => void;
   refreshing?: boolean;
@@ -64,6 +65,7 @@ export const ReelNativeFeed = forwardRef<ReelNativeFeedHandle, Props>(function R
     onPlaybackStatus,
     onRef,
     onMediaIndexChange,
+    onSwipePastLastMedia,
     onVideoPress,
     onEndReached,
     refreshing = false,
@@ -205,6 +207,7 @@ export const ReelNativeFeed = forwardRef<ReelNativeFeedHandle, Props>(function R
                   onPlaybackStatus={onPlaybackStatus}
                   onRef={onRef}
                   onMediaIndexChange={onMediaIndexChange}
+                  onSwipePastLastMedia={onSwipePastLastMedia}
                   showEndScreen={endScreenReelId === item.id}
                 />
                 <ReelVideoTapLayer onPress={() => onVideoPress(item)} />

@@ -3,6 +3,7 @@ import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { ReelDTO } from '../../lib/api';
 import type { ReelPlaybackStatus, ReelPlayerHandle } from '../../components/ReelPlayer';
+import { getReelMediaItems } from '../../lib/reelPlayback';
 import { REEL_ACTION_RAIL_RIGHT, REEL_ACTION_RAIL_WIDTH, REEL_CONTENT_SHIFT_DOWN } from './reelVideoLayout';
 import { ReelFeedMedia } from './ReelFeedMedia';
 import { ExpandableCaption } from './ExpandableCaption';
@@ -51,6 +52,7 @@ export type ReelFeedRowProps = {
   onPlaybackStatus: (reelId: string, status: ReelPlaybackStatus, isCurrent: boolean) => void;
   onRef: (reelId: string, ref: ReelPlayerHandle | null) => void;
   onMediaIndexChange: (reelId: string, mediaIndex: number) => void;
+  onSwipePastLastMedia?: (reel: ReelDTO) => void;
   showEndScreen?: boolean;
 };
 
@@ -87,6 +89,7 @@ function ReelFeedRowComponent({
   onPlaybackStatus,
   onRef,
   onMediaIndexChange,
+  onSwipePastLastMedia,
   showEndScreen = false,
 }: ReelFeedRowProps) {
   const isCurrent = index === currentIndex;
@@ -117,7 +120,10 @@ function ReelFeedRowComponent({
             ]}
             pointerEvents="box-none"
           >
-        <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+        <View
+          pointerEvents={getReelMediaItems(item).length > 1 ? 'box-none' : 'none'}
+          style={StyleSheet.absoluteFill}
+        >
           <ReelFeedMedia
             reel={item}
             reelIndex={index}
@@ -134,6 +140,7 @@ function ReelFeedRowComponent({
             onPlaybackStatus={onPlaybackStatus}
             onRef={onRef}
             onMediaIndexChange={onMediaIndexChange}
+            onSwipePastLastMedia={onSwipePastLastMedia}
           />
         </View>
         {showEndScreen && isCurrent ? (

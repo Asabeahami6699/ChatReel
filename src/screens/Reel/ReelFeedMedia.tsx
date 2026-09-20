@@ -34,6 +34,8 @@ type Props = {
   onPlaybackStatus: (reelId: string, status: ReelPlaybackStatus, isCurrent: boolean) => void;
   onRef: (reelId: string, ref: ReelPlayerHandle | null) => void;
   onMediaIndexChange?: (reelId: string, index: number) => void;
+  /** Fired when the user swipes left past the last album slide. */
+  onSwipePastLastMedia?: (reel: ReelDTO) => void;
 };
 
 function ReelFeedMediaComponent({
@@ -52,6 +54,7 @@ function ReelFeedMediaComponent({
   onPlaybackStatus,
   onRef,
   onMediaIndexChange,
+  onSwipePastLastMedia,
 }: Props) {
   const mediaItems = getReelMediaItems(reel);
   const isCurrentReel = reelIndex === currentReelIndex;
@@ -71,8 +74,10 @@ function ReelFeedMediaComponent({
   const mediaIndexRef = useRef(0);
   const listRef = useRef<RNFlatList>(null);
   const onMediaIndexChangeRef = useRef(onMediaIndexChange);
+  const onSwipePastLastMediaRef = useRef(onSwipePastLastMedia);
   const reelIdRef = useRef(reel.id);
   onMediaIndexChangeRef.current = onMediaIndexChange;
+  onSwipePastLastMediaRef.current = onSwipePastLastMedia;
   reelIdRef.current = reel.id;
 
   useEffect(() => {
@@ -134,6 +139,21 @@ function ReelFeedMediaComponent({
     if (Number.isFinite(next)) setActiveIndex(next);
   };
 
+  const onScrollEndDrag = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    if (!isCurrentReel || mediaItems.length <= 1) return;
+    const last = mediaItems.length - 1;
+    const x = e.nativeEvent.contentOffset.x;
+    const lastX = last * frameWidth;
+    const vx = e.nativeEvent.velocity?.x ?? 0;
+    // Past the last slide (or fling left while already on it) → creator profile.
+    if (
+      mediaIndexRef.current >= last &&
+      (x > lastX + 28 || (x >= lastX - 4 && vx < -0.45))
+    ) {
+      onSwipePastLastMediaRef.current?.(reel);
+    }
+  };
+
   if (mediaItems.length <= 1) {
     const media = mediaItems[0];
     return (
@@ -168,7 +188,7 @@ function ReelFeedMediaComponent({
         horizontal
         pagingEnabled
         showsHorizontalScrollIndicator={false}
-        bounces={false}
+        bounces
         decelerationRate="fast"
         scrollEnabled={isCurrentReel}
         nestedScrollEnabled
@@ -176,6 +196,7 @@ function ReelFeedMediaComponent({
         scrollEventThrottle={16}
         onScroll={onScroll}
         onMomentumScrollEnd={onMomentumEnd}
+        onScrollEndDrag={onScrollEndDrag}
         {...(Platform.OS !== 'web'
           ? ({
               activeOffsetX: [-18, 18],

@@ -66,6 +66,9 @@ import { useReelProfileStore } from '../../stores/reelProfileStore';
 import { ReelWebFeed, type ReelWebFeedHandle } from './ReelWebFeed';
 import { ReelNativeFeed, type ReelNativeFeedHandle } from './ReelNativeFeed';
 import { ReelFloatingChrome } from './ReelFloatingChrome';
+import { ProfileOpenSwipeLayer } from './ProfileOpenSwipeLayer';
+import { resolveCreatorFeedAtReel } from './resolveCreatorFeedAtReel';
+import { getReelMediaItems } from '../../lib/reelPlayback';
 import { useAuth } from '../../hooks/useAuth';
 import { useImmersiveAppChrome } from '../../context/AppChromeContext';
 import { promptSignIn } from '../../lib/requireSignedIn';
@@ -164,6 +167,8 @@ export default function ReelsScreen() {
   reelsRef.current = reels;
 
   const activeMediaIndexRef = useRef<Record<string, number>>({});
+  const [currentMediaIndex, setCurrentMediaIndex] = useState(0);
+  const openingCreatorFeedRef = useRef(false);
   const durationMillisRef = useRef(1);
   const isScrubbingRef = useRef(false);
   const progressUiRef = useRef({ progress: 0, buffered: 0, lastEmit: 0 });
@@ -652,6 +657,7 @@ export default function ReelsScreen() {
     (reelId: string, mediaIndex: number) => {
       activeMediaIndexRef.current[reelId] = mediaIndex;
       if (reelId === activeReelIdRef.current) {
+        setCurrentMediaIndex(mediaIndex);
         void playActiveReel(reelId);
       }
     },
@@ -701,9 +707,28 @@ export default function ReelsScreen() {
         return;
       }
       if (!requireAuth('Sign in to view creator profiles.')) return;
-      openSheet(setOpenProfile, reel);
+      if (openingCreatorFeedRef.current) return;
+      openingCreatorFeedRef.current = true;
+      void (async () => {
+        try {
+          await pausePlayers();
+          const { posts, initialIndex } = await resolveCreatorFeedAtReel(reel);
+          const start = posts[initialIndex] ?? reel;
+          navigation.navigate('ReelDetail', {
+            reelId: start.id,
+            contextReels: posts,
+            initialIndex,
+            disableProfileNavigation: true,
+          });
+        } catch {
+          // Fall back to the grid profile sheet if the immersive handoff fails.
+          openSheet(setOpenProfile, reel);
+        } finally {
+          openingCreatorFeedRef.current = false;
+        }
+      })();
     },
-    [openSheet, openSponsoredCta, requireAuth]
+    [navigation, openSheet, openSponsoredCta, pausePlayers, requireAuth]
   );
   const onNavigateSound = useCallback(
     (soundId: string) => {
@@ -1167,6 +1192,7 @@ export default function ReelsScreen() {
         onPlaybackStatus={handlePlaybackStatus}
         onRef={registerVideoRef}
         onMediaIndexChange={handleMediaIndexChange}
+        onSwipePastLastMedia={onOpenProfile}
         showEndScreen={endScreenReelId === item.id}
       />
     ),
@@ -1206,6 +1232,21 @@ export default function ReelsScreen() {
   );
 
   const currentReel = reels[currentIndex] ?? null;
+  const currentMediaCount = currentReel ? getReelMediaItems(currentReel).length : 0;
+  const canSwipeOpenProfile =
+    Boolean(currentReel) &&
+    !sheetOpen &&
+    !currentReel!.is_sponsored &&
+    (currentMediaCount <= 1 || currentMediaIndex >= currentMediaCount - 1);
+
+  useEffect(() => {
+    const id = currentReel?.id;
+    if (!id) {
+      setCurrentMediaIndex(0);
+      return;
+    }
+    setCurrentMediaIndex(activeMediaIndexRef.current[id] ?? 0);
+  }, [currentReel?.id, currentIndex]);
 
   if (loading && reels.length === 0) {
     return (
@@ -1445,6 +1486,7 @@ export default function ReelsScreen() {
           onPlaybackStatus={handlePlaybackStatus}
           onRef={registerVideoRef}
           onMediaIndexChange={handleMediaIndexChange}
+          onSwipePastLastMedia={onOpenProfile}
           onVideoPress={handleVideoPress}
           onEndReached={() => {
             if (hasMore && !loadingMore) loadMore();
@@ -1481,6 +1523,10 @@ export default function ReelsScreen() {
           ]}
           pointerEvents="box-none"
         >
+          <ProfileOpenSwipeLayer
+            enabled={canSwipeOpenProfile}
+            onSwipeLeft={() => onOpenProfile(currentReel)}
+          />
           <ReelFloatingChrome
             reel={currentReel}
             reelWidth={reelWidth}

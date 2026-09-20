@@ -22,6 +22,9 @@ import { USE_NATIVE_DRIVER } from '../../lib/animation';
 import { api, ApiError, type ReelDTO } from '../../lib/api';
 import type { ReelPlayerHandle, ReelPlaybackStatus } from '../../components/ReelPlayer';
 import { ReelFeedMedia } from './ReelFeedMedia';
+import { ProfileOpenSwipeLayer } from './ProfileOpenSwipeLayer';
+import { resolveCreatorFeedAtReel } from './resolveCreatorFeedAtReel';
+import { getReelMediaItems } from '../../lib/reelPlayback';
 import ReelCommentSheet from './ReelCommentSheet';
 import ReelShareSheet from './ReelShareSheet';
 import ReelProfileSheet from './ReelProfileSheet';
@@ -121,6 +124,8 @@ export function ReelImmersiveViewer({
   const videos = useRef<Record<string, ReelPlayerHandle | null>>({});
   const activeReelIdRef = useRef<string | null>(null);
   const activeMediaIndexRef = useRef<Record<string, number>>({});
+  const [currentMediaIndex, setCurrentMediaIndex] = useState(0);
+  const openingCreatorFeedRef = useRef(false);
   const durationMillisRef = useRef(1);
   const isScrubbingRef = useRef(false);
   const viewedReelIds = useRef<Set<string>>(new Set());
@@ -355,6 +360,34 @@ export function ReelImmersiveViewer({
     [isAuthenticated, exitGuest]
   );
 
+  const onOpenProfile = useCallback(
+    (reel: ReelDTO) => {
+      if (disableProfileNavigation) return;
+      if (reel.is_sponsored) return;
+      if (!requireAuth('Sign in to view creator profiles.')) return;
+      if (openingCreatorFeedRef.current) return;
+      openingCreatorFeedRef.current = true;
+      void (async () => {
+        try {
+          await pausePlayers();
+          const { posts, initialIndex } = await resolveCreatorFeedAtReel(reel);
+          const start = posts[initialIndex] ?? reel;
+          navigation.navigate('ReelDetail', {
+            reelId: start.id,
+            contextReels: posts,
+            initialIndex,
+            disableProfileNavigation: true,
+          });
+        } catch {
+          openSheet(setOpenProfile, reel);
+        } finally {
+          openingCreatorFeedRef.current = false;
+        }
+      })();
+    },
+    [disableProfileNavigation, navigation, openSheet, pausePlayers, requireAuth]
+  );
+
   const toggleLike = useCallback(
     async (reel: ReelDTO, viaDoubleTap = false) => {
       if (!requireAuth('Sign in to like this reel.')) return;
@@ -497,6 +530,7 @@ export function ReelImmersiveViewer({
       const prevId = activeReelIdRef.current;
       activeReelIdRef.current = reel.id;
       setCurrentIndex(nextIndex);
+      setCurrentMediaIndex(activeMediaIndexRef.current[reel.id] ?? 0);
       setProgress(0);
       setEndScreenReelId(null);
       if (endScreenTimerRef.current) clearTimeout(endScreenTimerRef.current);
@@ -650,8 +684,12 @@ export function ReelImmersiveViewer({
               onRef={registerVideoRef}
               onMediaIndexChange={(reelId, mediaIndex) => {
                 activeMediaIndexRef.current[reelId] = mediaIndex;
-                if (reelId === activeReelIdRef.current) void playActiveReel(reelId);
+                if (reelId === activeReelIdRef.current) {
+                  setCurrentMediaIndex(mediaIndex);
+                  void playActiveReel(reelId);
+                }
               }}
+              onSwipePastLastMedia={onOpenProfile}
             />
             {isCurrent && (
               <Animated.View
@@ -704,12 +742,7 @@ export function ReelImmersiveViewer({
                 {disableProfileNavigation ? (
                   <Text style={styles.username}>@{authorLabel(item)}</Text>
                 ) : (
-                  <TouchableOpacity
-                    onPress={() => {
-                      if (!requireAuth('Sign in to view creator profiles.')) return;
-                      openSheet(setOpenProfile, item);
-                    }}
-                  >
+                  <TouchableOpacity onPress={() => onOpenProfile(item)}>
                     <Text style={styles.username}>@{authorLabel(item)}</Text>
                   </TouchableOpacity>
                 )}
@@ -809,6 +842,7 @@ export function ReelImmersiveViewer({
       progressBottom,
       disableProfileNavigation,
       navigation,
+      onOpenProfile,
       onUseReelAudio,
       onUseThisSound,
       openSheet,
@@ -879,6 +913,21 @@ export function ReelImmersiveViewer({
         </PagerView>
       )}
       </View>
+
+      {Platform.OS !== 'web' && !disableProfileNavigation ? (
+        <ProfileOpenSwipeLayer
+          enabled={(() => {
+            const reel = reels[currentIndex];
+            if (!reel || sheetOpen || reel.is_sponsored) return false;
+            const count = getReelMediaItems(reel).length;
+            return count <= 1 || currentMediaIndex >= count - 1;
+          })()}
+          onSwipeLeft={() => {
+            const reel = reels[currentIndex];
+            if (reel) onOpenProfile(reel);
+          }}
+        />
+      ) : null}
 
       <TouchableOpacity style={[styles.closeBtn, { top: insets.top + 8 }]} onPress={onClose}>
         <Ionicons name="chevron-back" size={26} color="#fff" />
