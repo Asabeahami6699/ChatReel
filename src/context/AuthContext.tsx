@@ -1,9 +1,9 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import type { Session, User } from '@supabase/supabase-js';
 import { api, onAuthExpired } from '../lib/api';
 import { sessionStorage } from '../lib/sessionStorage';
-import { ensureSupabaseSession } from '../lib/ensureSupabaseSession';
+import { ensureSupabaseSession, refreshAuthSession } from '../lib/ensureSupabaseSession';
 import { clearSupabaseSession, setSupabaseSession } from '../lib/supabase';
 import { clearUserLocalCaches } from '../lib/clearUserLocalCaches';
 import { getInstallationId } from '../lib/installationId';
@@ -84,25 +84,22 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           }
         }
       } catch (err) {
+        // Keep whatever is on disk — a transient storage read must not force re-login.
         console.error('[Auth] session restore failed:', err);
-        await sessionStorage.clear();
       } finally {
         setLoading(false);
       }
 
       // Refresh JWT / Realtime token in the background after first paint.
       try {
-        const session = await ensureSupabaseSession();
-        if (session?.user) {
-          setUser(session.user);
-          setSession(session);
+        const outcome = await refreshAuthSession();
+        if (outcome.kind === 'ok' || outcome.kind === 'transient') {
+          setUser(outcome.session.user);
+          setSession(outcome.session);
           setIsGuest(false);
-        } else if (session === null) {
-          const stored = await sessionStorage.load();
-          if (!stored?.access_token) {
-            setUser(null);
-            setSession(null);
-          }
+        } else if (outcome.kind === 'invalid') {
+          setUser(null);
+          setSession(null);
         }
       } catch (err) {
         console.error('[Auth] background session refresh failed:', err);
@@ -110,6 +107,27 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     };
 
     restoreSession();
+  }, []);
+
+  // Keep the session alive across background → foreground without forcing logout.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      void (async () => {
+        const outcome = await refreshAuthSession();
+        if (outcome.kind === 'ok') {
+          setUser(outcome.session.user);
+          setSession(outcome.session);
+          setIsGuest(false);
+        } else if (outcome.kind === 'invalid') {
+          setUser(null);
+          setSession(null);
+          setIsGuest(false);
+        }
+        // transient: leave in-memory auth as-is
+      })();
+    });
+    return () => sub.remove();
   }, []);
 
   useEffect(() => {

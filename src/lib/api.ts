@@ -1,6 +1,6 @@
 import type { Session } from '@supabase/supabase-js';
 import { config } from './config';
-import { ensureSupabaseSession } from './ensureSupabaseSession';
+import { ensureSupabaseSession, refreshAuthSession } from './ensureSupabaseSession';
 import { sessionStorage } from './sessionStorage';
 
 export type ReelAuthorDTO = {
@@ -497,23 +497,30 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
 
   try {
     let token = auth ? await getAccessToken() : null;
-    let sentToken = Boolean(token);
     let { res, data } = await doFetch(token);
 
     if (auth && res.status === 401 && path !== '/api/auth/refresh') {
-      const session = await ensureSupabaseSession();
-      token = session?.access_token ?? null;
-      if (token) {
-        sentToken = true;
+      // Force a refresh; only treat session as dead when /refresh rejects the token.
+      const refreshed = await refreshAuthSession({ force: true });
+      if (refreshed.kind === 'invalid') {
+        notifyAuthExpired();
+        throw new ApiError(
+          typeof data.error === 'string' ? data.error : 'Session expired',
+          401
+        );
+      }
+      if (
+        (refreshed.kind === 'ok' || refreshed.kind === 'transient') &&
+        refreshed.session.access_token
+      ) {
+        token = refreshed.session.access_token;
         ({ res, data } = await doFetch(token));
       }
     }
 
     if (!res.ok) {
-      // Only wipe local session when we had a token and the server rejected it as invalid.
-      if (auth && res.status === 401 && path !== '/api/auth/refresh' && sentToken) {
-        notifyAuthExpired();
-      }
+      // Do not wipe session on a lone 401 — refresh may have been transiently unavailable.
+      // Hard logout only happens above when /refresh returns 400/401.
       throw new ApiError(
         typeof data.error === 'string' ? data.error : `Request failed (${res.status})`,
         res.status
